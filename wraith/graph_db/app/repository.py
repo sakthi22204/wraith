@@ -1,5 +1,6 @@
 import hashlib
 import json
+import uuid
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 from neo4j import AsyncSession
@@ -32,6 +33,37 @@ class Neo4jRepository:
         ]
         for query in constraints:
             await self.session.run(query)
+
+    async def create_scan_session(self, program_id: str) -> dict:
+        s_id = str(uuid.uuid4())
+        now = datetime.utcnow().isoformat() + "Z"
+        query = """
+        MATCH (p:Program {id: $program_id})
+        MERGE (s:ScanSession {id: $s_id})
+        ON CREATE SET s.started_at = $started_at, s.status = "running"
+        MERGE (s)-[:TARGETED]->(p)
+        RETURN s
+        """
+        result = await self.session.run(query, program_id=program_id, s_id=s_id, started_at=now)
+        record = await result.single()
+        return dict(record["s"])
+
+    async def update_scan_session(self, session_id: str, status: str) -> None:
+        now = datetime.utcnow().isoformat() + "Z"
+        query = """
+        MATCH (s:ScanSession {id: $session_id})
+        SET s.status = $status
+        """
+        if status == "completed":
+            query += ", s.ended_at = $now"
+        await self.session.run(query, session_id=session_id, status=status, now=now)
+
+    async def link_finding_to_session(self, finding_id: str, session_id: str) -> None:
+        query = """
+        MATCH (f:Finding {id: $finding_id}), (s:ScanSession {id: $session_id})
+        MERGE (s)-[:PRODUCED]->(f)
+        """
+        await self.session.run(query, finding_id=finding_id, session_id=session_id)
 
     async def create_program(self, program: ProgramCreate) -> Program:
         p_id = generate_id(program.name)

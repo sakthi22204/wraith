@@ -21,6 +21,20 @@ async def get_repo():
 async def create_program(program: ProgramCreate, repo: Neo4jRepository = Depends(get_repo)):
     return await repo.create_program(program)
 
+@router.post("/scan-sessions")
+async def create_scan_session(program_id: str, repo: Neo4jRepository = Depends(get_repo)):
+    return await repo.create_scan_session(program_id)
+
+@router.patch("/scan-sessions/{session_id}")
+async def update_scan_session(session_id: str, status: str, repo: Neo4jRepository = Depends(get_repo)):
+    await repo.update_scan_session(session_id, status)
+    return {"status": "updated"}
+
+@router.post("/findings/{finding_id}/session/{session_id}")
+async def link_finding_to_session(finding_id: str, session_id: str, repo: Neo4jRepository = Depends(get_repo)):
+    await repo.link_finding_to_session(finding_id, session_id)
+    return {"status": "linked"}
+
 @router.post("/programs/{program_id}/hosts", response_model=Host)
 async def upsert_host(program_id: str, host: HostCreate, repo: Neo4jRepository = Depends(get_repo)):
     return await repo.upsert_host(host, program_id)

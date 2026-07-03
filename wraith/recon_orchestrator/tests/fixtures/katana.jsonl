@@ -1,0 +1,2 @@
+{"request":{"url":"https://example.com/about","method":"GET"},"response":{"status_code":200}}
+{"request":{"url":"https://example.com/contact","method":"POST"},"response":{"status_code":200}}
