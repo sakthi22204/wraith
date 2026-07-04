@@ -50,9 +50,7 @@ services:
       - "8002:8002"
     environment:
       - GRAPH_DB_URL=http://graph_api:8001/api/v1
-      - DOCKER_HOST=unix:///var/run/docker.sock
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
+      - DOCKER_BROKER_URL=http://docker_broker:8005/api/v1
     depends_on:
       graph_api:
         condition: service_healthy
@@ -116,14 +114,27 @@ services:
     networks:
       - wraith_internal
 
+  docker_broker:
+    build:
+      context: ./docker_broker
+    ports:
+      - "8005:8005"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - wraith_internal
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8005/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   # PHASE 3 — KALI SANDBOX
   kali_sandbox:
     build:
       context: ./kali_sandbox
     environment:
       - MSF_DATABASE_CONFIG=/opt/msf/config/database.yml
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - wraith_internal
 

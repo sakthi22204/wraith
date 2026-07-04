@@ -1,47 +1,42 @@
-import docker
+import httpx
 import asyncio
 from typing import List
 from .config import settings
 
 class DockerSpawner:
-    def __init__(self, docker_url: str = settings.DOCKER_SOCKET):
-        self.client = docker.DockerClient(base_url=docker_url)
+    def __init__(self, broker_url: str = settings.DOCKER_BROKER_URL):
+        self.broker_url = broker_url
 
     async def spawn_container(self, image: str, cmd: List[str], timeout: int = settings.TOOL_TIMEOUT) -> str:
-        def run():
-            container = None
+        async with httpx.AsyncClient(timeout=timeout + 30) as client:
+            spec = {
+                "image": image,
+                "command": cmd,
+                "mem_limit": settings.MEM_LIMIT,
+                "cpu_quota": settings.CPU_QUOTA,
+                "detach": True,
+                "remove": False
+            }
+
+            # 1. Create and run
+            create_res = await client.post(f"{self.broker_url}/containers", json=spec)
+            create_res.raise_for_status()
+            container_id = create_res.json()["container_id"]
+
             try:
-                container = self.client.containers.run(
-                    image=image,
-                    command=cmd,
-                    mem_limit=settings.MEM_LIMIT,
-                    cpu_quota=settings.CPU_QUOTA,
-                    detach=True,
-                    remove=False # We want to capture logs before removing
-                )
+                # 2. Wait
+                wait_res = await client.post(f"{self.broker_url}/containers/{container_id}/wait", params={"timeout": timeout})
+                wait_res.raise_for_status()
 
-                try:
-                    result = container.wait(timeout=timeout)
-                    logs = container.logs().decode("utf-8")
-                    if result["StatusCode"] != 0:
-                        # You might want to handle non-zero exit codes differently
-                        pass
-                    return logs
-                except Exception as e:
-                    # Timeout or other error during wait
-                    raise e
+                # 3. Get logs
+                log_res = await client.get(f"{self.broker_url}/containers/{container_id}/logs")
+                log_res.raise_for_status()
+                return log_res.json()["logs"]
             finally:
-                if container:
-                    try:
-                        container.stop(timeout=1)
-                    except:
-                        pass
-                    try:
-                        container.remove(force=True)
-                    except:
-                        pass
-
-        # Run the blocking docker call in a thread pool to keep it async
-        return await asyncio.to_thread(run)
+                # 4. Cleanup
+                try:
+                    await client.delete(f"{self.broker_url}/containers/{container_id}")
+                except:
+                    pass
 
 docker_spawner = DockerSpawner()

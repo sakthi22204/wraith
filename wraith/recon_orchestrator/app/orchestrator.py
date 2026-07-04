@@ -58,13 +58,13 @@ class ReconOrchestrator:
                 await self._push_to_graph(program_id, results)
 
                 # Store results for the session
-            if session_id not in self.results:
-                self.results[session_id] = ToolResults()
-            self.results[session_id].hosts.extend(results.hosts)
-            self.results[session_id].ports.extend(results.ports)
-            self.results[session_id].endpoints.extend(results.endpoints)
+                if session_id not in self.results:
+                    self.results[session_id] = ToolResults()
+                self.results[session_id].hosts.extend(results.hosts)
+                self.results[session_id].ports.extend(results.ports)
+                self.results[session_id].endpoints.extend(results.endpoints)
 
-            session.tool_statuses[tool_key] = ToolStatus.COMPLETED
+                session.tool_statuses[tool_key] = ToolStatus.COMPLETED
         except asyncio.TimeoutError:
             session.tool_statuses[tool_key] = ToolStatus.TIMED_OUT
         except Exception as e:

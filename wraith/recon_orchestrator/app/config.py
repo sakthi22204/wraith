@@ -2,7 +2,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     GRAPH_DB_URL: str = "http://localhost:8001/api/v1"
-    DOCKER_SOCKET: str = "unix:///var/run/docker.sock"
+    DOCKER_BROKER_URL: str = "http://localhost:8005/api/v1"
     TOOL_TIMEOUT: int = 300
 
     # Resource limits for tool containers
