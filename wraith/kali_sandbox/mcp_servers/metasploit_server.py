@@ -12,6 +12,7 @@ class MetasploitServer(BaseSecurityServer):
         @self.mcp.tool()
         async def list_modules(search: str) -> List[MetasploitModule]:
             """Search for Metasploit modules."""
+            self.validate_target(search) # Reuse validation to prevent injection
             # Use msfconsole -x to run search command
             cmd = ["msfconsole", "-q", "-x", f"search {search}; exit"]
             res = await self.run_tool(cmd, timeout=60)
@@ -39,9 +40,16 @@ class MetasploitServer(BaseSecurityServer):
         async def run_module(module: str, target: str, options: dict) -> MetasploitResult:
             """Run a Metasploit module against a target."""
             self.validate_target(target)
+            self.validate_target(module)
 
-            opts = " ".join([f"set {k} {v}" for k, v in options.items()])
-            cmd_str = f"use {module}; set RHOSTS {target}; {opts}; run; exit"
+            # Basic validation for options
+            sanitized_opts = []
+            for k, v in options.items():
+                if self.target_regex.match(str(k)) and self.target_regex.match(str(v)):
+                    sanitized_opts.append(f"set {k} {v}")
+
+            opts_str = " ".join(sanitized_opts)
+            cmd_str = f"use {module}; set RHOSTS {target}; {opts_str}; run; exit"
             cmd = ["msfconsole", "-q", "-x", cmd_str]
 
             res = await self.run_tool(cmd, timeout=600)

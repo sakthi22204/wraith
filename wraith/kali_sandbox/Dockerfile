@@ -23,5 +23,5 @@ RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt
 
 COPY . .
 
-# Default command starts the supervisor to run all MCP servers
-CMD ["python3", "-m", "mcp_servers.supervisor"]
+# Default command starts the main MCP server
+CMD ["python3", "-m", "mcp_servers.main"]

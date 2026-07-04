@@ -18,6 +18,7 @@ class ReconOrchestrator:
             KatanaTool(),
             NaabuTool()
         ]
+        self.semaphore = asyncio.Semaphore(10)  # Concurrency limit
 
     async def run_session(self, session_id: str, program_id: str, domains: List[str]):
         session = self.sessions[session_id]
@@ -47,12 +48,13 @@ class ReconOrchestrator:
                 print(f"Failed to update session status in graph_db: {e}")
 
     async def _run_tool(self, session_id: str, program_id: str, domain: str, tool):
-        session = self.sessions[session_id]
-        tool_key = f"{tool.name}:{domain}"
-        session.tool_statuses[tool_key] = ToolStatus.RUNNING
+        async with self.semaphore:
+            session = self.sessions[session_id]
+            tool_key = f"{tool.name}:{domain}"
+            session.tool_statuses[tool_key] = ToolStatus.RUNNING
 
-        try:
-            results = await tool.run(domain)
+            try:
+                results = await tool.run(domain)
             await self._push_to_graph(program_id, results)
 
             # Store results for the session
