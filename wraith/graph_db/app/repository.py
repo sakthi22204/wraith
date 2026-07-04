@@ -84,7 +84,7 @@ class Neo4jRepository:
         await self.session.run(query, finding_id=finding_id, session_id=session_id)
 
     async def create_program(self, program: ProgramCreate) -> Program:
-        p_id = generate_id(program.name)
+        p_id = generate_id(program.name, program.platform)
         now = datetime.utcnow().isoformat()
         query = """
         MERGE (p:Program {id: $id})

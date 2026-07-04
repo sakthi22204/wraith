@@ -55,9 +55,9 @@ class ReconOrchestrator:
 
             try:
                 results = await tool.run(domain)
-            await self._push_to_graph(program_id, results)
+                await self._push_to_graph(program_id, results)
 
-            # Store results for the session
+                # Store results for the session
             if session_id not in self.results:
                 self.results[session_id] = ToolResults()
             self.results[session_id].hosts.extend(results.hosts)

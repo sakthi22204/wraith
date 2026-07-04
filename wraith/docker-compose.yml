@@ -84,6 +84,38 @@ services:
       timeout: 5s
       retries: 5
 
+  active_exploit_runner:
+    build:
+      context: ./active_exploit_runner
+    ports:
+      - "8004:8004"
+    environment:
+      - DATABASE_URL=postgresql://wraith:password@postgres:5432/wraith_audit
+      - REDIS_URL=redis://redis:6379/0
+      - KALI_SANDBOX_URL=http://kali_sandbox:8000
+    networks:
+      - wraith_internal
+    depends_on:
+      - postgres
+      - redis
+      - kali_sandbox
+
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_USER=wraith
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=wraith_audit
+    networks:
+      - wraith_internal
+    volumes:
+      - postgres_audit_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:alpine
+    networks:
+      - wraith_internal
+
   # PHASE 3 — KALI SANDBOX
   kali_sandbox:
     build:
@@ -108,3 +140,4 @@ networks:
 
 volumes:
   neo4j_data:
+  postgres_audit_data:
