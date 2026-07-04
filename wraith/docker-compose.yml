@@ -3,6 +3,8 @@ version: '3.8'
 services:
   graph_db:
     image: neo4j:5-community
+    networks:
+      - wraith_internal
     ports:
       - "7474:7474"
       - "7687:7687"
@@ -21,6 +23,8 @@ services:
   graph_api:
     build:
       context: ./graph_db
+    networks:
+      - wraith_internal
     ports:
       - "8001:8001"
     environment:
@@ -40,6 +44,8 @@ services:
   recon_orchestrator:
     build:
       context: ./recon_orchestrator
+    networks:
+      - wraith_internal
     ports:
       - "8002:8002"
     environment:
@@ -55,6 +61,28 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  # PHASE 3 — KALI SANDBOX
+  kali_sandbox:
+    build:
+      context: ./kali_sandbox
+    environment:
+      - MSF_DATABASE_CONFIG=/opt/msf/config/database.yml
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - wraith_internal
+
+  # LOCAL TEST TARGETS — NEVER EXPOSE PUBLICLY, INTERNAL NETWORK ONLY
+  juice_shop:
+    image: bkimminich/juice-shop
+    networks:
+      - wraith_internal
+    # No ports exposed to host for safety
+
+networks:
+  wraith_internal:
+    driver: bridge
 
 volumes:
   neo4j_data:

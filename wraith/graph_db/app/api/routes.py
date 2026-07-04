@@ -35,6 +35,16 @@ async def link_finding_to_session(finding_id: str, session_id: str, repo: Neo4jR
     await repo.link_finding_to_session(finding_id, session_id)
     return {"status": "linked"}
 
+@router.post("/tools")
+async def upsert_tool(name: str, version: str, repo: Neo4jRepository = Depends(get_repo)):
+    t_id = await repo.upsert_tool(name, version)
+    return {"id": t_id}
+
+@router.post("/findings/{finding_id}/tool/{tool_id}")
+async def link_finding_to_tool(finding_id: str, tool_id: str, repo: Neo4jRepository = Depends(get_repo)):
+    await repo.link_finding_to_tool(finding_id, tool_id)
+    return {"status": "linked"}
+
 @router.post("/programs/{program_id}/hosts", response_model=Host)
 async def upsert_host(program_id: str, host: HostCreate, repo: Neo4jRepository = Depends(get_repo)):
     return await repo.upsert_host(host, program_id)

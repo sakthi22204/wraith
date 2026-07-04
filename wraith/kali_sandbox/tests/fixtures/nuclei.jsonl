@@ -1,0 +1,2 @@
+{"template-id":"http-missing-security-headers","info":{"name":"HTTP Missing Security Headers","author":["shashwatsingh22"],"severity":"info","tags":["headers","misconfiguration"]},"type":"http","host":"http://juice-shop:3000","matched-at":"http://juice-shop:3000","timestamp":"2023-10-27T10:00:00.000Z"}
+{"template-id":"xss-check","info":{"name":"XSS Check","severity":"high"},"type":"http","host":"http://juice-shop:3000","matched-at":"http://juice-shop:3000/search?q=<script>","timestamp":"2023-10-27T10:01:00.000Z"}

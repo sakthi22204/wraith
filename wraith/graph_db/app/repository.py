@@ -34,6 +34,24 @@ class Neo4jRepository:
         for query in constraints:
             await self.session.run(query)
 
+    async def upsert_tool(self, name: str, version: str) -> str:
+        t_id = generate_id(name, version)
+        query = """
+        MERGE (t:Tool {id: $id})
+        SET t.name = $name, t.version = $version
+        RETURN t.id as id
+        """
+        result = await self.session.run(query, id=t_id, name=name, version=version)
+        record = await result.single()
+        return record["id"]
+
+    async def link_finding_to_tool(self, finding_id: str, tool_id: str) -> None:
+        query = """
+        MATCH (f:Finding {id: $finding_id}), (t:Tool {id: $tool_id})
+        MERGE (f)-[:DISCOVERED_BY]->(t)
+        """
+        await self.session.run(query, finding_id=finding_id, tool_id=tool_id)
+
     async def create_scan_session(self, program_id: str) -> dict:
         s_id = str(uuid.uuid4())
         now = datetime.utcnow().isoformat() + "Z"
