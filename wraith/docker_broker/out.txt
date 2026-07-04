@@ -1,0 +1,305 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.13, pytest-9.1.1, pluggy-1.6.0 -- /home/jules/.pyenv/versions/3.12.13/bin/python3.12
+cachedir: .pytest_cache
+rootdir: /app/wraith/docker_broker
+plugins: anyio-4.14.1, asyncio-1.4.0, langsmith-0.9.7
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 9 items
+
+tests/test_proxy_allowed.py::test_create_container_allowed FAILED        [ 11%]
+tests/test_proxy_allowed.py::test_create_container_rejected PASSED       [ 22%]
+tests/test_regression_recon_flow.py::test_regression_recon_flow FAILED   [ 33%]
+tests/test_validators.py::test_whitelist_rejection PASSED                [ 44%]
+tests/test_validators.py::test_bind_mount_rejection PASSED               [ 55%]
+tests/test_validators.py::test_privileged_mode_rejection PASSED          [ 66%]
+tests/test_validators.py::test_host_network_rejection PASSED             [ 77%]
+tests/test_validators.py::test_cap_add_rejection PASSED                  [ 88%]
+tests/test_validators.py::test_allowed_spec PASSED                       [100%]
+
+=================================== FAILURES ===================================
+________________________ test_create_container_allowed _________________________
+
+self = <docker.api.client.APIClient object at 0x7ff48bfa50d0>
+response = <Response [500]>
+
+    def _raise_for_status(self, response):
+        """Raises stored :class:`APIError`, if one occurred."""
+        try:
+>           response.raise_for_status()
+
+/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/docker/api/client.py:275:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <Response [500]>
+
+    def raise_for_status(self) -> None:
+        """Raises :class:`HTTPError`, if one occurred."""
+
+        http_error_msg = ""
+        if isinstance(self.reason, bytes):
+            # We attempt to decode utf-8 first because some servers
+            # choose to localize their reason strings. If the string
+            # isn't utf-8, we fall back to iso-8859-1 for all other
+            # encodings. (See PR #3538)
+            try:
+                reason = self.reason.decode("utf-8")
+            except UnicodeDecodeError:
+                reason = self.reason.decode("iso-8859-1")
+        else:
+            reason = self.reason
+
+        if 400 <= self.status_code < 500:
+            http_error_msg = (
+                f"{self.status_code} Client Error: {reason} for url: {self.url}"
+            )
+
+        elif 500 <= self.status_code < 600:
+            http_error_msg = (
+                f"{self.status_code} Server Error: {reason} for url: {self.url}"
+            )
+
+        if http_error_msg:
+>           raise HTTPError(http_error_msg, response=self)
+E           requests.exceptions.HTTPError: 500 Server Error: Internal Server Error for url: http+docker://localhost/v1.53/containers/create
+
+/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/requests/models.py:1167: HTTPError
+
+The above exception was the direct cause of the following exception:
+
+    @pytest.mark.asyncio
+    async def test_create_container_allowed():
+        mock_container = MagicMock()
+        mock_container.id = "test-id"
+
+        with patch("app.proxy.docker.DockerClient") as mock_docker:
+            mock_docker.from_env.return_value.containers.run.return_value = mock_container
+            # Setup for our proxy class which uses DockerClient(base_url=...)
+            mock_docker.return_value.containers.run.return_value = mock_container
+
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+>               response = await ac.post("/api/v1/containers", json={
+                    "image": "projectdiscovery/subfinder:latest",
+                    "command": ["-d", "example.com"]
+                })
+
+tests/test_proxy_allowed.py:17:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/httpx/_client.py:1859: in post
+    return await self.request(
+/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/httpx/_client.py:1540: in request
+    return await self.send(request, auth=auth, follow_redirects=follow_redirects)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/httpx/_client.py:1629: in send
+    response = await self._send_handling_auth(
+/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/httpx/_client.py:1657: in _send_handling_auth
+    response = await self._send_handling_redirects(
+/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/httpx/_client.py:1694: in _send_handling_redirects
+    response = await self._send_single_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/httpx/_client.py:1730: in _send_single_request
+    response = await transport.handle_async_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/httpx/_transports/asgi.py:170: in handle_async_request
+    await self.app(scope, receive, send)
+/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/fastapi/applications.py:1163: in __call__
+    await super().__call__(scope, receive, send)
+/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/starlette/applications.py:90: in __call__
+    await self.middleware_stack(scope, receive, send)
+/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/starlette/middleware/errors.py:186: in __call__
+    raise exc
+/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/starlette/middleware/errors.py:164: in __call__
+    await self.app(scope, receive, _send)
+/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/starlette/middleware/exceptions.py:63: in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/starlette/_exception_handler.py:53: in wrapped_app
+    raise exc
+/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/starlette/_exception_handler.py:42: in wrapped_app
+    await app(scope, receive, sender)
+/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/fastapi/middleware/asyncexitstack.py:18: in __call__
+    await self.app(scope, receive, send)
+/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/starlette/routing.py:660: in __call__
+    await self.middleware_stack(scope, receive, send)
+/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/fastapi/routing.py:2683: in app
+    await route.handle(scope, receive, send)
+/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/fastapi/routing.py:1753: in handle
+    await self.original_router.handle(scope, receive, send)
+/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/fastapi/routing.py:2738: in handle
+    await included_router._handle_selected(scope, receive, send)
+/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/fastapi/routing.py:1773: in _handle_selected
+    await original_route.handle(scope, receive, send)
+/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/fastapi/routing.py:1264: in handle
+    await app(scope, receive, send)
+/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/fastapi/routing.py:150: in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/starlette/_exception_handler.py:53: in wrapped_app
+    raise exc
+/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/starlette/_exception_handler.py:42: in wrapped_app
+    await app(scope, receive, sender)
+/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/fastapi/routing.py:136: in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/fastapi/routing.py:690: in app
+    raw_response = await run_endpoint_function(
+/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/fastapi/routing.py:344: in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+app/api/routes.py:10: in create_container
+    return {"container_id": await docker_proxy.create_container(spec)}
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+app/proxy.py:33: in create_container
+    raise e
+app/proxy.py:28: in create_container
+    container_id = await asyncio.to_thread(run)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/jules/.pyenv/versions/3.12.13/lib/python3.12/asyncio/threads.py:25: in to_thread
+    return await loop.run_in_executor(None, func_call)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/jules/.pyenv/versions/3.12.13/lib/python3.12/concurrent/futures/thread.py:59: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+app/proxy.py:21: in run
+    container = self.client.containers.run(
+/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/docker/models/containers.py:876: in run
+    container = self.create(image=image, command=command,
+/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/docker/models/containers.py:935: in create
+    resp = self.client.api.create_container(**create_kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/docker/api/container.py:440: in create_container
+    return self.create_container_from_config(config, name, platform)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/docker/api/container.py:457: in create_container_from_config
+    return self._result(res, True)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/docker/api/client.py:281: in _result
+    self._raise_for_status(response)
+/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/docker/api/client.py:277: in _raise_for_status
+    raise create_api_error_from_http_exception(e) from e
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+e = HTTPError('500 Server Error: Internal Server Error for url: http+docker://localhost/v1.53/containers/create')
+
+    def create_api_error_from_http_exception(e):
+        """
+        Create a suitable APIError from requests.exceptions.HTTPError.
+        """
+        response = e.response
+        try:
+            explanation = response.json()['message']
+        except ValueError:
+            explanation = (response.text or '').strip()
+        cls = APIError
+        if response.status_code == 404:
+            explanation_msg = (explanation or '').lower()
+            if any(fragment in explanation_msg
+                   for fragment in _image_not_found_explanation_fragments):
+                cls = ImageNotFound
+            else:
+                cls = NotFound
+>       raise cls(e, response=response, explanation=explanation) from e
+E       docker.errors.APIError: 500 Server Error for http+docker://localhost/v1.53/containers/create: Internal Server Error ("failed to mount /tmp/containerd-mount2004453862: mount source: "overlay", target: "/tmp/containerd-mount2004453862", fstype: overlay, flags: 0, data: "workdir=/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/77/work,upperdir=/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/77/fs,lowerdir=/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/27/fs:/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/26/fs:/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/25/fs,index=off", err: invalid argument")
+
+/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/docker/errors.py:39: APIError
+----------------------------- Captured stderr call -----------------------------
+2026-07-04 18:57:21,873 - INFO - [REJECTED] Op: CREATE, Target: unknown, Reason: 500 Server Error for http+docker://localhost/v1.53/containers/create: Internal Server Error ("failed to mount /tmp/containerd-mount2004453862: mount source: "overlay", target: "/tmp/containerd-mount2004453862", fstype: overlay, flags: 0, data: "workdir=/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/77/work,upperdir=/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/77/fs,lowerdir=/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/27/fs:/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/26/fs:/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/25/fs,index=off", err: invalid argument")
+------------------------------ Captured log call -------------------------------
+INFO     docker_broker_audit:audit.py:16 [REJECTED] Op: CREATE, Target: unknown, Reason: 500 Server Error for http+docker://localhost/v1.53/containers/create: Internal Server Error ("failed to mount /tmp/containerd-mount2004453862: mount source: "overlay", target: "/tmp/containerd-mount2004453862", fstype: overlay, flags: 0, data: "workdir=/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/77/work,upperdir=/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/77/fs,lowerdir=/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/27/fs:/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/26/fs:/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/25/fs,index=off", err: invalid argument")
+__________________________ test_regression_recon_flow __________________________
+
+    @pytest.mark.asyncio
+    async def test_regression_recon_flow():
+        """
+        Prove that the recon flow still works when DOCKER_BROKER_URL is used.
+        We mock the broker's underlying Docker calls to be safe.
+        """
+        # 1. Mock the real Docker SDK calls inside the broker
+        mock_container = MagicMock()
+        mock_container.id = "test-container-id"
+
+        with patch("docker.DockerClient") as mock_docker, \
+             patch("recon_orchestrator.app.orchestrator.graph_client") as mock_graph:
+
+            # Setup Docker mock
+            mock_docker_instance = mock_docker.return_value
+            mock_docker_instance.containers.run.return_value = mock_container
+            mock_docker_instance.containers.get.return_value = mock_container
+            mock_container.wait.return_value = {"StatusCode": 0}
+            mock_container.logs.return_value = b'{"host": "found.example.com"}\n'
+
+            # Setup GraphDB mock
+            mock_graph.create_scan_session = AsyncMock(return_value={"id": "graph-session-123"})
+            mock_graph.update_scan_session = AsyncMock()
+            mock_graph.upsert_host = AsyncMock(return_value={"id": "host-123"})
+            mock_graph.upsert_port = AsyncMock()
+            mock_graph.upsert_endpoint = AsyncMock()
+
+            # 2. Start the recon session via recon_orchestrator API
+            async with AsyncClient(transport=ASGITransport(app=recon_app), base_url="http://recon") as ac_recon:
+                # We need to make sure recon_orchestrator points to our mocked broker_app
+                # In tests, it calls localhost:8005. Since we are using ASGITransport,
+                # we might need to mock the httpx client inside docker_spawner.py
+
+                with patch("recon_orchestrator.app.docker_spawner.httpx.AsyncClient") as mock_broker_client:
+                    # Mock the broker response as if it were running
+                    mock_broker_ac = mock_broker_client.return_value.__aenter__.return_value
+                    mock_broker_ac.post.side_effect = [
+                        AsyncMock(status_code=200, json=lambda: {"container_id": "test-container-id"}), # create
+                        AsyncMock(status_code=200, json=lambda: {"StatusCode": 0})                       # wait
+                    ]
+                    mock_broker_ac.get.return_value = AsyncMock(status_code=200, json=lambda: {"logs": '{"host": "found.example.com"}\n'})
+                    mock_broker_ac.delete.return_value = AsyncMock(status_code=200)
+
+                    response = await ac_recon.post("/api/v1/recon/start", json={
+                        "program_id": "prog-123",
+                        "domains": ["example.com"]
+                    })
+
+                    assert response.status_code == 202
+                    session_id = response.json()["session_id"]
+
+                    # 3. Wait for recon session to complete
+                    from recon_orchestrator.app.orchestrator import orchestrator
+                    for _ in range(50):
+                        if orchestrator.sessions[session_id].status == "completed":
+                            break
+                        await asyncio.sleep(0.1)
+
+                    assert orchestrator.sessions[session_id].status == "completed"
+                    assert orchestrator.sessions[session_id].progress == 100.0
+
+                    # Verify that it tried to call the broker 4 times (one per tool)
+                    # Actually, 4 tools * (1 create + 1 wait + 1 log)
+>                   assert mock_broker_ac.post.call_count >= 8
+E                   AssertionError: assert 5 >= 8
+E                    +  where 5 = <AsyncMock name='AsyncClient().__aenter__().post' id='140688293068336'>.call_count
+E                    +    where <AsyncMock name='AsyncClient().__aenter__().post' id='140688293068336'> = <AsyncMock name='AsyncClient().__aenter__()' id='140688293049936'>.post
+
+tests/test_regression_recon_flow.py:71: AssertionError
+----------------------------- Captured stdout call -----------------------------
+Tool httpx failed for example.com:
+Tool katana failed for example.com:
+Tool naabu failed for example.com:
+=============================== warnings summary ===============================
+tests/test_regression_recon_flow.py::test_regression_recon_flow
+  /app/wraith/recon_orchestrator/app/docker_spawner.py:23: RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited
+    create_res.raise_for_status()
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_regression_recon_flow.py::test_regression_recon_flow
+  /app/wraith/recon_orchestrator/app/docker_spawner.py:29: RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited
+    wait_res.raise_for_status()
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_regression_recon_flow.py::test_regression_recon_flow
+  /app/wraith/recon_orchestrator/app/docker_spawner.py:33: RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited
+    log_res.raise_for_status()
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_proxy_allowed.py::test_create_container_allowed - docker.er...
+FAILED tests/test_regression_recon_flow.py::test_regression_recon_flow - Asse...
+=================== 2 failed, 7 passed, 3 warnings in 1.36s ====================

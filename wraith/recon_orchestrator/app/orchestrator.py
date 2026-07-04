@@ -65,16 +65,16 @@ class ReconOrchestrator:
                 self.results[session_id].endpoints.extend(results.endpoints)
 
                 session.tool_statuses[tool_key] = ToolStatus.COMPLETED
-        except asyncio.TimeoutError:
-            session.tool_statuses[tool_key] = ToolStatus.TIMED_OUT
-        except Exception as e:
-            print(f"Tool {tool.name} failed for {domain}: {e}")
-            session.tool_statuses[tool_key] = ToolStatus.FAILED
-        finally:
-            # Update overall progress
-            completed = sum(1 for s in session.tool_statuses.values()
-                           if s in [ToolStatus.COMPLETED, ToolStatus.TIMED_OUT, ToolStatus.FAILED])
-            session.progress = (completed / len(session.tool_statuses)) * 100.0
+            except asyncio.TimeoutError:
+                session.tool_statuses[tool_key] = ToolStatus.TIMED_OUT
+            except Exception as e:
+                print(f"Tool {tool.name} failed for {domain}: {e}")
+                session.tool_statuses[tool_key] = ToolStatus.FAILED
+            finally:
+                # Update overall progress
+                completed = sum(1 for s in session.tool_statuses.values()
+                               if s in [ToolStatus.COMPLETED, ToolStatus.TIMED_OUT, ToolStatus.FAILED])
+                session.progress = (completed / len(session.tool_statuses)) * 100.0
 
     async def _push_to_graph(self, program_id: str, results: ToolResults):
         # Maps for caching IDs to avoid redundant lookups if needed,
