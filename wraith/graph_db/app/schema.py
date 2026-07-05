@@ -10,8 +10,19 @@ class FindingStatus(str, Enum):
     HUMAN_CONFIRMED = "HUMAN_CONFIRMED"
     FALSE_POSITIVE = "FALSE_POSITIVE"
     DUPLICATE = "DUPLICATE"
-    # Migration safety for legacy data
-    CONFIRMED = "HUMAN_CONFIRMED"
+
+    @classmethod
+    def _missing_(cls, value: object):
+        if not isinstance(value, str):
+            return None
+        # Handle legacy "confirmed" or "unconfirmed" lowercase values
+        val_upper = value.upper()
+        if val_upper == "CONFIRMED":
+            return cls.HUMAN_CONFIRMED
+        for member in cls:
+            if member.value == val_upper:
+                return member
+        return None
 
 # Base Models
 class ProgramBase(BaseModel):

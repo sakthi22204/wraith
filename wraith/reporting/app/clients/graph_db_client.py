@@ -18,14 +18,12 @@ class GraphDBClient:
                     return node.get("properties")
             return None
 
-    async def get_finding(self, finding_id: str):
-        # We need a way to get a single finding.
-        # Existing graph_db API has /programs/{program_id}/findings
-        # Let's assume we can fetch all and filter or there's a missing endpoint.
-        # Requirement says: fetch Finding data needed for a report.
-        # Let's assume we can get it from the graph or add an endpoint if needed.
-        # Actually, let's use the graph surface to find the node.
-        pass
+    async def get_finding(self, program_id: str, finding_id: str):
+        async with httpx.AsyncClient() as client:
+            response = await client.get(f"{self.base_url}/programs/{program_id}/findings")
+            response.raise_for_status()
+            findings = response.json()
+            return next((f for f in findings if f["id"] == finding_id), None)
 
     async def get_findings_for_program(self, program_id: str):
         async with httpx.AsyncClient() as client:

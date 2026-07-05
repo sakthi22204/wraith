@@ -20,9 +20,7 @@ def parse_date(ts):
 
 @router.get("/reports/{program_id}/findings/{finding_id}")
 async def get_finding_report(program_id: str, finding_id: str, format: str = Query("markdown", pattern="^(markdown|pdf)$")):
-    # Need to fetch the specific finding
-    all_findings = await graph_db_client.get_findings_for_program(program_id)
-    finding = next((f for f in all_findings if f["id"] == finding_id), None)
+    finding = await graph_db_client.get_finding(program_id, finding_id)
 
     if not finding:
         raise HTTPException(status_code=404, detail="Finding not found")
