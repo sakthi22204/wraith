@@ -45,6 +45,7 @@ async def test_generate_finding_report_full(mock_clients):
     assert "CWE-89" in report.vulnerability_type
     assert report.severity == "High"
     assert "9.8" in report.cvss_score
+    assert report.ai_confidence == "0.9"
     assert "Host: test.com" in report.affected_asset
     assert "sqlmap" in report.steps_to_reproduce
     assert "Recorded exploit attempt" in report.exploit_poc

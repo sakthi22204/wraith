@@ -30,6 +30,16 @@ class ReportGenerator:
             cvss_display = "CVSS score not calculated"
 
         severity = finding.get("severity", band).capitalize()
+        # The graph finding object uses 'ai_confidence' as a float
+        ai_conf = finding.get("ai_confidence")
+        # However, some parts of the system might put it in 'confidence' as a string
+        if ai_conf is None:
+            try:
+                ai_conf = float(finding.get("confidence"))
+            except (TypeError, ValueError):
+                ai_conf = None
+
+        ai_confidence_display = str(ai_conf) if ai_conf is not None else "N/A"
 
         # 4. Affected Asset
         target_id = finding.get("target_id")
@@ -117,6 +127,7 @@ class ReportGenerator:
             severity=severity,
             cvss_score=cvss_display,
             cvss_vector=cvss_vector,
+            ai_confidence=ai_confidence_display,
             affected_asset=affected_asset,
             description=description,
             steps_to_reproduce=steps,
@@ -131,8 +142,17 @@ class ReportGenerator:
         program_data = await graph_db_client.get_program(program_id)
         findings_raw = await graph_db_client.get_findings_for_program(program_id)
 
+        duplicates = [f for f in findings_raw if f.get("status") == "DUPLICATE"]
+        false_positives = [f for f in findings_raw if f.get("status") == "FALSE_POSITIVE"]
+
+        # Filter findings
+        active_findings_raw = [
+            f for f in findings_raw
+            if f.get("status") not in ["DUPLICATE", "FALSE_POSITIVE"]
+        ]
+
         findings = []
-        for f in findings_raw:
+        for f in active_findings_raw:
             report_finding = await self.generate_finding_report(program_id, f)
             findings.append(report_finding)
 
@@ -140,10 +160,13 @@ class ReportGenerator:
         severity_order = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3, "Info": 4}
         findings.sort(key=lambda x: severity_order.get(x.severity, 5))
 
+        summary = f"{len(duplicates)} duplicate and {len(false_positives)} false-positive finding(s) excluded from this report."
+
         return ProgramReport(
             program_name=program_data.get("name", "Unknown Program") if program_data else "Unknown",
             generated_at=datetime.utcnow(),
-            findings=findings
+            findings=findings,
+            summary_line=summary
         )
 
 generator = ReportGenerator()
