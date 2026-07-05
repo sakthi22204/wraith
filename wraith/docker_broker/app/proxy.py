@@ -7,7 +7,13 @@ from .audit import audit_log
 
 class DockerProxy:
     def __init__(self):
-        self.client = docker.DockerClient(base_url=settings.DOCKER_SOCKET)
+        self._client = None
+
+    @property
+    def client(self):
+        if self._client is None:
+            self._client = docker.DockerClient(base_url=settings.DOCKER_SOCKET)
+        return self._client
 
     async def create_container(self, spec: dict):
         # Spec can contain: image, command, mem_limit, cpu_quota, detach, remove, etc.
