@@ -10,6 +10,8 @@ class FindingStatus(str, Enum):
     HUMAN_CONFIRMED = "HUMAN_CONFIRMED"
     FALSE_POSITIVE = "FALSE_POSITIVE"
     DUPLICATE = "DUPLICATE"
+    # Migration safety for legacy data
+    CONFIRMED = "HUMAN_CONFIRMED"
 
 # Base Models
 class ProgramBase(BaseModel):
@@ -88,6 +90,8 @@ class FindingBase(BaseModel):
     ai_confidence: Optional[float] = None
     ai_reasoning: Optional[str] = None
     corroborating_sources: Optional[List[str]] = None
+    cvss_vector: Optional[str] = None
+    evidence: Optional[str] = None
 
 class FindingCreate(FindingBase):
     discovered_at: datetime = Field(default_factory=datetime.utcnow)
