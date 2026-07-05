@@ -36,3 +36,27 @@ export const subscribeToAgentStream = (
     eventSource.close();
   };
 };
+
+export const fetchSessionStatus = async (sessionId: string) => {
+  const response = await fetch(`${config.agentUrl}/agent/sessions/${sessionId}/status`);
+  if (!response.ok) throw new Error('Failed to fetch session status');
+  return response.json();
+};
+
+export const startAgentSession = async (programId: string, targetScope: string[], maxIterations: number) => {
+  const response = await fetch(`${config.agentUrl}/agent/sessions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ program_id: programId, target_scope: targetScope, max_iterations: maxIterations })
+  });
+  if (!response.ok) throw new Error('Failed to start session');
+  return response.json();
+};
+
+export const stopAgentSession = async (sessionId: string) => {
+  const response = await fetch(`${config.agentUrl}/agent/sessions/${sessionId}/stop`, {
+    method: 'POST'
+  });
+  if (!response.ok) throw new Error('Failed to stop session');
+  return response.json();
+};

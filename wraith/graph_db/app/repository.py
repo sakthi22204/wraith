@@ -413,6 +413,51 @@ class Neo4jRepository:
             })
         return paths
 
+    async def delete_program_recursive(self, program_id: str) -> None:
+        # Delete Program node and everything reachable ONLY through it.
+        # shared nodes like Tool or CVE with other incoming rels should be preserved.
+        query = """
+        MATCH (p:Program {id: $program_id})
+        OPTIONAL MATCH (p)-[*1..10]->(n)
+        WITH p, collect(DISTINCT n) as nodes
+        FOREACH (node IN nodes |
+            SET node._to_delete = true
+        )
+        SET p._to_delete = true
+
+        WITH p, nodes
+        UNWIND nodes + [p] as node
+        // Only delete if NO relationship exists from a node that is NOT marked for deletion
+        OPTIONAL MATCH (other)-[r]->(node)
+        WHERE NOT exists(other._to_delete)
+        WITH node, count(r) as incoming_from_outside
+        WHERE incoming_from_outside = 0
+        DETACH DELETE node
+
+        // Cleanup leftover flags on preserved nodes
+        WITH nodes
+        UNWIND nodes as node
+        REMOVE node._to_delete
+        """
+        # Note: Cypher might need multiple passes or a cleaner way.
+        # Better approach: walk the tree and check degree of incoming.
+
+        query = """
+        MATCH (p:Program {id: $program_id})
+        // Find all reachable nodes
+        OPTIONAL MATCH (p)-[*1..10]->(n)
+        WITH p, collect(DISTINCT n) as reachable_nodes
+        UNWIND reachable_nodes + [p] as node
+
+        // For each node, check if it has any incoming rel from a node NOT in reachable_nodes
+        OPTIONAL MATCH (other)-[r]->(node)
+        WHERE NOT other IN reachable_nodes AND NOT other = p
+        WITH node, count(r) as external_rels
+        WHERE external_rels = 0
+        DETACH DELETE node
+        """
+        await self.session.run(query, program_id=program_id)
+
     async def deduplicate_findings(self, program_id: str) -> int:
         # Instead of physically merging nodes (which might lose historical data or confuse relationships),
         # we mark the older ones as DUPLICATE.

@@ -106,6 +106,14 @@ async def link_cve(finding_id: str, cve: CVECreate, repo: Neo4jRepository = Depe
     await repo.link_finding_to_cve(finding_id, cve)
     return {"status": "success"}
 
+@router.delete("/programs/{program_id}")
+async def delete_program(program_id: str, confirm: bool = Query(False), repo: Neo4jRepository = Depends(get_repo)):
+    if not confirm:
+        raise HTTPException(status_code=400, detail="Confirmation required to delete program and its subgraph.")
+
+    await repo.delete_program_recursive(program_id)
+    return {"status": "deleted"}
+
 # New Phase 8 Review Queue Endpoints
 
 @router.get("/programs/{program_id}/findings/review-queue", response_model=List[Finding])
