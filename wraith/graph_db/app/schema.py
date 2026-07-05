@@ -11,6 +11,19 @@ class FindingStatus(str, Enum):
     FALSE_POSITIVE = "FALSE_POSITIVE"
     DUPLICATE = "DUPLICATE"
 
+    @classmethod
+    def _missing_(cls, value: object):
+        if not isinstance(value, str):
+            return None
+        # Handle legacy "confirmed" or "unconfirmed" lowercase values
+        val_upper = value.upper()
+        if val_upper == "CONFIRMED":
+            return cls.HUMAN_CONFIRMED
+        for member in cls:
+            if member.value == val_upper:
+                return member
+        return None
+
 # Base Models
 class ProgramBase(BaseModel):
     name: str
@@ -88,6 +101,8 @@ class FindingBase(BaseModel):
     ai_confidence: Optional[float] = None
     ai_reasoning: Optional[str] = None
     corroborating_sources: Optional[List[str]] = None
+    cvss_vector: Optional[str] = None
+    evidence: Optional[str] = None
 
 class FindingCreate(FindingBase):
     discovered_at: datetime = Field(default_factory=datetime.utcnow)

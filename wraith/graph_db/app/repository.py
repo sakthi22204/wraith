@@ -181,7 +181,8 @@ class Neo4jRepository:
         SET f.vuln_type = $vuln_type, f.severity = $severity, f.confidence = $confidence,
             f.status = $status, f.description = $description, f.discovered_at = $discovered_at,
             f.ai_confidence = $ai_confidence, f.ai_reasoning = $ai_reasoning,
-            f.corroborating_sources = $corroborating_sources
+            f.corroborating_sources = $corroborating_sources,
+            f.cvss_vector = $cvss_vector, f.evidence = $evidence
         MERGE (t)-[:HAS_FINDING]->(f)
         RETURN f
         """
@@ -190,7 +191,9 @@ class Neo4jRepository:
                                       status=finding.status.value, description=finding.description,
                                       discovered_at=now_utc, ai_confidence=finding.ai_confidence,
                                       ai_reasoning=finding.ai_reasoning,
-                                      corroborating_sources=finding.corroborating_sources)
+                                      corroborating_sources=finding.corroborating_sources,
+                                      cvss_vector=finding.cvss_vector,
+                                      evidence=finding.evidence)
         record = await result.single()
         return Finding(**record["f"])
 
@@ -207,13 +210,9 @@ class Neo4jRepository:
         SET f.status = 'CORROBORATED'
         RETURN f
         """
-        # Ensure terminal states are respected by the Cypher condition or application logic
-        # Actually, the condition `f.status = 'AI_VALIDATED'` already ensures we only transition from that state.
         result = await self.session.run(query, finding_id=finding_id, source_name=source_name)
         record = await result.single()
         if not record:
-            # Finding might not exist or source already present or already CORROBORATED/TERMINAL
-            # Fetch current state
             res = await self.session.run("MATCH (f:Finding {id: $finding_id}) RETURN f", finding_id=finding_id)
             rec = await res.single()
             if not rec:
@@ -222,9 +221,6 @@ class Neo4jRepository:
         return Finding(**record["f"])
 
     def _derive_endpoint_pattern(self, url: str) -> str:
-        # Simple parameterization: replace segments that look like IDs with {id}
-        # e.g. /api/users/123 -> /api/users/{id}
-        # /api/posts/uuid-v4 -> /api/posts/{id}
         parts = url.split('/')
         new_parts = []
         for part in parts:
@@ -249,14 +245,6 @@ class Neo4jRepository:
         finding_data = record["f"]
 
         if human_decision == "false_positive":
-            # Create FalsePositivePattern
-            # Find associated endpoint and program
-            # Finding -> target (Endpoint or Parameter)
-            # Parameter -> Endpoint
-            # Endpoint -> Host -> Program
-
-            # Simple derivation of pattern
-            # For this MVP, we'll try to find the URL from the associated endpoint
             url_query = """
             MATCH (f:Finding {id: $finding_id})<-[:HAS_FINDING]-(target)
             OPTIONAL MATCH (target)-[:HAS_PARAMETER]-(e:Endpoint)
@@ -268,8 +256,7 @@ class Neo4jRepository:
             url_rec = await url_res.single()
             if url_rec:
                 url = url_rec["url"]
-                param_name = url_rec["param_name"] if "name" in url_rec else None # target might be Parameter
-                # Wait, url_rec["param_name"] might be None if target is Endpoint
+                param_name = url_rec["param_name"] if "name" in url_rec else None
                 program_id = url_rec["program_id"]
 
                 pattern = self._derive_endpoint_pattern(url)
@@ -292,8 +279,6 @@ class Neo4jRepository:
         return Finding(**finding_data)
 
     async def get_findings_needing_review(self, program_id: str, threshold: float = 0.7) -> List[Finding]:
-        # Sort by severity then by ai_confidence ascending
-        # Severity mapping in Cypher
         query = """
         MATCH (p:Program {id: $program_id})-[:IN_SCOPE]->(h:Host)
         OPTIONAL MATCH (h)-[:HAS_ENDPOINT]->(e:Endpoint)-[:HAS_FINDING]->(f1:Finding)
@@ -342,17 +327,6 @@ class Neo4jRepository:
 
     async def link_finding_to_cve(self, finding_id: str, cve: CVECreate) -> None:
         c_id = generate_id(cve.cve_id)
-        query = """
-        MATCH (f:Finding {id: $finding_id})
-        MERGE (c:CVE {id: $c_id})
-        SET f.cve_id = $cve_id, f.cvss_score = $cvss_score, f.description = $description
-        MERGE (f)-[:MATCHES_CVE]->(c)
-        """
-        # wait, original code has a bug here: SET f.cve_id = ... should probably be SET c.cve_id = ...
-        # and it was in the original repository.py I read earlier.
-        # Original: SET c.cve_id = $cve_id, c.cvss_score = $cvss_score, c.description = $description
-        # I'll stick to original behavior but fix the obvious typo if it was there.
-        # Checking previous read... yes it was SET c.cve_id.
         query = """
         MATCH (f:Finding {id: $finding_id})
         MERGE (c:CVE {id: $c_id})
@@ -412,7 +386,7 @@ class Neo4jRepository:
         WITH collect(f1) + collect(f2) as findings
         UNWIND findings as f
         WITH DISTINCT f
-        WHERE f IS NOT NULL
+        WHERE f IS NOT NULL AND f.status <> 'DUPLICATE'
         RETURN f
         """
         result = await self.session.run(query, program_id=program_id)
@@ -440,23 +414,25 @@ class Neo4jRepository:
         return paths
 
     async def deduplicate_findings(self, program_id: str) -> int:
+        # Instead of physically merging nodes (which might lose historical data or confuse relationships),
+        # we mark the older ones as DUPLICATE.
         query = """
         MATCH (p:Program {id: $program_id})-[:IN_SCOPE]->(h:Host)-[:HAS_ENDPOINT]->(e:Endpoint)
         MATCH (e)-[:HAS_FINDING]->(f:Finding)
         WITH e, f.vuln_type as vtype, collect(f) as findings
         WHERE size(findings) > 1
-        CALL apoc.refactor.mergeNodes(findings, {properties: "combine", mergeRels: true})
-        YIELD node
-        RETURN count(node) as merged_count
+        UNWIND tail(findings) as duplicate
+        SET duplicate.status = 'DUPLICATE'
+        RETURN count(duplicate) as merged_count
         """
         query_param = """
         MATCH (p:Program {id: $program_id})-[:IN_SCOPE]->(h:Host)-[:HAS_ENDPOINT]->(e:Endpoint)-[:HAS_PARAMETER]->(param:Parameter)
         MATCH (param)-[:HAS_FINDING]->(f:Finding)
         WITH param, f.vuln_type as vtype, collect(f) as findings
         WHERE size(findings) > 1
-        CALL apoc.refactor.mergeNodes(findings, {properties: "combine", mergeRels: true})
-        YIELD node
-        RETURN count(node) as merged_count
+        UNWIND tail(findings) as duplicate
+        SET duplicate.status = 'DUPLICATE'
+        RETURN count(duplicate) as merged_count
         """
 
         res1 = await self.session.run(query, program_id=program_id)

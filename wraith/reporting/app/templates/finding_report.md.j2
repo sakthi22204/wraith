@@ -1,0 +1,57 @@
+# Vulnerability Report: {{ program_name }}
+**Generated at:** {{ generated_at.strftime('%Y-%m-%d %H:%M:%S UTC') }}
+
+## Summary Table
+| Title | Severity | CVSS | Status |
+|-------|----------|------|--------|
+{% for f in findings -%}
+| {{ f.title }} | {{ f.severity }} | {{ f.cvss_score }} | {{ f.discovery_metadata.status }} |
+{% endfor %}
+
+---
+
+{% for f in findings %}
+# Finding: {{ f.title }}
+
+### 1. Title / Summary
+{{ f.title }}
+
+### 2. Vulnerability Type
+{{ f.vulnerability_type }}
+
+### 3. Severity + CVSS Score
+- **Severity:** {{ f.severity }}
+- **CVSS Score:** {{ f.cvss_score }}
+- **CVSS Vector:** {{ f.cvss_vector or 'N/A' }}
+
+### 4. Affected Asset
+{{ f.affected_asset }}
+
+### 5. Detailed Description
+{{ f.description }}
+
+### 6. Steps to Reproduce
+{{ f.steps_to_reproduce }}
+
+### 7. Exploit / PoC Used
+{{ f.exploit_poc }}
+
+### 8. Evidence
+```
+{{ f.evidence }}
+```
+
+### 9. Business Impact
+{{ f.business_impact }}
+
+### 10. Suggested Remediation
+{{ f.suggested_remediation }}
+
+### 11. Discovery Metadata
+- **Timestamp:** {{ f.discovery_metadata.timestamp }}
+- **Discovering Tool:** {{ f.discovery_metadata.tool }}
+- **Program:** {{ f.discovery_metadata.program }}
+- **Confidence:** {{ f.discovery_metadata.confidence }}
+
+---
+{% endfor %}

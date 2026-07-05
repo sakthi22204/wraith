@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { font-family: sans-serif; line-height: 1.6; color: #333; margin: 40px; }
+        h1 { color: #2c3e50; border-bottom: 2px solid #eee; padding-bottom: 10px; }
+        h2 { color: #34495e; margin-top: 30px; }
+        h3 { color: #16a085; background: #f9f9f9; padding: 5px 10px; border-left: 4px solid #16a085; }
+        table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+        th, td { border: 1px solid #ddd; padding: 12px; text-align: left; }
+        th { background-color: #f2f2f2; }
+        .finding-box { page-break-after: always; }
+        .evidence { background: #f4f4f4; border: 1px solid #ccc; padding: 10px; font-family: monospace; white-space: pre-wrap; }
+        .metadata { color: #7f8c8d; font-size: 0.9em; }
+    </style>
+</head>
+<body>
+    <h1>Vulnerability Report: {{ program_name }}</h1>
+    <p><strong>Generated at:</strong> {{ generated_at.strftime('%Y-%m-%d %H:%M:%S UTC') }}</p>
+
+    <h2>Summary Table</h2>
+    <table>
+        <tr>
+            <th>Title</th>
+            <th>Severity</th>
+            <th>CVSS</th>
+            <th>Status</th>
+        </tr>
+        {% for f in findings %}
+        <tr>
+            <td>{{ f.title }}</td>
+            <td>{{ f.severity }}</td>
+            <td>{{ f.cvss_score }}</td>
+            <td>{{ f.discovery_metadata.status }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+
+    {% for f in findings %}
+    <div class="finding-box">
+        <h1>Finding: {{ f.title }}</h1>
+
+        <h3>1. Title / Summary</h3>
+        <p>{{ f.title }}</p>
+
+        <h3>2. Vulnerability Type</h3>
+        <p>{{ f.vulnerability_type }}</p>
+
+        <h3>3. Severity + CVSS Score</h3>
+        <ul>
+            <li><strong>Severity:</strong> {{ f.severity }}</li>
+            <li><strong>CVSS Score:</strong> {{ f.cvss_score }}</li>
+            <li><strong>CVSS Vector:</strong> {{ f.cvss_vector or 'N/A' }}</li>
+        </ul>
+
+        <h3>4. Affected Asset</h3>
+        <p>{{ f.affected_asset }}</p>
+
+        <h3>5. Detailed Description</h3>
+        <p>{{ f.description }}</p>
+
+        <h3>6. Steps to Reproduce</h3>
+        <p>{{ f.steps_to_reproduce }}</p>
+
+        <h3>7. Exploit / PoC Used</h3>
+        <p>{{ f.exploit_poc }}</p>
+
+        <h3>8. Evidence</h3>
+        <div class="evidence">{{ f.evidence }}</div>
+
+        <h3>9. Business Impact</h3>
+        <p>{{ f.business_impact }}</p>
+
+        <h3>10. Suggested Remediation</h3>
+        <p>{{ f.suggested_remediation }}</p>
+
+        <h3>11. Discovery Metadata</h3>
+        <ul class="metadata">
+            <li><strong>Timestamp:</strong> {{ f.discovery_metadata.timestamp }}</li>
+            <li><strong>Discovering Tool:</strong> {{ f.discovery_metadata.tool }}</li>
+            <li><strong>Program:</strong> {{ f.discovery_metadata.program }}</li>
+            <li><strong>Confidence:</strong> {{ f.discovery_metadata.confidence }}</li>
+        </ul>
+    </div>
+    {% endfor %}
+</body>
+</html>
