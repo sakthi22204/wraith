@@ -1,6 +1,10 @@
 # Vulnerability Report: {{ program_name }}
 **Generated at:** {{ generated_at.strftime('%Y-%m-%d %H:%M:%S UTC') }}
 
+{% if summary_line %}
+*{{ summary_line }}*
+{% endif %}
+
 ## Summary Table
 | Title | Severity | CVSS | Status |
 |-------|----------|------|--------|
@@ -23,6 +27,7 @@
 - **Severity:** {{ f.severity }}
 - **CVSS Score:** {{ f.cvss_score }}
 - **CVSS Vector:** {{ f.cvss_vector or 'N/A' }}
+- **AI Confidence:** {{ f.ai_confidence }}
 
 ### 4. Affected Asset
 {{ f.affected_asset }}

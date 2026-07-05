@@ -18,6 +18,10 @@
     <h1>Vulnerability Report: {{ program_name }}</h1>
     <p><strong>Generated at:</strong> {{ generated_at.strftime('%Y-%m-%d %H:%M:%S UTC') }}</p>
 
+    {% if summary_line %}
+    <p><em>{{ summary_line }}</em></p>
+    {% endif %}
+
     <h2>Summary Table</h2>
     <table>
         <tr>
@@ -51,6 +55,7 @@
             <li><strong>Severity:</strong> {{ f.severity }}</li>
             <li><strong>CVSS Score:</strong> {{ f.cvss_score }}</li>
             <li><strong>CVSS Vector:</strong> {{ f.cvss_vector or 'N/A' }}</li>
+            <li><strong>AI Confidence:</strong> {{ f.ai_confidence }}</li>
         </ul>
 
         <h3>4. Affected Asset</h3>

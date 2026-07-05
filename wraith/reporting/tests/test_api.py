@@ -16,6 +16,7 @@ async def test_get_finding_report_markdown():
         from app.models import ReportFinding
         mock_gen.return_value = ReportFinding(
             title="T", vulnerability_type="V", severity="S", cvss_score="C",
+            ai_confidence="0.9",
             affected_asset="A", description="D", steps_to_reproduce="ST",
             exploit_poc="P", evidence="E", business_impact="B",
             suggested_remediation="R", discovery_metadata={"timestamp": "2023", "tool": "T", "program": "P", "confidence": "0.9", "status": "S"}
