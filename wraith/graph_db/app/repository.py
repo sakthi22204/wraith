@@ -386,7 +386,7 @@ class Neo4jRepository:
         WITH collect(f1) + collect(f2) as findings
         UNWIND findings as f
         WITH DISTINCT f
-        WHERE f IS NOT NULL
+        WHERE f IS NOT NULL AND f.status <> 'DUPLICATE'
         RETURN f
         """
         result = await self.session.run(query, program_id=program_id)
@@ -414,23 +414,25 @@ class Neo4jRepository:
         return paths
 
     async def deduplicate_findings(self, program_id: str) -> int:
+        # Instead of physically merging nodes (which might lose historical data or confuse relationships),
+        # we mark the older ones as DUPLICATE.
         query = """
         MATCH (p:Program {id: $program_id})-[:IN_SCOPE]->(h:Host)-[:HAS_ENDPOINT]->(e:Endpoint)
         MATCH (e)-[:HAS_FINDING]->(f:Finding)
         WITH e, f.vuln_type as vtype, collect(f) as findings
         WHERE size(findings) > 1
-        CALL apoc.refactor.mergeNodes(findings, {properties: "combine", mergeRels: true})
-        YIELD node
-        RETURN count(node) as merged_count
+        UNWIND tail(findings) as duplicate
+        SET duplicate.status = 'DUPLICATE'
+        RETURN count(duplicate) as merged_count
         """
         query_param = """
         MATCH (p:Program {id: $program_id})-[:IN_SCOPE]->(h:Host)-[:HAS_ENDPOINT]->(e:Endpoint)-[:HAS_PARAMETER]->(param:Parameter)
         MATCH (param)-[:HAS_FINDING]->(f:Finding)
         WITH param, f.vuln_type as vtype, collect(f) as findings
         WHERE size(findings) > 1
-        CALL apoc.refactor.mergeNodes(findings, {properties: "combine", mergeRels: true})
-        YIELD node
-        RETURN count(node) as merged_count
+        UNWIND tail(findings) as duplicate
+        SET duplicate.status = 'DUPLICATE'
+        RETURN count(duplicate) as merged_count
         """
 
         res1 = await self.session.run(query, program_id=program_id)
