@@ -1,6 +1,15 @@
 from pydantic import BaseModel, Field
 from datetime import datetime
 from typing import List, Optional
+from enum import Enum
+
+class FindingStatus(str, Enum):
+    UNCONFIRMED = "UNCONFIRMED"
+    AI_VALIDATED = "AI_VALIDATED"
+    CORROBORATED = "CORROBORATED"
+    HUMAN_CONFIRMED = "HUMAN_CONFIRMED"
+    FALSE_POSITIVE = "FALSE_POSITIVE"
+    DUPLICATE = "DUPLICATE"
 
 # Base Models
 class ProgramBase(BaseModel):
@@ -74,8 +83,11 @@ class FindingBase(BaseModel):
     vuln_type: str
     severity: str
     confidence: str
-    status: str
+    status: FindingStatus
     description: str
+    ai_confidence: Optional[float] = None
+    ai_reasoning: Optional[str] = None
+    corroborating_sources: Optional[List[str]] = None
 
 class FindingCreate(FindingBase):
     discovered_at: datetime = Field(default_factory=datetime.utcnow)
@@ -85,6 +97,19 @@ class FindingCreate(FindingBase):
 class Finding(FindingBase):
     id: str
     discovered_at: datetime
+
+class FalsePositivePatternBase(BaseModel):
+    vuln_type: str
+    endpoint_pattern: str
+    parameter_name: Optional[str] = None
+    reason: str
+
+class FalsePositivePatternCreate(FalsePositivePatternBase):
+    pass
+
+class FalsePositivePattern(FalsePositivePatternBase):
+    id: str
+    created_at: datetime
 
 class CVEBase(BaseModel):
     cve_id: str
