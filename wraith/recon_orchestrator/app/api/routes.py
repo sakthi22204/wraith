@@ -26,3 +26,11 @@ async def get_results(session_id: str):
         results = ToolResults()
 
     return ReconSessionResults(session_id=session_id, results=results)
+
+@router.post("/{session_id}/cancel")
+async def cancel_recon(session_id: str):
+    if session_id not in orchestrator.sessions:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    await orchestrator.cancel_session(session_id)
+    return {"status": "cancelled"}

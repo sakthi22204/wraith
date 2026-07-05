@@ -19,6 +19,7 @@ class ReconOrchestrator:
             NaabuTool()
         ]
         self.semaphore = asyncio.Semaphore(10)  # Concurrency limit
+        self.running_tasks: Dict[str, List[asyncio.Task]] = {}
 
     async def run_session(self, session_id: str, program_id: str, domains: List[str]):
         session = self.sessions[session_id]
@@ -35,9 +36,15 @@ class ReconOrchestrator:
         tasks = []
         for domain in domains:
             for tool in self.tools:
-                tasks.append(self._run_tool(session_id, program_id, domain, tool))
+                t = asyncio.create_task(self._run_tool(session_id, program_id, domain, tool))
+                tasks.append(t)
 
-        await asyncio.gather(*tasks)
+        self.running_tasks[session_id] = tasks
+
+        try:
+            await asyncio.gather(*tasks)
+        except asyncio.CancelledError:
+             pass
         session.status = "completed"
         session.progress = 100.0
 
@@ -92,6 +99,15 @@ class ReconOrchestrator:
         for endpoint in results.endpoints:
             host_obj = await graph_client.upsert_host(program_id, HostResult(value=endpoint.host, source_tool=endpoint.source_tool))
             await graph_client.upsert_endpoint(host_obj["id"], endpoint)
+
+    async def cancel_session(self, session_id: str):
+        if session_id in self.running_tasks:
+            for task in self.running_tasks[session_id]:
+                task.cancel()
+            del self.running_tasks[session_id]
+
+        if session_id in self.sessions:
+            self.sessions[session_id].status = "cancelled"
 
     def start_session(self, request: ReconRequest) -> str:
         session_id = str(uuid.uuid4())
