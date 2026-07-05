@@ -1,6 +1,6 @@
 import pytest
 import asyncio
-from httpx import AsyncClient, ASGITransport
+from httpx import AsyncClient, ASGITransport, Response, Request
 from app.main import app as broker_app
 from recon_orchestrator.app.main import app as recon_app
 from unittest.mock import AsyncMock, patch, MagicMock
@@ -41,12 +41,23 @@ async def test_regression_recon_flow():
             with patch("recon_orchestrator.app.docker_spawner.httpx.AsyncClient") as mock_broker_client:
                 # Mock the broker response as if it were running
                 mock_broker_ac = mock_broker_client.return_value.__aenter__.return_value
-                mock_broker_ac.post.side_effect = [
-                    AsyncMock(status_code=200, json=lambda: {"container_id": "test-container-id"}), # create
-                    AsyncMock(status_code=200, json=lambda: {"StatusCode": 0})                       # wait
-                ]
-                mock_broker_ac.get.return_value = AsyncMock(status_code=200, json=lambda: {"logs": '{"host": "found.example.com"}\n'})
-                mock_broker_ac.delete.return_value = AsyncMock(status_code=200)
+
+                dummy_request = Request("POST", "http://broker")
+
+                async def mock_post(url, **kwargs):
+                    if "/wait" in url:
+                        return Response(200, json={"StatusCode": 0}, request=dummy_request)
+                    return Response(200, json={"container_id": "test-container-id"}, request=dummy_request)
+
+                async def mock_get(url, **kwargs):
+                    return Response(200, json={"logs": '{"host": "found.example.com"}\n'}, request=dummy_request)
+
+                async def mock_delete(url, **kwargs):
+                    return Response(200, request=dummy_request)
+
+                mock_broker_ac.post = AsyncMock(side_effect=mock_post)
+                mock_broker_ac.get = AsyncMock(side_effect=mock_get)
+                mock_broker_ac.delete = AsyncMock(side_effect=mock_delete)
 
                 response = await ac_recon.post("/api/v1/recon/start", json={
                     "program_id": "prog-123",
@@ -67,5 +78,6 @@ async def test_regression_recon_flow():
                 assert orchestrator.sessions[session_id].progress == 100.0
 
                 # Verify that it tried to call the broker 4 times (one per tool)
-                # Actually, 4 tools * (1 create + 1 wait + 1 log)
+                # Each tool does: 1 create + 1 wait = 2 POSTs.
+                # 4 tools * 2 = 8 POSTs.
                 assert mock_broker_ac.post.call_count >= 8
