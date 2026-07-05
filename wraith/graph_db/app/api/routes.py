@@ -1,9 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import List, Optional
+from pydantic import BaseModel
 from ..schema import (
     Program, ProgramCreate, Host, HostCreate, Port, PortCreate,
     Service, ServiceCreate, Endpoint, EndpointCreate, Parameter, ParameterCreate,
-    Finding, FindingCreate, CVECreate, GraphResponse
+    Finding, FindingCreate, CVECreate, GraphResponse, FalsePositivePattern
 )
 from ..client import neo4j_client
 from ..repository import Neo4jRepository
@@ -16,6 +17,18 @@ async def get_repo():
         yield Neo4jRepository(session)
     finally:
         await session.close()
+
+class ReviewRequest(BaseModel):
+    decision: str # "confirmed" | "false_positive"
+    note: str
+
+class CorroborateRequest(BaseModel):
+    source_name: str
+
+class FPCheckRequest(BaseModel):
+    vuln_type: str
+    endpoint: str
+    parameter: Optional[str] = None
 
 @router.post("/programs", response_model=Program)
 async def create_program(program: ProgramCreate, repo: Neo4jRepository = Depends(get_repo)):
@@ -92,3 +105,23 @@ async def deduplicate_findings(program_id: str, repo: Neo4jRepository = Depends(
 async def link_cve(finding_id: str, cve: CVECreate, repo: Neo4jRepository = Depends(get_repo)):
     await repo.link_finding_to_cve(finding_id, cve)
     return {"status": "success"}
+
+# New Phase 8 Review Queue Endpoints
+
+@router.get("/programs/{program_id}/findings/review-queue", response_model=List[Finding])
+async def get_review_queue(program_id: str, threshold: float = 0.7, repo: Neo4jRepository = Depends(get_repo)):
+    return await repo.get_findings_needing_review(program_id, threshold)
+
+@router.post("/findings/{finding_id}/review", response_model=Finding)
+async def review_finding(finding_id: str, request: ReviewRequest, repo: Neo4jRepository = Depends(get_repo)):
+    if request.decision not in ["confirmed", "false_positive"]:
+         raise HTTPException(status_code=400, detail="decision must be confirmed or false_positive")
+    return await repo.mark_reviewed(finding_id, request.decision, request.note)
+
+@router.post("/findings/{finding_id}/corroborate", response_model=Finding)
+async def corroborate_finding(finding_id: str, request: CorroborateRequest, repo: Neo4jRepository = Depends(get_repo)):
+    return await repo.add_corroboration(finding_id, request.source_name)
+
+@router.post("/programs/{program_id}/findings/check-false-positive", response_model=List[FalsePositivePattern])
+async def check_false_positive(program_id: str, request: FPCheckRequest, repo: Neo4jRepository = Depends(get_repo)):
+    return await repo.check_known_false_positive_patterns(program_id, request.vuln_type, request.endpoint, request.parameter)
