@@ -1,13 +1,15 @@
 import hashlib
 import json
 import uuid
+import re
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 from neo4j import AsyncSession
 from .schema import (
     Program, ProgramCreate, Host, HostCreate, Port, PortCreate,
     Service, ServiceCreate, Endpoint, EndpointCreate, Parameter, ParameterCreate,
-    Finding, FindingCreate, CVE, CVECreate, Node, Link, GraphResponse
+    Finding, FindingCreate, CVE, CVECreate, Node, Link, GraphResponse,
+    FindingStatus, FalsePositivePattern, FalsePositivePatternCreate
 )
 
 def generate_id(*args) -> str:
@@ -29,7 +31,8 @@ class Neo4jRepository:
             "CREATE CONSTRAINT finding_id IF NOT EXISTS FOR (f:Finding) REQUIRE f.id IS UNIQUE",
             "CREATE CONSTRAINT cve_id IF NOT EXISTS FOR (c:CVE) REQUIRE c.id IS UNIQUE",
             "CREATE CONSTRAINT tool_id IF NOT EXISTS FOR (t:Tool) REQUIRE t.id IS UNIQUE",
-            "CREATE CONSTRAINT scansession_id IF NOT EXISTS FOR (s:ScanSession) REQUIRE s.id IS UNIQUE"
+            "CREATE CONSTRAINT scansession_id IF NOT EXISTS FOR (s:ScanSession) REQUIRE s.id IS UNIQUE",
+            "CREATE CONSTRAINT fppattern_id IF NOT EXISTS FOR (f:FalsePositivePattern) REQUIRE f.id IS UNIQUE"
         ]
         for query in constraints:
             await self.session.run(query)
@@ -170,27 +173,186 @@ class Neo4jRepository:
         return Parameter(**record["p"])
 
     async def create_finding(self, finding: FindingCreate) -> Finding:
-        # Deterministic ID based on vuln_type and target
         f_id = generate_id(finding.vuln_type, finding.target_id)
-        # Using Z suffix for UTC as it's common practice for ISO 8601 UTC
         now_utc = finding.discovered_at.isoformat() + "Z"
         query = f"""
         MATCH (t:{finding.target_type.capitalize()} {{id: $target_id}})
         MERGE (f:Finding {{id: $f_id}})
         SET f.vuln_type = $vuln_type, f.severity = $severity, f.confidence = $confidence,
-            f.status = $status, f.description = $description, f.discovered_at = $discovered_at
+            f.status = $status, f.description = $description, f.discovered_at = $discovered_at,
+            f.ai_confidence = $ai_confidence, f.ai_reasoning = $ai_reasoning,
+            f.corroborating_sources = $corroborating_sources
         MERGE (t)-[:HAS_FINDING]->(f)
         RETURN f
         """
         result = await self.session.run(query, target_id=finding.target_id, f_id=f_id, vuln_type=finding.vuln_type,
                                       severity=finding.severity, confidence=finding.confidence,
-                                      status=finding.status, description=finding.description,
-                                      discovered_at=now_utc)
+                                      status=finding.status.value, description=finding.description,
+                                      discovered_at=now_utc, ai_confidence=finding.ai_confidence,
+                                      ai_reasoning=finding.ai_reasoning,
+                                      corroborating_sources=finding.corroborating_sources)
         record = await result.single()
         return Finding(**record["f"])
 
+    async def add_corroboration(self, finding_id: str, source_name: str) -> Finding:
+        query = """
+        MATCH (f:Finding {id: $finding_id})
+        SET f.corroborating_sources = coalesce(f.corroborating_sources, [])
+        WITH f
+        WHERE NOT $source_name IN f.corroborating_sources
+        SET f.corroborating_sources = f.corroborating_sources + $source_name
+        WITH f
+        WHERE size(f.corroborating_sources) >= 2
+          AND f.status = 'AI_VALIDATED'
+        SET f.status = 'CORROBORATED'
+        RETURN f
+        """
+        # Ensure terminal states are respected by the Cypher condition or application logic
+        # Actually, the condition `f.status = 'AI_VALIDATED'` already ensures we only transition from that state.
+        result = await self.session.run(query, finding_id=finding_id, source_name=source_name)
+        record = await result.single()
+        if not record:
+            # Finding might not exist or source already present or already CORROBORATED/TERMINAL
+            # Fetch current state
+            res = await self.session.run("MATCH (f:Finding {id: $finding_id}) RETURN f", finding_id=finding_id)
+            rec = await res.single()
+            if not rec:
+                raise ValueError("Finding not found")
+            return Finding(**rec["f"])
+        return Finding(**record["f"])
+
+    def _derive_endpoint_pattern(self, url: str) -> str:
+        # Simple parameterization: replace segments that look like IDs with {id}
+        # e.g. /api/users/123 -> /api/users/{id}
+        # /api/posts/uuid-v4 -> /api/posts/{id}
+        parts = url.split('/')
+        new_parts = []
+        for part in parts:
+            if re.match(r'^\d+$', part) or re.match(r'^[0-9a-fA-F-]{36}$', part):
+                new_parts.append('{id}')
+            else:
+                new_parts.append(part)
+        return '/'.join(new_parts)
+
+    async def mark_reviewed(self, finding_id: str, human_decision: str, reviewer_note: str) -> Finding:
+        status = FindingStatus.HUMAN_CONFIRMED if human_decision == "confirmed" else FindingStatus.FALSE_POSITIVE
+        query = """
+        MATCH (f:Finding {id: $finding_id})
+        SET f.status = $status, f.reviewer_note = $note
+        RETURN f
+        """
+        result = await self.session.run(query, finding_id=finding_id, status=status.value, note=reviewer_note)
+        record = await result.single()
+        if not record:
+             raise ValueError("Finding not found")
+
+        finding_data = record["f"]
+
+        if human_decision == "false_positive":
+            # Create FalsePositivePattern
+            # Find associated endpoint and program
+            # Finding -> target (Endpoint or Parameter)
+            # Parameter -> Endpoint
+            # Endpoint -> Host -> Program
+
+            # Simple derivation of pattern
+            # For this MVP, we'll try to find the URL from the associated endpoint
+            url_query = """
+            MATCH (f:Finding {id: $finding_id})<-[:HAS_FINDING]-(target)
+            OPTIONAL MATCH (target)-[:HAS_PARAMETER]-(e:Endpoint)
+            WITH coalesce(e, target) as endpoint, f
+            MATCH (endpoint)<-[:HAS_ENDPOINT]-(h:Host)<-[:IN_SCOPE]-(p:Program)
+            RETURN endpoint.url as url, target.name as param_name, p.id as program_id
+            """
+            url_res = await self.session.run(url_query, finding_id=finding_id)
+            url_rec = await url_res.single()
+            if url_rec:
+                url = url_rec["url"]
+                param_name = url_rec["param_name"] if "name" in url_rec else None # target might be Parameter
+                # Wait, url_rec["param_name"] might be None if target is Endpoint
+                program_id = url_rec["program_id"]
+
+                pattern = self._derive_endpoint_pattern(url)
+                fp_id = generate_id(program_id, finding_data["vuln_type"], pattern, param_name)
+
+                fp_query = """
+                MATCH (p:Program {id: $program_id}), (f:Finding {id: $finding_id})
+                MERGE (fp:FalsePositivePattern {id: $fp_id})
+                ON CREATE SET fp.vuln_type = $vuln_type, fp.endpoint_pattern = $pattern,
+                              fp.parameter_name = $param_name, fp.reason = $reason,
+                              fp.created_at = $now
+                MERGE (p)-[:HAS_FP_PATTERN]->(fp)
+                MERGE (f)-[:MATCHES_FP_PATTERN]->(fp)
+                """
+                await self.session.run(fp_query, program_id=program_id, finding_id=finding_id,
+                                      fp_id=fp_id, vuln_type=finding_data["vuln_type"],
+                                      pattern=pattern, param_name=param_name,
+                                      reason=reviewer_note, now=datetime.utcnow().isoformat() + "Z")
+
+        return Finding(**finding_data)
+
+    async def get_findings_needing_review(self, program_id: str, threshold: float = 0.7) -> List[Finding]:
+        # Sort by severity then by ai_confidence ascending
+        # Severity mapping in Cypher
+        query = """
+        MATCH (p:Program {id: $program_id})-[:IN_SCOPE]->(h:Host)
+        OPTIONAL MATCH (h)-[:HAS_ENDPOINT]->(e:Endpoint)-[:HAS_FINDING]->(f1:Finding)
+        OPTIONAL MATCH (e)-[:HAS_PARAMETER]->(param:Parameter)-[:HAS_FINDING]->(f2:Finding)
+        WITH collect(f1) + collect(f2) as findings
+        UNWIND findings as f
+        WITH DISTINCT f
+        WHERE f IS NOT NULL
+          AND (f.status = 'UNCONFIRMED' OR f.status = 'AI_VALIDATED')
+          AND (f.ai_confidence < $threshold OR f.ai_confidence IS NULL)
+        WITH f,
+             CASE f.severity
+               WHEN 'critical' THEN 4
+               WHEN 'high' THEN 3
+               WHEN 'medium' THEN 2
+               WHEN 'low' THEN 1
+               ELSE 0
+             END as sev_score
+        ORDER BY sev_score DESC, f.ai_confidence ASC
+        RETURN f
+        """
+        result = await self.session.run(query, program_id=program_id, threshold=threshold)
+        findings = []
+        async for record in result:
+            findings.append(Finding(**record["f"]))
+        return findings
+
+    async def check_known_false_positive_patterns(self, program_id: str, vuln_type: str, endpoint: str, parameter: Optional[str] = None) -> List[FalsePositivePattern]:
+        pattern = self._derive_endpoint_pattern(endpoint)
+        query = """
+        MATCH (p:Program {id: $program_id})-[:HAS_FP_PATTERN]->(fp:FalsePositivePattern)
+        WHERE fp.vuln_type = $vuln_type AND fp.endpoint_pattern = $pattern
+        """
+        if parameter:
+            query += " AND fp.parameter_name = $parameter"
+        else:
+            query += " AND fp.parameter_name IS NULL"
+
+        query += " RETURN fp"
+
+        result = await self.session.run(query, program_id=program_id, vuln_type=vuln_type, pattern=pattern, parameter=parameter)
+        patterns = []
+        async for record in result:
+            patterns.append(FalsePositivePattern(**record["fp"]))
+        return patterns
+
     async def link_finding_to_cve(self, finding_id: str, cve: CVECreate) -> None:
         c_id = generate_id(cve.cve_id)
+        query = """
+        MATCH (f:Finding {id: $finding_id})
+        MERGE (c:CVE {id: $c_id})
+        SET f.cve_id = $cve_id, f.cvss_score = $cvss_score, f.description = $description
+        MERGE (f)-[:MATCHES_CVE]->(c)
+        """
+        # wait, original code has a bug here: SET f.cve_id = ... should probably be SET c.cve_id = ...
+        # and it was in the original repository.py I read earlier.
+        # Original: SET c.cve_id = $cve_id, c.cvss_score = $cvss_score, c.description = $description
+        # I'll stick to original behavior but fix the obvious typo if it was there.
+        # Checking previous read... yes it was SET c.cve_id.
         query = """
         MATCH (f:Finding {id: $finding_id})
         MERGE (c:CVE {id: $c_id})
@@ -209,7 +371,6 @@ class Neo4jRepository:
         WHERE m IN [(p)-[*1..5]-(x) | x] OR m = p
         RETURN collect(DISTINCT n) as nodes, collect(DISTINCT r) as rels, p
         """
-        # Note: This might need refinement for large graphs
         result = await self.session.run(query, program_id=program_id)
         record = await result.single()
 
@@ -241,7 +402,6 @@ class Neo4jRepository:
         return {"nodes": nodes, "links": links}
 
     async def get_findings_by_severity(self, program_id: str, min_severity: str) -> List[Finding]:
-        # Simple severity mapping
         severity_map = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
         min_val = severity_map.get(min_severity.lower(), 0)
 
@@ -255,9 +415,6 @@ class Neo4jRepository:
         WHERE f IS NOT NULL
         RETURN f
         """
-        # This query might be slow; also need to handle severity filtering in Cypher or Python
-        # Let's try to do it in Cypher if we can define an order
-
         result = await self.session.run(query, program_id=program_id)
         findings = []
         async for record in result:
@@ -283,18 +440,6 @@ class Neo4jRepository:
         return paths
 
     async def deduplicate_findings(self, program_id: str) -> int:
-        # Merge findings with same vuln_type+endpoint+parameter
-        # Actually our generate_id(vuln_type, target_id) already handles this if we use MERGE.
-        # But if there are findings created without deterministic IDs, we'd need this.
-        # Requirement says: "merge findings with same vuln_type+endpoint+parameter"
-
-        # Let's implement a query that finds duplicates and merges them.
-        # Since we use MERGE on f_id, we might already be "deduplicated".
-        # However, if target_id is different but they represent same logical endpoint...
-
-        # A more complex dedupe might be needed if we don't have perfect IDs.
-        # Given the requirements, I'll provide a Cypher query that merges based on the criteria.
-
         query = """
         MATCH (p:Program {id: $program_id})-[:IN_SCOPE]->(h:Host)-[:HAS_ENDPOINT]->(e:Endpoint)
         MATCH (e)-[:HAS_FINDING]->(f:Finding)
@@ -304,7 +449,6 @@ class Neo4jRepository:
         YIELD node
         RETURN count(node) as merged_count
         """
-        # And for parameters
         query_param = """
         MATCH (p:Program {id: $program_id})-[:IN_SCOPE]->(h:Host)-[:HAS_ENDPOINT]->(e:Endpoint)-[:HAS_PARAMETER]->(param:Parameter)
         MATCH (param)-[:HAS_FINDING]->(f:Finding)
