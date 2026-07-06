@@ -44,12 +44,16 @@ async def run_msf_module(module: str, target: str, options: dict):
     return await metasploit.mcp.call_tool("run_module", {"module": module, "target": target, "options": options})
 
 # Add internal REST bridge for Phase 5 executor
-@mcp.app.post("/tools/{tool_name}/call")
-async def call_tool_internal(tool_name: str, arguments: dict):
+@mcp.custom_route("/tools/{tool_name}/call", methods=["POST"])
+async def call_tool_internal(request):
+    # FastMCP custom_route passes the Starlette request object
+    import json
+    body = await request.json()
+    tool_name = request.path_params["tool_name"]
     # FastMCP stores tool handlers in a dictionary
     # For simplicity, we just use call_tool which is an internal method
     # It returns [TextContent, ...]
-    return await mcp.call_tool(tool_name, arguments)
+    return await mcp.call_tool(tool_name, body)
 
 if __name__ == "__main__":
     mcp.run(transport="sse")
