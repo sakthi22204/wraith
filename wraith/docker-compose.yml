@@ -153,6 +153,39 @@ services:
     volumes:
       - ollama_data:/root/.ollama
 
+  # PHASE 9 — REPORTING SERVICE
+  reporting:
+    build:
+      context: ./reporting
+    ports:
+      - "8006:8006"
+    environment:
+      - GRAPH_DB_URL=http://graph_api:8001
+      - ACTIVE_EXPLOIT_RUNNER_URL=http://active_exploit_runner:8004
+    networks:
+      - wraith_internal
+    depends_on:
+      graph_api:
+        condition: service_healthy
+
+  # PHASE 7/10 — FRONTEND CONTROL PANEL
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_GRAPH_DB_URL=http://localhost:8001
+      - NEXT_PUBLIC_AGENT_URL=http://localhost:8003
+      - NEXT_PUBLIC_RECON_URL=http://localhost:8002
+      - NEXT_PUBLIC_EXPLOIT_RUNNER_URL=http://localhost:8004
+      - NEXT_PUBLIC_REPORTING_URL=http://localhost:8006
+    networks:
+      - wraith_internal
+    depends_on:
+      graph_api:
+        condition: service_healthy
+
   # LOCAL TEST TARGETS — NEVER EXPOSE PUBLICLY, INTERNAL NETWORK ONLY
   juice_shop:
     image: bkimminich/juice-shop
