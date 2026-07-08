@@ -172,19 +172,24 @@ services:
   frontend:
     build:
       context: ./frontend
+      args:
+        - NEXT_PUBLIC_GRAPH_DB_URL=http://localhost:8001
+        - NEXT_PUBLIC_AGENT_URL=http://localhost:8003
+        - NEXT_PUBLIC_RECON_URL=http://localhost:8002
+        - NEXT_PUBLIC_EXPLOIT_RUNNER_URL=http://localhost:8004
+        - NEXT_PUBLIC_REPORTING_URL=http://localhost:8006
     ports:
       - "3000:3000"
-    environment:
-      - NEXT_PUBLIC_GRAPH_DB_URL=http://localhost:8001
-      - NEXT_PUBLIC_AGENT_URL=http://localhost:8003
-      - NEXT_PUBLIC_RECON_URL=http://localhost:8002
-      - NEXT_PUBLIC_EXPLOIT_RUNNER_URL=http://localhost:8004
-      - NEXT_PUBLIC_REPORTING_URL=http://localhost:8006
     networks:
       - wraith_internal
     depends_on:
       graph_api:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   # LOCAL TEST TARGETS — NEVER EXPOSE PUBLICLY, INTERNAL NETWORK ONLY
   juice_shop:
