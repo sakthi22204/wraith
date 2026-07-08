@@ -1,5 +1,5 @@
 # Stage 1: Build
-FROM node:18-alpine AS builder
+FROM node:18-slim AS builder
 
 WORKDIR /app
 
@@ -23,14 +23,14 @@ COPY . .
 RUN npm run build
 
 # Stage 2: Production
-FROM node:18-alpine AS runner
+FROM node:18-slim AS runner
 
 WORKDIR /app
 
 ENV NODE_ENV=production
 
 # Install curl for health checks
-RUN apk add --no-cache curl
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next ./.next
