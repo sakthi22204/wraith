@@ -370,13 +370,15 @@ class Neo4jRepository:
                               cvss_score=cve.cvss_score, description=cve.description)
 
     async def get_attack_surface(self, program_id: str) -> Dict[str, Any]:
+        # Use APOC to reliably fetch the connected subgraph up to 5 levels
         query = """
         MATCH (p:Program {id: $program_id})
-        MATCH (p)-[*1..5]-(n)
-        WITH DISTINCT n
-        MATCH (n)-[r]-(m)
-        WHERE m IN [(p)-[*1..5]-(x) | x] OR m = p
-        RETURN collect(DISTINCT n) as nodes, collect(DISTINCT r) as rels, p
+        CALL apoc.path.subgraphAll(p, {
+            maxLevel: 5,
+            relationshipFilter: ''
+        })
+        YIELD nodes, relationships
+        RETURN nodes, relationships, p
         """
         result = await self.session.run(query, program_id=program_id)
         record = await result.single()
@@ -385,21 +387,17 @@ class Neo4jRepository:
         links = []
 
         if record:
-            program_node = record["p"]
-            nodes.append({
-                "id": program_node["id"],
-                "labels": list(program_node.labels),
-                "properties": dict(program_node)
-            })
-
+            # apoc.path.subgraphAll includes the start node in 'nodes'
             for n in record["nodes"]:
+                # Handle both real Neo4j nodes and mock nodes in tests
+                properties = dict(n.items()) if hasattr(n, 'items') else dict(n)
                 nodes.append({
                     "id": n["id"],
                     "labels": list(n.labels),
-                    "properties": dict(n)
+                    "properties": properties
                 })
 
-            for r in record["rels"]:
+            for r in record["relationships"]:
                 links.append({
                     "source": r.start_node["id"],
                     "target": r.end_node["id"],

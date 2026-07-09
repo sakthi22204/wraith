@@ -28,24 +28,28 @@ async def create_container(spec: dict, caller_id: str = Depends(require_broker_t
     return {"container_id": container_id}
 
 @router.post("/containers/{container_id}/wait")
-async def wait_container(container_id: str, timeout: Optional[int] = None, caller_id: str = Depends(require_broker_token)):
-    verify_ownership(container_id, caller_id)
+async def wait_container(container_id: str, caller: Optional[str] = Query(None), timeout: Optional[int] = None, caller_id: str = Depends(require_broker_token)):
+    identity = caller or caller_id
+    verify_ownership(container_id, identity)
     return await docker_proxy.wait_container(container_id, timeout)
 
 @router.get("/containers/{container_id}/logs")
-async def get_logs(container_id: str, caller_id: str = Depends(require_broker_token)):
-    verify_ownership(container_id, caller_id)
+async def get_logs(container_id: str, caller: Optional[str] = Query(None), caller_id: str = Depends(require_broker_token)):
+    identity = caller or caller_id
+    verify_ownership(container_id, identity)
     return {"logs": await docker_proxy.get_logs(container_id)}
 
 @router.post("/containers/{container_id}/stop")
-async def stop_container(container_id: str, caller_id: str = Depends(require_broker_token)):
-    verify_ownership(container_id, caller_id)
+async def stop_container(container_id: str, caller: Optional[str] = Query(None), caller_id: str = Depends(require_broker_token)):
+    identity = caller or caller_id
+    verify_ownership(container_id, identity)
     await docker_proxy.stop_container(container_id)
     return {"status": "stopped"}
 
 @router.delete("/containers/{container_id}")
-async def remove_container(container_id: str, caller_id: str = Depends(require_broker_token)):
-    verify_ownership(container_id, caller_id)
+async def remove_container(container_id: str, caller: Optional[str] = Query(None), caller_id: str = Depends(require_broker_token)):
+    identity = caller or caller_id
+    verify_ownership(container_id, identity)
     await docker_proxy.remove_container(container_id)
     # Cleanup ownership
     if container_id in container_ownership:

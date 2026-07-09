@@ -27,17 +27,26 @@ class DockerSpawner:
 
             try:
                 # 2. Wait
-                wait_res = await client.post(f"{self.broker_url}/containers/{container_id}/wait", params={"timeout": timeout})
+                wait_res = await client.post(
+                    f"{self.broker_url}/containers/{container_id}/wait",
+                    params={"timeout": timeout, "caller": "recon_orchestrator"}
+                )
                 wait_res.raise_for_status()
 
                 # 3. Get logs
-                log_res = await client.get(f"{self.broker_url}/containers/{container_id}/logs")
+                log_res = await client.get(
+                    f"{self.broker_url}/containers/{container_id}/logs",
+                    params={"caller": "recon_orchestrator"}
+                )
                 log_res.raise_for_status()
                 return log_res.json()["logs"]
             finally:
                 # 4. Cleanup
                 try:
-                    await client.delete(f"{self.broker_url}/containers/{container_id}")
+                    await client.delete(
+                        f"{self.broker_url}/containers/{container_id}",
+                        params={"caller": "recon_orchestrator"}
+                    )
                 except:
                     pass
 

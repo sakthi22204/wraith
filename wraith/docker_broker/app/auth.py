@@ -9,7 +9,6 @@ async def require_broker_token(authorization: str = Header(None)):
             detail="Invalid or missing broker token",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    # Extract caller identity from token or just return a generic 'authenticated_service'
-    # For now, we'll just return the token itself as a simple identity placeholder
-    # or the user can pass a 'caller' field in the request.
+    # For now, return a generic identifier that represents an authenticated service.
+    # In a more advanced setup, this could be derived from sub-tokens or headers.
     return "authenticated_service"

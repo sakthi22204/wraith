@@ -138,3 +138,56 @@ async def test_list_programs():
     assert len(programs) == 2
     assert programs[0].id == "p1"
     assert programs[1].id == "p2"
+
+@pytest.mark.asyncio
+async def test_get_attack_surface():
+    mock_session = AsyncMock()
+    repo = Neo4jRepository(mock_session)
+
+    # Mock result
+    mock_result = AsyncMock()
+
+    class MockNode:
+        def __init__(self, id, labels, props):
+            self.id = id
+            self.labels = set(labels)
+            self.props = props
+        def __getitem__(self, key):
+            return self.props[key]
+        def __iter__(self):
+            return iter(self.props)
+        def items(self):
+            return self.props.items()
+
+    class MockRel:
+        def __init__(self, start_id, end_id, type):
+            self.start_node = {"id": start_id}
+            self.end_node = {"id": end_id}
+            self.type = type
+
+    mock_record = {
+        "nodes": [
+            MockNode("p1", ["Program"], {"id": "p1", "name": "prog1"}),
+            MockNode("h1", ["Host"], {"id": "h1", "value": "1.2.3.4"})
+        ],
+        "relationships": [
+            MockRel("p1", "h1", "IN_SCOPE")
+        ]
+    }
+
+    mock_result.single.return_value = mock_record
+    mock_session.run.return_value = mock_result
+
+    surface = await repo.get_attack_surface("p1")
+
+    # Verify query
+    args, kwargs = mock_session.run.call_args
+    query = args[0]
+    assert "apoc.path.subgraphAll" in query
+
+    # Verify processing
+    assert len(surface["nodes"]) == 2
+    assert len(surface["links"]) == 1
+    assert surface["nodes"][0]["id"] == "p1"
+    assert surface["links"][0]["source"] == "p1"
+    assert surface["links"][0]["type"] == "IN_SCOPE"
