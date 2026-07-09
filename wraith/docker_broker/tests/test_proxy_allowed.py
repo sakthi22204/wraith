@@ -2,6 +2,7 @@ import pytest
 from unittest.mock import MagicMock, patch
 from httpx import AsyncClient, ASGITransport
 from app.main import app
+from app.config import settings
 
 @pytest.mark.asyncio
 async def test_create_container_allowed():
@@ -14,10 +15,14 @@ async def test_create_container_allowed():
         mock_docker.return_value.containers.run.return_value = mock_container
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            response = await ac.post("/api/v1/containers", json={
-                "image": "projectdiscovery/subfinder:latest",
-                "command": ["-d", "example.com"]
-            })
+            response = await ac.post(
+                "/api/v1/containers",
+                json={
+                    "image": "projectdiscovery/subfinder:latest",
+                    "command": ["-d", "example.com"]
+                },
+                headers={"Authorization": f"Bearer {settings.DOCKER_BROKER_TOKEN}"}
+            )
 
     assert response.status_code == 200
     assert response.json()["container_id"] == "test-id"
@@ -25,7 +30,11 @@ async def test_create_container_allowed():
 @pytest.mark.asyncio
 async def test_create_container_rejected():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        response = await ac.post("/api/v1/containers", json={
-            "image": "malicious/image:latest"
-        })
+        response = await ac.post(
+            "/api/v1/containers",
+            json={
+                "image": "malicious/image:latest"
+            },
+            headers={"Authorization": f"Bearer {settings.DOCKER_BROKER_TOKEN}"}
+        )
     assert response.status_code == 403

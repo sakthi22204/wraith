@@ -99,6 +99,14 @@ class Neo4jRepository:
         record = await result.single()
         return Program(**record["p"])
 
+    async def get_program(self, program_id: str) -> Optional[Program]:
+        query = "MATCH (p:Program {id: $id}) RETURN p"
+        result = await self.session.run(query, id=program_id)
+        record = await result.single()
+        if not record:
+            return None
+        return Program(**record["p"])
+
     async def upsert_host(self, host: HostCreate, program_id: str) -> Host:
         h_id = generate_id(host.value)
         now = datetime.utcnow().isoformat()
@@ -175,17 +183,34 @@ class Neo4jRepository:
     async def create_finding(self, finding: FindingCreate) -> Finding:
         f_id = generate_id(finding.vuln_type, finding.target_id)
         now_utc = finding.discovered_at.isoformat() + "Z"
-        query = f"""
-        MATCH (t:{finding.target_type.capitalize()} {{id: $target_id}})
-        MERGE (f:Finding {{id: $f_id}})
-        SET f.vuln_type = $vuln_type, f.severity = $severity, f.confidence = $confidence,
-            f.status = $status, f.description = $description, f.discovered_at = $discovered_at,
-            f.ai_confidence = $ai_confidence, f.ai_reasoning = $ai_reasoning,
-            f.corroborating_sources = $corroborating_sources,
-            f.cvss_vector = $cvss_vector, f.evidence = $evidence
-        MERGE (t)-[:HAS_FINDING]->(f)
-        RETURN f
-        """
+
+        if finding.target_type.lower() == "endpoint":
+            query = """
+            MATCH (t:Endpoint {id: $target_id})
+            MERGE (f:Finding {id: $f_id})
+            SET f.vuln_type = $vuln_type, f.severity = $severity, f.confidence = $confidence,
+                f.status = $status, f.description = $description, f.discovered_at = $discovered_at,
+                f.ai_confidence = $ai_confidence, f.ai_reasoning = $ai_reasoning,
+                f.corroborating_sources = $corroborating_sources,
+                f.cvss_vector = $cvss_vector, f.evidence = $evidence
+            MERGE (t)-[:HAS_FINDING]->(f)
+            RETURN f
+            """
+        elif finding.target_type.lower() == "parameter":
+            query = """
+            MATCH (t:Parameter {id: $target_id})
+            MERGE (f:Finding {id: $f_id})
+            SET f.vuln_type = $vuln_type, f.severity = $severity, f.confidence = $confidence,
+                f.status = $status, f.description = $description, f.discovered_at = $discovered_at,
+                f.ai_confidence = $ai_confidence, f.ai_reasoning = $ai_reasoning,
+                f.corroborating_sources = $corroborating_sources,
+                f.cvss_vector = $cvss_vector, f.evidence = $evidence
+            MERGE (t)-[:HAS_FINDING]->(f)
+            RETURN f
+            """
+        else:
+            raise ValueError(f"Invalid target_type: {finding.target_type}")
+
         result = await self.session.run(query, target_id=finding.target_id, f_id=f_id, vuln_type=finding.vuln_type,
                                       severity=finding.severity, confidence=finding.confidence,
                                       status=finding.status.value, description=finding.description,

@@ -18,6 +18,12 @@ class GraphClient:
         response.raise_for_status()
         return response.json()
 
+    async def get_program_scope(self, program_id: str):
+        response = await self._client.get(f"/programs/{program_id}")
+        response.raise_for_status()
+        data = response.json()
+        return data.get("scope_domains", [])
+
     async def update_scan_session(self, session_id: str, status: str):
         response = await self._client.patch(
             f"/scan-sessions/{session_id}",

@@ -1,6 +1,7 @@
 import asyncio
 import uuid
 from typing import Dict, List
+from fastapi import HTTPException
 from .schemas import ReconRequest, ReconSessionStatus, ToolStatus, ToolResults, HostResult
 from .tools.subfinder import SubfinderTool
 from .tools.httpx_probe import HttpxProbeTool
@@ -109,7 +110,39 @@ class ReconOrchestrator:
         if session_id in self.sessions:
             self.sessions[session_id].status = "cancelled"
 
-    def start_session(self, request: ReconRequest) -> str:
+    async def start_session(self, request: ReconRequest) -> str:
+        # Validate scope before accepting
+        try:
+            scope_domains = await graph_client.get_program_scope(request.program_id)
+        except Exception as e:
+            # If program doesn't exist or graph_db is down, we can't validate scope.
+            # Reject to be safe.
+            raise HTTPException(status_code=400, detail=f"Could not fetch program scope: {e}")
+
+        out_of_scope = []
+        for domain in request.domains:
+            is_in_scope = False
+            for allowed in scope_domains:
+                if domain == allowed or domain.endswith(f".{allowed}"):
+                    is_in_scope = True
+                    break
+            if not is_in_scope:
+                out_of_scope.append(domain)
+
+        if out_of_scope:
+            session_id = str(uuid.uuid4())
+            self.sessions[session_id] = ReconSessionStatus(
+                session_id=session_id,
+                program_id=request.program_id,
+                status="rejected",
+                tool_statuses={},
+                progress=0.0
+            )
+            raise HTTPException(
+                status_code=400,
+                detail=f"Requested domains out of scope for program {request.program_id}: {', '.join(out_of_scope)}"
+            )
+
         session_id = str(uuid.uuid4())
         tool_statuses = {}
         for domain in request.domains:
