@@ -5,7 +5,8 @@ from .schemas import HostResult, PortResult, EndpointResult
 class GraphClient:
     def __init__(self, base_url: str = settings.GRAPH_DB_URL):
         self.base_url = base_url
-        self._client = httpx.AsyncClient(base_url=base_url)
+        headers = {"Authorization": f"Bearer {settings.ADMIN_API_TOKEN}"}
+        self._client = httpx.AsyncClient(base_url=base_url, headers=headers)
 
     async def close(self):
         await self._client.aclose()

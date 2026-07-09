@@ -4,9 +4,10 @@ from ..config import settings
 class GraphDBClient:
     def __init__(self, base_url: str = settings.GRAPH_DB_URL):
         self.base_url = base_url
+        self.headers = {"Authorization": f"Bearer {settings.ADMIN_API_TOKEN}"}
 
     async def get_program(self, program_id: str):
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(headers=self.headers) as client:
             response = await client.get(f"{self.base_url}/programs/{program_id}/graph")
             response.raise_for_status()
             # The graph endpoint returns program in the 'nodes' or as a separate 'p' property
@@ -19,20 +20,20 @@ class GraphDBClient:
             return None
 
     async def get_finding(self, program_id: str, finding_id: str):
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(headers=self.headers) as client:
             response = await client.get(f"{self.base_url}/programs/{program_id}/findings")
             response.raise_for_status()
             findings = response.json()
             return next((f for f in findings if f["id"] == finding_id), None)
 
     async def get_findings_for_program(self, program_id: str):
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(headers=self.headers) as client:
             response = await client.get(f"{self.base_url}/programs/{program_id}/findings")
             response.raise_for_status()
             return response.json()
 
     async def get_target_details(self, program_id: str, target_id: str):
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(headers=self.headers) as client:
             response = await client.get(f"{self.base_url}/programs/{program_id}/graph")
             response.raise_for_status()
             data = response.json()
@@ -79,7 +80,7 @@ class GraphDBClient:
             return details
 
     async def get_discovering_tool(self, program_id: str, finding_id: str):
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(headers=self.headers) as client:
             response = await client.get(f"{self.base_url}/programs/{program_id}/graph")
             response.raise_for_status()
             data = response.json()

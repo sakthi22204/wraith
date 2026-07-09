@@ -12,7 +12,7 @@ class BaseSecurityServer:
         self.target_regex = re.compile(r"^[a-zA-Z0-9\.\-\_\:\/]+$")
 
     def validate_target(self, target: str):
-        if not self.target_regex.match(target):
+        if not self.target_regex.fullmatch(target):
             raise ValueError(f"Invalid target: {target}. Potential command injection detected.")
 
     async def run_tool(self, cmd: List[str], timeout: int = 300) -> dict:
