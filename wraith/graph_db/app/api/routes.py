@@ -35,6 +35,10 @@ class FPCheckRequest(BaseModel):
 async def create_program(program: ProgramCreate, repo: Neo4jRepository = Depends(get_repo)):
     return await repo.create_program(program)
 
+@router.get("/programs", response_model=List[Program])
+async def list_programs(repo: Neo4jRepository = Depends(get_repo)):
+    return await repo.list_programs()
+
 @router.get("/programs/{program_id}", response_model=Program)
 async def get_program(program_id: str, repo: Neo4jRepository = Depends(get_repo)):
     program = await repo.get_program(program_id)

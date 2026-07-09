@@ -111,3 +111,30 @@ async def test_get_program():
 
     program = await repo.get_program("p2")
     assert program is None
+
+@pytest.mark.asyncio
+async def test_list_programs():
+    mock_session = AsyncMock()
+    repo = Neo4jRepository(mock_session)
+
+    # Mock result with 2 programs
+    mock_result = AsyncMock()
+
+    class MockRecord:
+        def __init__(self, data):
+            self.data = data
+        def __getitem__(self, key):
+            return self.data[key]
+
+    mock_records = [
+        MockRecord({"p": {"id": "p1", "name": "n1", "platform": "h1", "scope_domains": [], "created_at": datetime.utcnow().isoformat()}}),
+        MockRecord({"p": {"id": "p2", "name": "n2", "platform": "h2", "scope_domains": [], "created_at": datetime.utcnow().isoformat()}})
+    ]
+
+    mock_result.__aiter__.return_value = mock_records
+    mock_session.run.return_value = mock_result
+
+    programs = await repo.list_programs()
+    assert len(programs) == 2
+    assert programs[0].id == "p1"
+    assert programs[1].id == "p2"
