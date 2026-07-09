@@ -11,7 +11,7 @@ export const subscribeToAgentStream = (
   onError: (error: any) => void,
   onEnd?: () => void
 ) => {
-  const url = `${config.agentUrl}/agent/sessions/${sessionId}/stream`;
+  const url = `${config.agentUrl}/api/v1/agent/sessions/${sessionId}/stream`;
   const eventSource = new EventSource(url);
 
   eventSource.onmessage = (event) => {
@@ -38,13 +38,13 @@ export const subscribeToAgentStream = (
 };
 
 export const fetchSessionStatus = async (sessionId: string) => {
-  const response = await fetch(`${config.agentUrl}/agent/sessions/${sessionId}/status`);
+  const response = await fetch(`${config.agentUrl}/api/v1/agent/sessions/${sessionId}/status`);
   if (!response.ok) throw new Error('Failed to fetch session status');
   return response.json();
 };
 
 export const startAgentSession = async (programId: string, targetScope: string[], maxIterations: number) => {
-  const response = await fetch(`${config.agentUrl}/agent/sessions`, {
+  const response = await fetch(`${config.agentUrl}/api/v1/agent/sessions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ program_id: programId, target_scope: targetScope, max_iterations: maxIterations })
@@ -54,7 +54,7 @@ export const startAgentSession = async (programId: string, targetScope: string[]
 };
 
 export const stopAgentSession = async (sessionId: string) => {
-  const response = await fetch(`${config.agentUrl}/agent/sessions/${sessionId}/stop`, {
+  const response = await fetch(`${config.agentUrl}/api/v1/agent/sessions/${sessionId}/stop`, {
     method: 'POST'
   });
   if (!response.ok) throw new Error('Failed to stop session');

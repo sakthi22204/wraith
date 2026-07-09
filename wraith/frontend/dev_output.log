@@ -1,0 +1,22 @@
+
+> frontend@0.1.0 dev
+> next dev
+
+   ▲ Next.js 15.5.20
+   - Local:        http://localhost:3000
+   - Network:      http://192.168.0.2:3000
+
+ ✓ Starting...
+ ✓ Ready in 3s
+ ○ Compiling /programs/[programId] ...
+ ✓ Compiled /programs/[programId] in 7.6s (619 modules)
+ GET /programs/prog_123 200 in 10034ms
+ ✓ Compiled in 552ms (619 modules)
+ ✓ Compiled in 316ms (619 modules)
+ ✓ Compiled in 481ms (619 modules)
+ ✓ Compiled in 460ms (619 modules)
+ ✓ Compiled in 898ms (619 modules)
+ ✓ Compiled in 289ms (619 modules)
+ ✓ Compiled in 456ms (619 modules)
+ ✓ Compiled in 389ms (619 modules)
+ ✓ Compiled in 385ms (619 modules)

@@ -8,6 +8,7 @@ from ..schema import (
 )
 from ..client import neo4j_client
 from ..repository import Neo4jRepository
+from ..auth import require_admin_token
 
 router = APIRouter()
 
@@ -106,7 +107,7 @@ async def link_cve(finding_id: str, cve: CVECreate, repo: Neo4jRepository = Depe
     await repo.link_finding_to_cve(finding_id, cve)
     return {"status": "success"}
 
-@router.delete("/programs/{program_id}")
+@router.delete("/programs/{program_id}", dependencies=[Depends(require_admin_token)])
 async def delete_program(program_id: str, confirm: bool = Query(False), repo: Neo4jRepository = Depends(get_repo)):
     if not confirm:
         raise HTTPException(status_code=400, detail="Confirmation required to delete program and its subgraph.")

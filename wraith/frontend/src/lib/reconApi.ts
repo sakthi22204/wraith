@@ -1,7 +1,7 @@
 import { config } from './config';
 
 export const startRecon = async (programId: string, domains: string[]) => {
-  const response = await fetch(`${config.reconUrl}/recon/start`, {
+  const response = await fetch(`${config.reconUrl}/api/v1/recon/start`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ program_id: programId, domains })
@@ -11,7 +11,7 @@ export const startRecon = async (programId: string, domains: string[]) => {
 };
 
 export const cancelRecon = async (sessionId: string) => {
-  const response = await fetch(`${config.reconUrl}/recon/${sessionId}/cancel`, {
+  const response = await fetch(`${config.reconUrl}/api/v1/recon/${sessionId}/cancel`, {
     method: 'POST'
   });
   if (!response.ok) throw new Error('Failed to cancel recon');
@@ -19,7 +19,7 @@ export const cancelRecon = async (sessionId: string) => {
 };
 
 export const fetchReconStatus = async (sessionId: string) => {
-  const response = await fetch(`${config.reconUrl}/recon/${sessionId}/status`);
+  const response = await fetch(`${config.reconUrl}/api/v1/recon/${sessionId}/status`);
   if (!response.ok) throw new Error('Failed to fetch recon status');
   return response.json();
 };

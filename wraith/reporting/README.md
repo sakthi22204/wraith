@@ -10,6 +10,9 @@ The Reporting Service assembles data from `graph_db` and `active_exploit_runner`
 
 ## API Endpoints
 
+All endpoints require a Bearer token in the `Authorization` header.
+Set the `ADMIN_API_TOKEN` environment variable.
+
 ### 1. Single Finding Report
 Returns a report for a specific finding in Markdown or PDF format.
 - `GET /reports/{program_id}/findings/{finding_id}?format=markdown`
@@ -17,7 +20,8 @@ Returns a report for a specific finding in Markdown or PDF format.
 
 **Example:**
 ```bash
-curl http://localhost:8005/reports/prog_123/findings/find_456?format=markdown
+curl -H "Authorization: Bearer dev-token-change-me" \
+     http://localhost:8006/api/v1/reports/prog_123/findings/find_456?format=markdown
 ```
 
 ### 2. Program-wide Report
@@ -27,7 +31,8 @@ Returns a combined report for all findings in a program, sorted by severity.
 
 **Example:**
 ```bash
-curl -o report.pdf http://localhost:8005/reports/prog_123?format=pdf
+curl -H "Authorization: Bearer dev-token-change-me" \
+     -o report.pdf http://localhost:8006/api/v1/reports/prog_123?format=pdf
 ```
 
 ## Sample Report Section

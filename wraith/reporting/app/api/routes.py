@@ -1,5 +1,6 @@
-from fastapi import APIRouter, HTTPException, Query, Response
+from fastapi import APIRouter, HTTPException, Query, Response, Depends
 from ..generator import generator
+from ..auth import require_admin_token
 from ..pdf_export import pdf_exporter
 from ..clients.graph_db_client import graph_db_client
 from jinja2 import Environment, FileSystemLoader
@@ -18,7 +19,7 @@ def parse_date(ts):
     except:
         return datetime.utcnow()
 
-@router.get("/reports/{program_id}/findings/{finding_id}")
+@router.get("/reports/{program_id}/findings/{finding_id}", dependencies=[Depends(require_admin_token)])
 async def get_finding_report(program_id: str, finding_id: str, format: str = Query("markdown", pattern="^(markdown|pdf)$")):
     finding = await graph_db_client.get_finding(program_id, finding_id)
 
@@ -44,7 +45,7 @@ async def get_finding_report(program_id: str, finding_id: str, format: str = Que
         md_out = template.render(**report_data)
         return Response(content=md_out, media_type="text/markdown")
 
-@router.get("/reports/{program_id}")
+@router.get("/reports/{program_id}", dependencies=[Depends(require_admin_token)])
 async def get_program_report(program_id: str, format: str = Query("markdown", pattern="^(markdown|pdf)$")):
     report = await generator.generate_program_report(program_id)
     report_data = report.model_dump()

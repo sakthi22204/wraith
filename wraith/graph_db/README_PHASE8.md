@@ -2,6 +2,12 @@
 
 The graph database now supports an advanced finding lifecycle with confidence scoring, corroboration tracking, and false-positive pattern management.
 
+## Authentication
+Administrative and destructive endpoints require a Bearer token.
+Set the `ADMIN_API_TOKEN` environment variable.
+
+- `DELETE /api/v1/programs/{id}`: Requires token.
+
 ## Finding Statuses
 1.  **UNCONFIRMED:** Initial state for low-confidence findings (< 0.7).
 2.  **AI_VALIDATED:** Initial state for high-confidence findings (>= 0.7).

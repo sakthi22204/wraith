@@ -2,8 +2,51 @@ import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import AsyncMock, patch
 from app.main import app
+from app.config import settings
 
 client = TestClient(app)
+
+@pytest.mark.asyncio
+async def test_authentication():
+    with patch("app.api.routes.graph_db_client", new_callable=AsyncMock) as mock_graph, \
+         patch("app.api.routes.generator.generate_finding_report", new_callable=AsyncMock) as mock_gen, \
+         patch("app.api.routes.generator.generate_program_report", new_callable=AsyncMock) as mock_gen_prog:
+
+        # Mock some returns to avoid internal errors after auth pass
+        mock_graph.get_finding.return_value = {"id": "f1"}
+        mock_graph.get_program.return_value = {"name": "Test"}
+
+        from app.models import ReportFinding, ProgramReport
+        from datetime import datetime
+        mock_gen.return_value = ReportFinding(
+            title="T", vulnerability_type="V", severity="S", cvss_score="C",
+            ai_confidence="0.9",
+            affected_asset="A", description="D", steps_to_reproduce="ST",
+            exploit_poc="P", evidence="E", business_impact="B",
+            suggested_remediation="R", discovery_metadata={"timestamp": "2023", "tool": "T", "program": "P", "confidence": "0.9", "status": "S"}
+        )
+        mock_gen_prog.return_value = ProgramReport(program_name="Test", generated_at=datetime.utcnow(), findings=[])
+
+        # Test endpoints that require authentication
+        endpoints = [
+            ("/api/v1/reports/p1/findings/f1?format=markdown"),
+            ("/api/v1/reports/p1?format=markdown")
+        ]
+
+        for path in endpoints:
+            # No token
+            response = client.get(path)
+            assert response.status_code == 401
+
+            # Wrong token
+            headers = {"Authorization": "Bearer wrong-token"}
+            response = client.get(path, headers=headers)
+            assert response.status_code == 401
+
+            # Correct token (will fail with other errors like 404, but not 401)
+            headers = {"Authorization": f"Bearer {settings.ADMIN_API_TOKEN}"}
+            response = client.get(path, headers=headers)
+            assert response.status_code != 401
 
 @pytest.mark.asyncio
 async def test_get_finding_report_markdown():
@@ -22,7 +65,8 @@ async def test_get_finding_report_markdown():
             suggested_remediation="R", discovery_metadata={"timestamp": "2023", "tool": "T", "program": "P", "confidence": "0.9", "status": "S"}
         )
 
-        response = client.get("/reports/p1/findings/f1?format=markdown")
+        headers = {"Authorization": f"Bearer {settings.ADMIN_API_TOKEN}"}
+        response = client.get("/api/v1/reports/p1/findings/f1?format=markdown", headers=headers)
         assert response.status_code == 200
         assert response.headers["content-type"] == "text/markdown; charset=utf-8"
         assert "# Finding: T" in response.text
@@ -37,7 +81,8 @@ async def test_get_program_report_pdf():
         mock_gen.return_value = ProgramReport(program_name="Test", generated_at=datetime.utcnow(), findings=[])
         mock_pdf.return_value = b"%PDF-mock"
 
-        response = client.get("/reports/p1?format=pdf")
+        headers = {"Authorization": f"Bearer {settings.ADMIN_API_TOKEN}"}
+        response = client.get("/api/v1/reports/p1?format=pdf", headers=headers)
         assert response.status_code == 200
         assert response.headers["content-type"] == "application/pdf"
         assert response.content == b"%PDF-mock"
