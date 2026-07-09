@@ -6,7 +6,7 @@ router = APIRouter()
 
 @router.post("/start", status_code=202)
 async def start_recon(request: ReconRequest):
-    session_id = orchestrator.start_session(request)
+    session_id = await orchestrator.start_session(request)
     return {"session_id": session_id}
 
 @router.get("/{session_id}/status", response_model=ReconSessionStatus)

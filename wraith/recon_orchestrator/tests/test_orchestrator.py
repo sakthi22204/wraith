@@ -18,11 +18,13 @@ async def test_orchestrator_parallelism():
         tool.run = AsyncMock(side_effect=slow_run)
 
     # Mock graph client to avoid real HTTP calls
-    with patch("app.orchestrator.graph_client.upsert_host", new_callable=AsyncMock):
+    with patch("app.orchestrator.graph_client.upsert_host", new_callable=AsyncMock), \
+         patch("app.orchestrator.graph_client.get_program_scope", new_callable=AsyncMock) as mock_scope:
+        mock_scope.return_value = ["example.com"]
         start_time = time.time()
 
         request = ReconRequest(program_id="test_prog", domains=["example.com"])
-        session_id = orchestrator.start_session(request)
+        session_id = await orchestrator.start_session(request)
 
         # Wait for background tasks to finish
         # In a real test we'd need a better way to wait for session completion

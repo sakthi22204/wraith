@@ -35,6 +35,13 @@ class FPCheckRequest(BaseModel):
 async def create_program(program: ProgramCreate, repo: Neo4jRepository = Depends(get_repo)):
     return await repo.create_program(program)
 
+@router.get("/programs/{program_id}", response_model=Program)
+async def get_program(program_id: str, repo: Neo4jRepository = Depends(get_repo)):
+    program = await repo.get_program(program_id)
+    if not program:
+        raise HTTPException(status_code=404, detail="Program not found")
+    return program
+
 @router.post("/scan-sessions")
 async def create_scan_session(program_id: str, repo: Neo4jRepository = Depends(get_repo)):
     return await repo.create_scan_session(program_id)
@@ -81,9 +88,12 @@ async def upsert_parameter(endpoint_id: str, param: ParameterCreate, repo: Neo4j
 
 @router.post("/findings", response_model=Finding)
 async def create_finding(finding: FindingCreate, repo: Neo4jRepository = Depends(get_repo)):
-    if finding.target_type not in ["endpoint", "parameter"]:
+    if finding.target_type.lower() not in ["endpoint", "parameter"]:
         raise HTTPException(status_code=400, detail="target_type must be endpoint or parameter")
-    return await repo.create_finding(finding)
+    try:
+        return await repo.create_finding(finding)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 @router.get("/programs/{program_id}/graph", response_model=GraphResponse)
 async def get_program_graph(program_id: str, repo: Neo4jRepository = Depends(get_repo)):
