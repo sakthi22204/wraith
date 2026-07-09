@@ -10,7 +10,11 @@ import os
 router = APIRouter()
 
 template_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "templates")
-env = Environment(loader=FileSystemLoader(template_dir))
+from jinja2 import select_autoescape
+env = Environment(
+    loader=FileSystemLoader(template_dir),
+    autoescape=select_autoescape(["html", "j2", "xml"])
+)
 
 def parse_date(ts):
     if not ts: return datetime.utcnow()
