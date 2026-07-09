@@ -107,6 +107,14 @@ class Neo4jRepository:
             return None
         return Program(**record["p"])
 
+    async def list_programs(self) -> List[Program]:
+        query = "MATCH (p:Program) RETURN p"
+        result = await self.session.run(query)
+        programs = []
+        async for record in result:
+            programs.append(Program(**record["p"]))
+        return programs
+
     async def upsert_host(self, host: HostCreate, program_id: str) -> Host:
         h_id = generate_id(host.value)
         now = datetime.utcnow().isoformat()
