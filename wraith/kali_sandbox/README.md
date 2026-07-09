@@ -2,6 +2,10 @@
 
 This service provides a sandboxed environment for running heavy security tools (Nmap, Nuclei, SQLMap, Hydra, Metasploit) exposed as Model Context Protocol (MCP) servers.
 
+## Access Control
+Dangerous tools (`run_hydra`, `run_msf_module`) require server-side caller validation.
+The caller must provide an `X-Wraith-Caller` header matching an authorized service name (default: `active_exploit_runner`).
+
 ## ⚠️ Safety Warning
 This phase is designed for **LOCAL TEST TARGETS ONLY**. The tools are configured to run within a controlled environment against deliberately vulnerable targets like OWASP Juice Shop. **Never** use these tools against real external targets until Phase 5 guardrails are implemented.
 

@@ -8,6 +8,7 @@ class Settings(BaseSettings):
 
     POOL_MAX_SIZE: int = 100
     CONNECTION_TIMEOUT: float = 30.0
+    ADMIN_API_TOKEN: str = "dev-token-change-me"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

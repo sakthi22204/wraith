@@ -1,3 +1,6 @@
+import os
+from contextvars import ContextVar
+from typing import Optional
 from mcp.server.fastmcp import FastMCP
 from .nmap_server import NmapServer
 from .nuclei_server import NucleiServer
@@ -7,6 +10,19 @@ from .metasploit_server import MetasploitServer
 
 # Create a single MCP server instance
 mcp = FastMCP("Wraith Security Tools", host="0.0.0.0", port=8000)
+
+caller_context: ContextVar[Optional[str]] = ContextVar("caller_context", default=None)
+
+DANGEROUS_TOOLS = {"run_hydra", "run_msf_module"}
+AUTHORIZED_DANGEROUS_CALLERS = set(os.getenv("AUTHORIZED_DANGEROUS_CALLERS", "active_exploit_runner").split(","))
+
+def verify_caller(tool_name: str, caller: Optional[str]):
+    if tool_name not in DANGEROUS_TOOLS:
+        return
+
+    if caller not in AUTHORIZED_DANGEROUS_CALLERS:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail=f"Caller {caller} is not authorized to use {tool_name}")
 
 # Initialize tool providers
 nmap = NmapServer()
@@ -33,6 +49,7 @@ async def run_sqlmap(url: str, param: str = None, method: str = "GET", data: str
 
 @mcp.tool()
 async def run_hydra(target: str, service: str, user: str, pass_list: str):
+    verify_caller("run_hydra", caller_context.get())
     return await hydra.mcp.call_tool("run_hydra", {"target": target, "service": service, "user": user, "pass_list": pass_list})
 
 @mcp.tool()
@@ -41,6 +58,7 @@ async def list_msf_modules(search: str):
 
 @mcp.tool()
 async def run_msf_module(module: str, target: str, options: dict):
+    verify_caller("run_msf_module", caller_context.get())
     return await metasploit.mcp.call_tool("run_module", {"module": module, "target": target, "options": options})
 
 # Add internal REST bridge for Phase 5 executor
@@ -50,10 +68,29 @@ async def call_tool_internal(request):
     import json
     body = await request.json()
     tool_name = request.path_params["tool_name"]
+
+    caller = request.headers.get("X-Wraith-Caller")
+    verify_caller(tool_name, caller)
+
+    # Set context for the duration of this call so @mcp.tool() wrappers can see it
+    token = caller_context.set(caller)
+
+    from fastapi.encoders import jsonable_encoder
+    from fastapi.responses import JSONResponse
+
     # FastMCP stores tool handlers in a dictionary
     # For simplicity, we just use call_tool which is an internal method
     # It returns [TextContent, ...]
-    return await mcp.call_tool(tool_name, body)
+    try:
+        result = await mcp.call_tool(tool_name, body)
+    except Exception as e:
+        # Convert internal tool errors to JSON results if possible, or raise
+        return JSONResponse(content={"error": str(e), "success": False}, status_code=200)
+    finally:
+        caller_context.reset(token)
+
+    # Since call_tool returns a list of Content objects, we need to serialize them
+    return JSONResponse(content=jsonable_encoder(result))
 
 if __name__ == "__main__":
     mcp.run(transport="sse")
