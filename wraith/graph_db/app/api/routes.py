@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
+import os
 from typing import List, Optional
 from pydantic import BaseModel
 from ..schema import (
@@ -121,13 +122,34 @@ async def link_cve(finding_id: str, cve: CVECreate, repo: Neo4jRepository = Depe
     await repo.link_finding_to_cve(finding_id, cve)
     return {"status": "success"}
 
+import httpx
+from ..config import settings as graph_settings
+
 @router.delete("/programs/{program_id}", dependencies=[Depends(require_admin_token)])
 async def delete_program(program_id: str, confirm: bool = Query(False), repo: Neo4jRepository = Depends(get_repo)):
     if not confirm:
         raise HTTPException(status_code=400, detail="Confirmation required to delete program and its subgraph.")
 
     await repo.delete_program_recursive(program_id)
-    return {"status": "deleted"}
+
+    # 11: Cross-service cascade delete
+    runner_url = os.getenv("ACTIVE_EXPLOIT_RUNNER_URL", "http://active_exploit_runner:8004/api/v1")
+    headers = {"Authorization": f"Bearer {graph_settings.ADMIN_API_TOKEN}"}
+
+    warning = None
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            resp = await client.delete(f"{runner_url}/programs/{program_id}/purge", headers=headers)
+            if resp.status_code != 200:
+                warning = f"Failed to purge program data from active_exploit_runner: {resp.text}"
+    except Exception as e:
+        warning = f"Error calling active_exploit_runner purge: {e}"
+
+    res = {"status": "deleted"}
+    if warning:
+        res["warning"] = warning
+
+    return res
 
 # New Phase 8 Review Queue Endpoints
 
