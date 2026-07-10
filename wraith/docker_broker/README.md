@@ -31,11 +31,18 @@ To add a new tool:
 
 ## API Usage
 
+### 0. Authentication
+All endpoints require a Bearer token. Set the `DOCKER_BROKER_TOKEN` environment variable.
+Requests should include: `-H "Authorization: Bearer <token>"`
+
 The broker exposes a subset of the Docker API:
 - `POST /api/v1/containers`: Create and start a container (takes a spec).
 - `POST /api/v1/containers/{id}/wait`: Wait for container completion.
 - `GET /api/v1/containers/{id}/logs`: Retrieve container output.
 - `DELETE /api/v1/containers/{id}`: Force remove a container.
+
+### 🛡️ Container Ownership
+The broker tracks which service created each container. Management operations (wait, logs, stop, remove) are only permitted if the `caller` parameter matches the original creator, or if the global broker token is used.
 
 ## Audit Logging
 All requests are logged to stdout with an `[ALLOWED]` or `[REJECTED]` prefix, including the reason for any rejections.

@@ -11,9 +11,13 @@ def validate_container_spec(spec: dict):
     if command and image in ALLOWED_COMMANDS_PER_IMAGE:
         base_cmd = command[0]
         allowed_cmds = ALLOWED_COMMANDS_PER_IMAGE[image]
-        # Command must start with one of the allowed commands/args
-        if not any(base_cmd == allowed for allowed in allowed_cmds):
-            raise HTTPException(status_code=403, detail=f"Command {command} is not allowed for image {image}.")
+        # Strict validation: command[0] must be in the allowlist.
+        # For PD tools, it might be an argument if they are the entrypoint.
+        if base_cmd not in allowed_cmds:
+             # Additional check for arguments if the tool is the entrypoint
+             # and the first element is an arg like '-d'
+             if not any(base_cmd.startswith(allowed) for allowed in allowed_cmds):
+                raise HTTPException(status_code=403, detail=f"Command {command} is not allowed for image {image}.")
 
     # Forbidden features
     if spec.get("privileged"):
