@@ -8,15 +8,9 @@
 
  ✓ Starting...
  ✓ Ready in 3s
- ○ Compiling /programs/[programId] ...
- ✓ Compiled /programs/[programId] in 7.6s (619 modules)
- GET /programs/prog_123 200 in 10034ms
- ✓ Compiled in 552ms (619 modules)
- ✓ Compiled in 316ms (619 modules)
- ✓ Compiled in 481ms (619 modules)
- ✓ Compiled in 460ms (619 modules)
- ✓ Compiled in 898ms (619 modules)
- ✓ Compiled in 289ms (619 modules)
- ✓ Compiled in 456ms (619 modules)
- ✓ Compiled in 389ms (619 modules)
- ✓ Compiled in 385ms (619 modules)
+ ○ Compiling / ...
+ ✓ Compiled / in 8.2s (605 modules)
+ GET / 200 in 9822ms
+ ✓ Compiled in 345ms (240 modules)
+ ✓ Compiled / in 232ms (365 modules)
+ GET / 200 in 573ms
