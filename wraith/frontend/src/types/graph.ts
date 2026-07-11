@@ -17,6 +17,14 @@ export interface GraphResponse {
 
 export type Severity = 'info' | 'low' | 'medium' | 'high' | 'critical';
 
+export interface Program {
+  id: string;
+  name: string;
+  platform: string;
+  scope_domains: string[];
+  created_at: string;
+}
+
 export interface Finding {
   id: string;
   vuln_type: string;
@@ -25,4 +33,16 @@ export interface Finding {
   status: string;
   description: string;
   discovered_at: string;
+  ai_confidence?: number;
+  ai_reasoning?: string;
+}
+
+export interface ExploitProposal {
+  id: number;
+  program_id: string;
+  target: string;
+  action: string;
+  params: Record<string, any>;
+  status: string;
+  created_at: string;
 }

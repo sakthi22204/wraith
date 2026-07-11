@@ -17,8 +17,9 @@ class NmapServer(BaseSecurityServer):
 
     def setup_tools(self):
         @self.mcp.tool()
-        async def run_nmap_scan(target: str, ports: str = "1-1000", scan_type: NmapScanType = NmapScanType.SERVICE_DETECTION) -> NmapResult:
+        async def run_nmap_scan(target: str, ports: str = "1-1000", scan_type: str = "-sV", caller: Optional[str] = None) -> NmapResult:
             """Run an Nmap scan against a target."""
+            self.verify_caller("run_nmap_scan", caller)
             self.validate_target(target)
 
             cmd = ["nmap", scan_type.value, "-p", ports, target]

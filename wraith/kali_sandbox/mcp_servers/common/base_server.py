@@ -18,11 +18,14 @@ class BaseSecurityServer:
             raise ValueError(f"Invalid target: {target}. Potential command injection detected.")
 
     def verify_caller(self, tool_name: str, caller: Optional[str]):
-        if tool_name not in self.dangerous_tools:
-            return
-        if caller not in self.authorized_callers:
-            from fastapi import HTTPException
-            raise HTTPException(status_code=403, detail=f"Caller {caller} is not authorized to use {tool_name}")
+        # All tools now require verification to be safe,
+        # but only dangerous ones are restricted to a specific list.
+        if tool_name in self.dangerous_tools:
+            if caller not in self.authorized_callers:
+                raise ValueError(f"Caller {caller} is not authorized to use {tool_name}")
+        elif not caller:
+             # Basic check: every tool call must identify a caller
+             raise ValueError(f"Caller identity required for tool {tool_name}")
 
     async def run_tool(self, cmd: List[str], timeout: int = 300) -> dict:
         try:

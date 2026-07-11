@@ -37,29 +37,35 @@ metasploit = MetasploitServer()
 
 @mcp.tool()
 async def run_nmap_scan(target: str, ports: str = "1-1000", scan_type: str = "-sV"):
-    return await nmap.mcp.call_tool("run_nmap_scan", {"target": target, "ports": ports, "scan_type": scan_type})
+    caller = caller_context.get()
+    return await nmap.mcp.call_tool("run_nmap_scan", {"target": target, "ports": ports, "scan_type": scan_type, "caller": caller})
 
 @mcp.tool()
 async def run_nuclei_scan(target: str, category: str = "default"):
-    return await nuclei.mcp.call_tool("run_nuclei_scan", {"target": target, "category": category})
+    caller = caller_context.get()
+    return await nuclei.mcp.call_tool("run_nuclei_scan", {"target": target, "category": category, "caller": caller})
 
 @mcp.tool()
 async def run_sqlmap(url: str, param: str = None, method: str = "GET", data: str = None):
-    return await sqlmap.mcp.call_tool("run_sqlmap", {"url": url, "param": param, "method": method, "data": data})
+    caller = caller_context.get()
+    return await sqlmap.mcp.call_tool("run_sqlmap", {"url": url, "param": param, "method": method, "data": data, "caller": caller})
 
 @mcp.tool()
 async def run_hydra(target: str, service: str, user: str, pass_list: str):
-    verify_caller("run_hydra", caller_context.get())
-    return await hydra.mcp.call_tool("run_hydra", {"target": target, "service": service, "user": user, "pass_list": pass_list})
+    caller = caller_context.get()
+    verify_caller("run_hydra", caller)
+    return await hydra.mcp.call_tool("run_hydra", {"target": target, "service": service, "user": user, "pass_list": pass_list, "caller": caller})
 
 @mcp.tool()
 async def list_msf_modules(search: str):
-    return await metasploit.mcp.call_tool("list_modules", {"search": search})
+    caller = caller_context.get()
+    return await metasploit.mcp.call_tool("list_modules", {"search": search, "caller": caller})
 
 @mcp.tool()
 async def run_msf_module(module: str, target: str, options: dict):
-    verify_caller("run_msf_module", caller_context.get())
-    return await metasploit.mcp.call_tool("run_module", {"module": module, "target": target, "options": options})
+    caller = caller_context.get()
+    verify_caller("run_msf_module", caller)
+    return await metasploit.mcp.call_tool("run_module", {"module": module, "target": target, "options": options, "caller": caller})
 
 # Add internal REST bridge for Phase 5 executor
 @mcp.custom_route("/tools/{tool_name}/call", methods=["POST"])

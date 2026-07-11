@@ -2,7 +2,7 @@ import React from 'react';
 import SeverityBadge from './SeverityBadge';
 
 interface AgentStepCardProps {
-  step: any;
+  step: Record<string, any>;
 }
 
 export default function AgentStepCard({ step }: AgentStepCardProps) {
@@ -58,7 +58,7 @@ export default function AgentStepCard({ step }: AgentStepCardProps) {
           <div className="text-xs font-bold text-red-400 uppercase">Finding Recorded</div>
           <SeverityBadge severity={finding.severity} />
         </div>
-        <h3 className="text-slate-100 font-bold text-sm mb-1">{finding.vuln_type}</h3>
+        <h3 className="text-slate-100 font-bold text-sm mb-1 font-heading">{finding.vuln_type}</h3>
         <p className="text-slate-300 text-xs mb-1">{finding.description}</p>
         <div className="text-[10px] text-slate-500 font-mono uppercase">ID: {finding.id}</div>
       </div>

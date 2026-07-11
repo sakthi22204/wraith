@@ -1,5 +1,22 @@
 import type { Metadata } from "next";
+import { Toaster } from "sonner";
+import { Geist, JetBrains_Mono, Space_Grotesk } from "next/font/google";
 import "./globals.css";
+
+const geist = Geist({
+  subsets: ["latin"],
+  variable: "--font-geist",
+});
+
+const spaceGrotesk = Space_Grotesk({
+  subsets: ["latin"],
+  variable: "--font-space-grotesk",
+});
+
+const jetbrainsMono = JetBrains_Mono({
+  subsets: ["latin"],
+  variable: "--font-mono",
+});
 
 export const metadata: Metadata = {
   title: "Wraith — Autonomous Bug Bounty Pipeline",
@@ -12,8 +29,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="dark">
-      <body className="bg-slate-950 text-slate-50 min-h-screen">
+    <html lang="en" className={`dark ${geist.variable} ${spaceGrotesk.variable} ${jetbrainsMono.variable}`}>
+      <body className="bg-slate-950 text-slate-50 min-h-screen font-sans">
         <header className="border-b border-slate-800 bg-slate-900/50 backdrop-blur-md sticky top-0 z-50">
           <div className="container mx-auto px-4 h-16 flex items-center justify-between">
             <div className="flex items-center space-x-2">
@@ -29,6 +46,7 @@ export default function RootLayout({
         <main className="container mx-auto px-4 py-8">
           {children}
         </main>
+        <Toaster position="bottom-right" theme="dark" richColors />
       </body>
     </html>
   );

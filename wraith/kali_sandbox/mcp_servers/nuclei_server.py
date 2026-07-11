@@ -18,8 +18,9 @@ class NucleiServer(BaseSecurityServer):
 
     def setup_tools(self):
         @self.mcp.tool()
-        async def run_nuclei_scan(target: str, category: NucleiTemplateCategory = NucleiTemplateCategory.DEFAULT) -> NucleiResult:
+        async def run_nuclei_scan(target: str, category: str = "default", caller: Optional[str] = None) -> NucleiResult:
             """Run a Nuclei scan against a target."""
+            self.verify_caller("run_nuclei_scan", caller)
             self.validate_target(target)
 
             # Use -json-export to get structured output

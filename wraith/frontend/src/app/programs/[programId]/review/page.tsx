@@ -3,8 +3,10 @@
 import React, { useState, useEffect } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
+import { toast } from 'sonner';
 import { fetchReviewQueue, reviewFinding } from '@/lib/graphApi';
 import SeverityBadge from '@/components/SeverityBadge';
+import Skeleton from '@/components/Skeleton';
 
 export default function ReviewQueuePage() {
   const { programId } = useParams();
@@ -34,9 +36,10 @@ export default function ReviewQueuePage() {
       await reviewFinding(selectedFinding.id, decision, note);
       setSelectedFinding(null);
       setNote('');
+      toast.success('Review submitted successfully');
       loadQueue();
     } catch (e) {
-      alert('Failed to submit review');
+      toast.error('Failed to submit review');
     }
   };
 
@@ -57,7 +60,18 @@ export default function ReviewQueuePage() {
            </div>
            <div className="flex-1 overflow-y-auto divide-y divide-slate-800">
              {isLoading ? (
-               <div className="p-10 text-center animate-pulse text-slate-600">Loading queue...</div>
+               <div className="p-4 space-y-4">
+                 {[1, 2, 3, 4, 5].map(i => (
+                    <div key={i} className="space-y-2">
+                       <div className="flex justify-between">
+                         <Skeleton className="h-4 w-12" />
+                         <Skeleton className="h-3 w-8" />
+                       </div>
+                       <Skeleton className="h-4 w-3/4" />
+                       <Skeleton className="h-3 w-full" />
+                    </div>
+                 ))}
+               </div>
              ) : queue.length === 0 ? (
                <div className="p-10 text-center text-slate-600 italic">Queue is empty! All findings verified.</div>
              ) : (
