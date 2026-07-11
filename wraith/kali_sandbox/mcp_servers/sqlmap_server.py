@@ -14,8 +14,9 @@ class SQLMapServer(BaseSecurityServer):
 
     def setup_tools(self):
         @self.mcp.tool()
-        async def run_sqlmap(url: str, param: Optional[str] = None, method: SQLMapMethod = SQLMapMethod.GET, data: Optional[str] = None) -> SQLMapResult:
+        async def run_sqlmap(url: str, param: Optional[str] = None, method: str = "GET", data: Optional[str] = None, caller: Optional[str] = None) -> SQLMapResult:
             """Run SQLMap against a target URL."""
+            self.verify_caller("run_sqlmap", caller)
             self.validate_target(url)
 
             cmd = ["sqlmap", "-u", url, "--batch", "--risk=2", "--level=3"]

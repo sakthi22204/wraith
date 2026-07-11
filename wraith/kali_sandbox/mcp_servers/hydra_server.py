@@ -10,11 +10,12 @@ class HydraServer(BaseSecurityServer):
 
     def setup_tools(self):
         @self.mcp.tool()
-        async def run_hydra(target: str, service: str, user: str, pass_list: str) -> HydraResult:
+        async def run_hydra(target: str, service: str, user: str, pass_list: str, caller: Optional[str] = None) -> HydraResult:
             """
             Run Hydra brute-force against a target.
             pass_list should be a path to a small wordlist bundled in the container.
             """
+            self.verify_caller("run_hydra", caller)
             self.validate_target(target)
             self.validate_target(service) # Validate service as well
 

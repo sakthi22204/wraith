@@ -26,6 +26,7 @@ async def test_regression_recon_flow():
         mock_container.logs.return_value = b'{"host": "found.example.com"}\n'
 
         # Setup GraphDB mock
+        mock_graph.get_program_scope = AsyncMock(return_value=["example.com"])
         mock_graph.create_scan_session = AsyncMock(return_value={"id": "graph-session-123"})
         mock_graph.update_scan_session = AsyncMock()
         mock_graph.upsert_host = AsyncMock(return_value={"id": "host-123"})

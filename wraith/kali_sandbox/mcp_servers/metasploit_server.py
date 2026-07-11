@@ -10,8 +10,9 @@ class MetasploitServer(BaseSecurityServer):
 
     def setup_tools(self):
         @self.mcp.tool()
-        async def list_modules(search: str) -> List[MetasploitModule]:
+        async def list_modules(search: str, caller: Optional[str] = None) -> List[MetasploitModule]:
             """Search for Metasploit modules."""
+            self.verify_caller("list_msf_modules", caller)
             self.validate_target(search) # Reuse validation to prevent injection
             # Use msfconsole -x to run search command
             cmd = ["msfconsole", "-q", "-x", f"search {search}; exit"]
@@ -37,8 +38,9 @@ class MetasploitServer(BaseSecurityServer):
             return modules
 
         @self.mcp.tool()
-        async def run_module(module: str, target: str, options: dict) -> MetasploitResult:
+        async def run_module(module: str, target: str, options: dict, caller: Optional[str] = None) -> MetasploitResult:
             """Run a Metasploit module against a target."""
+            self.verify_caller("run_msf_module", caller)
             self.validate_target(target)
             self.validate_target(module)
 
