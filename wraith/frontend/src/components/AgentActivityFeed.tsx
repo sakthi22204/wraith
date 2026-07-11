@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
+import { AgentStep } from '@/types/graph';
 import { subscribeToAgentStream } from '../lib/agentApi';
 import AgentStepCard from './AgentStepCard';
 
@@ -9,7 +10,7 @@ interface AgentActivityFeedProps {
 }
 
 export default function AgentActivityFeed({ sessionId }: AgentActivityFeedProps) {
-  const [steps, setSteps] = useState<any[]>([]);
+  const [steps, setSteps] = useState<AgentStep[]>([]);
   const [status, setStatus] = useState<'connecting' | 'connected' | 'reconnecting' | 'completed' | 'error'>('connecting');
   const scrollRef = useRef<HTMLDivElement>(null);
 

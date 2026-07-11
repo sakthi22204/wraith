@@ -39,7 +39,7 @@ const SEVERITY_SIZES: Record<Severity, number> = {
 };
 
 export default function AttackSurfaceGraph({ data, onNodeClick }: AttackSurfaceGraphProps) {
-  const getNodeColor = useCallback((node: any) => {
+  const getNodeColor = useCallback((node: Node) => {
     const labels = node.labels || [];
     const type = labels[0];
 
@@ -51,7 +51,7 @@ export default function AttackSurfaceGraph({ data, onNodeClick }: AttackSurfaceG
     return TYPE_COLORS[type] || '#94a3b8';
   }, []);
 
-  const getNodeVal = useCallback((node: any) => {
+  const getNodeVal = useCallback((node: Node) => {
     const labels = node.labels || [];
     if (labels.includes('Finding')) {
       const severity = (node.properties.severity || 'info').toLowerCase() as Severity;
@@ -65,7 +65,7 @@ export default function AttackSurfaceGraph({ data, onNodeClick }: AttackSurfaceG
     <div className="w-full h-full bg-slate-900 rounded-lg overflow-hidden border border-slate-700">
       <ForceGraph2D
         graphData={data}
-        nodeLabel={(node: any) => {
+        nodeLabel={(node: Node) => {
           const type = node.labels?.[0] || 'Unknown';
           const name = node.properties.name || node.properties.value || node.properties.url || node.id;
           return `${type}: ${name}`;
@@ -75,7 +75,7 @@ export default function AttackSurfaceGraph({ data, onNodeClick }: AttackSurfaceG
         linkDirectionalArrowLength={3.5}
         linkDirectionalArrowRelPos={1}
         linkCurvature={0.25}
-        onNodeClick={(node: any) => onNodeClick(node)}
+        onNodeClick={(node: Node) => onNodeClick(node)}
         backgroundColor="#0f172a"
         linkColor={() => '#334155'}
       />

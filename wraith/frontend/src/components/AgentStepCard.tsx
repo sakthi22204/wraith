@@ -1,8 +1,9 @@
 import React from 'react';
+import { AgentStep } from '@/types/graph';
 import SeverityBadge from './SeverityBadge';
 
 interface AgentStepCardProps {
-  step: Record<string, any>;
+  step: AgentStep;
 }
 
 export default function AgentStepCard({ step }: AgentStepCardProps) {
