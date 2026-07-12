@@ -9,17 +9,6 @@ from .tools.katana import KatanaTool
 from .tools.naabu import NaabuTool
 from .graph_client import graph_client
 
-def normalize_domain(value: str) -> str:
-    """Strips scheme and path, lowercases result."""
-    # Strip scheme
-    if "://" in value:
-        value = value.split("://", 1)[1]
-    # Strip path/trailing slash
-    if "/" in value:
-        value = value.split("/", 1)[0]
-    # Lowercase
-    return value.lower()
-
 class ReconOrchestrator:
     def __init__(self):
         self.sessions: Dict[str, ReconSessionStatus] = {}
@@ -131,13 +120,10 @@ class ReconOrchestrator:
             raise HTTPException(status_code=400, detail=f"Could not fetch program scope: {e}")
 
         out_of_scope = []
-        normalized_allowed = [normalize_domain(d) for d in scope_domains]
-
         for domain in request.domains:
-            norm_domain = normalize_domain(domain)
             is_in_scope = False
-            for allowed in normalized_allowed:
-                if norm_domain == allowed or norm_domain.endswith(f".{allowed}"):
+            for allowed in scope_domains:
+                if domain == allowed or domain.endswith(f".{allowed}"):
                     is_in_scope = True
                     break
             if not is_in_scope:

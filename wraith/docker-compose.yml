@@ -52,7 +52,7 @@ services:
     environment:
       - GRAPH_DB_URL=http://graph_api:8001/api/v1
       - DOCKER_BROKER_URL=http://docker_broker:8005/api/v1
-      - RECON_ORCHESTRATOR_BROKER_TOKEN=${RECON_ORCHESTRATOR_BROKER_TOKEN:-recon-dev-token}
+      - DOCKER_BROKER_TOKEN=${DOCKER_BROKER_TOKEN:-dev-token-change-me}
       - ADMIN_API_TOKEN=${ADMIN_API_TOKEN:-dev-token-change-me}
     depends_on:
       graph_api:
@@ -101,7 +101,7 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - KALI_SANDBOX_URL=http://kali_sandbox:8000
       - ADMIN_API_TOKEN=${ADMIN_API_TOKEN:-dev-token-change-me}
-      - ACTIVE_EXPLOIT_RUNNER_BROKER_TOKEN=${ACTIVE_EXPLOIT_RUNNER_BROKER_TOKEN:-exploit-dev-token}
+      - DOCKER_BROKER_TOKEN=${DOCKER_BROKER_TOKEN:-dev-token-change-me}
     networks:
       - wraith_internal
     depends_on:
@@ -135,8 +135,7 @@ services:
     networks:
       - wraith_internal
     environment:
-      - RECON_ORCHESTRATOR_TOKEN=${RECON_ORCHESTRATOR_BROKER_TOKEN:-recon-dev-token}
-      - ACTIVE_EXPLOIT_RUNNER_TOKEN=${ACTIVE_EXPLOIT_RUNNER_BROKER_TOKEN:-exploit-dev-token}
+      - DOCKER_BROKER_TOKEN=${DOCKER_BROKER_TOKEN:-dev-token-change-me}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8005/health"]
       interval: 10s
@@ -188,6 +187,11 @@ services:
         - NEXT_PUBLIC_RECON_URL=http://localhost:8002
         - NEXT_PUBLIC_EXPLOIT_RUNNER_URL=http://localhost:8004
         - NEXT_PUBLIC_REPORTING_URL=http://localhost:8006
+    environment:
+      - ADMIN_API_TOKEN=${ADMIN_API_TOKEN:-dev-token-change-me}
+      - GRAPH_DB_URL=http://graph_api:8001
+      - EXPLOIT_RUNNER_URL=http://active_exploit_runner:8004
+      - REPORTING_URL=http://reporting:8006
     ports:
       - "3000:3000"
     networks:
