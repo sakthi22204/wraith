@@ -2,13 +2,22 @@ from fastapi import Header, HTTPException, status
 from .config import settings
 
 async def require_broker_token(authorization: str = Header(None)):
-    expected_token = f"Bearer {settings.DOCKER_BROKER_TOKEN}"
-    if authorization != expected_token:
+    if not authorization:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or missing broker token",
+            detail="Missing broker token",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    # For now, return a generic identifier that represents an authenticated service.
-    # In a more advanced setup, this could be derived from sub-tokens or headers.
-    return "authenticated_service"
+
+    token = authorization.replace("Bearer ", "")
+
+    if token == settings.RECON_ORCHESTRATOR_TOKEN:
+        return "recon_orchestrator"
+    if token == settings.ACTIVE_EXPLOIT_RUNNER_TOKEN:
+        return "active_exploit_runner"
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid broker token",
+        headers={"WWW-Authenticate": "Bearer"},
+    )

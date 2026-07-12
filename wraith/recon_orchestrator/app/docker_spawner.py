@@ -8,7 +8,7 @@ class DockerSpawner:
         self.broker_url = broker_url
 
     async def spawn_container(self, image: str, cmd: List[str], timeout: int = settings.TOOL_TIMEOUT) -> str:
-        headers = {"Authorization": f"Bearer {settings.DOCKER_BROKER_TOKEN}"}
+        headers = {"Authorization": f"Bearer {settings.RECON_ORCHESTRATOR_BROKER_TOKEN}"}
         async with httpx.AsyncClient(timeout=timeout + 30, headers=headers) as client:
             spec = {
                 "image": image,
@@ -16,8 +16,7 @@ class DockerSpawner:
                 "mem_limit": settings.MEM_LIMIT,
                 "cpu_quota": settings.CPU_QUOTA,
                 "detach": True,
-                "remove": False,
-                "caller": "recon_orchestrator"
+                "remove": False
             }
 
             # 1. Create and run
@@ -29,14 +28,13 @@ class DockerSpawner:
                 # 2. Wait
                 wait_res = await client.post(
                     f"{self.broker_url}/containers/{container_id}/wait",
-                    params={"timeout": timeout, "caller": "recon_orchestrator"}
+                    params={"timeout": timeout}
                 )
                 wait_res.raise_for_status()
 
                 # 3. Get logs
                 log_res = await client.get(
-                    f"{self.broker_url}/containers/{container_id}/logs",
-                    params={"caller": "recon_orchestrator"}
+                    f"{self.broker_url}/containers/{container_id}/logs"
                 )
                 log_res.raise_for_status()
                 return log_res.json()["logs"]
@@ -44,8 +42,7 @@ class DockerSpawner:
                 # 4. Cleanup
                 try:
                     await client.delete(
-                        f"{self.broker_url}/containers/{container_id}",
-                        params={"caller": "recon_orchestrator"}
+                        f"{self.broker_url}/containers/{container_id}"
                     )
                 except:
                     pass
