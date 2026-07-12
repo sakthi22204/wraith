@@ -110,20 +110,33 @@ class ReconOrchestrator:
         if session_id in self.sessions:
             self.sessions[session_id].status = "cancelled"
 
+    def normalize_domain(self, domain: str) -> str:
+        """Strip scheme and trailing slashes from domain."""
+        d = domain.lower().strip()
+        if "://" in d:
+            d = d.split("://")[1]
+        return d.split("/")[0]
+
     async def start_session(self, request: ReconRequest) -> str:
         # Validate scope before accepting
         try:
             scope_domains = await graph_client.get_program_scope(request.program_id)
+            # Ensure scope domains are also normalized for comparison
+            normalized_scope = [self.normalize_domain(d) for d in scope_domains]
         except Exception as e:
             # If program doesn't exist or graph_db is down, we can't validate scope.
             # Reject to be safe.
             raise HTTPException(status_code=400, detail=f"Could not fetch program scope: {e}")
 
         out_of_scope = []
+        normalized_requested = []
         for domain in request.domains:
+            norm_domain = self.normalize_domain(domain)
+            normalized_requested.append(norm_domain)
+
             is_in_scope = False
-            for allowed in scope_domains:
-                if domain == allowed or domain.endswith(f".{allowed}"):
+            for allowed in normalized_scope:
+                if norm_domain == allowed or norm_domain.endswith(f".{allowed}"):
                     is_in_scope = True
                     break
             if not is_in_scope:
@@ -157,8 +170,8 @@ class ReconOrchestrator:
             progress=0.0
         )
 
-        # Start background task
-        asyncio.create_task(self.run_session(session_id, request.program_id, request.domains))
+        # Start background task with normalized domains
+        asyncio.create_task(self.run_session(session_id, request.program_id, normalized_requested))
 
         return session_id
 
