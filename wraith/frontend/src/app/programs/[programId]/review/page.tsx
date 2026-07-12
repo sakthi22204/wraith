@@ -4,15 +4,16 @@ import React, { useState, useEffect } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { toast } from 'sonner';
+import { Finding } from '@/types/graph';
 import { fetchReviewQueue, reviewFinding } from '@/lib/graphApi';
 import SeverityBadge from '@/components/SeverityBadge';
 import Skeleton from '@/components/Skeleton';
 
 export default function ReviewQueuePage() {
   const { programId } = useParams();
-  const [queue, setQueue] = useState<any[]>([]);
+  const [queue, setQueue] = useState<Finding[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [selectedFinding, setSelectedFinding] = useState<any>(null);
+  const [selectedFinding, setSelectedFinding] = useState<Finding | null>(null);
   const [note, setNote] = useState('');
 
   const loadQueue = async () => {
@@ -83,7 +84,7 @@ export default function ReviewQueuePage() {
                  >
                    <div className="flex justify-between items-start mb-1">
                      <SeverityBadge severity={f.severity} />
-                     <span className="text-[10px] font-mono text-slate-500">{(f.ai_confidence * 100).toFixed(0)}% Conf</span>
+                     <span className="text-[10px] font-mono text-slate-500">{(f.ai_confidence ?? 0 * 100).toFixed(0)}% Conf</span>
                    </div>
                    <div className="font-bold text-sm text-slate-200">{f.vuln_type.toUpperCase()}</div>
                    <div className="text-xs text-slate-500 truncate mt-1">{f.description}</div>
@@ -109,7 +110,7 @@ export default function ReviewQueuePage() {
                    <div className="grid grid-cols-2 gap-4">
                       <div className="bg-slate-950 p-3 rounded-lg border border-slate-800">
                         <label className="text-[10px] font-bold text-slate-600 uppercase block mb-1">AI Confidence</label>
-                        <span className="text-lg font-bold text-indigo-400">{(selectedFinding.ai_confidence * 100).toFixed(1)}%</span>
+                        <span className="text-lg font-bold text-indigo-400">{(selectedFinding.ai_confidence ?? 0 * 100).toFixed(1)}%</span>
                       </div>
                       <div className="bg-slate-950 p-3 rounded-lg border border-slate-800">
                         <label className="text-[10px] font-bold text-slate-600 uppercase block mb-1">Status</label>

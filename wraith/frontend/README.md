@@ -11,6 +11,7 @@ Interactive visualization for the Wraith autonomous bug-bounty pipeline.
 ### Prerequisites
 - Node.js 18+
 - Active `graph_db` and `exploit_agent` services
+- **Build-time network access**: Required for `next/font/google` to fetch Geist and JetBrains Mono from fonts.googleapis.com.
 
 ### Environment Variables
 Create a `.env.local` file in this directory:

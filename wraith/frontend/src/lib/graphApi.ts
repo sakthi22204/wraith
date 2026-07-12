@@ -20,12 +20,8 @@ export const createProgram = async (name: string, platform: string, scope_domain
 };
 
 export const deleteProgram = async (programId: string) => {
-  const adminToken = process.env.NEXT_PUBLIC_ADMIN_API_TOKEN || 'dev-token-change-me';
-  const response = await fetch(`${config.graphDbUrl}/api/v1/programs/${programId}?confirm=true`, {
+  const response = await fetch(`/api/programs/${programId}`, {
     method: 'DELETE',
-    headers: {
-      'Authorization': `Bearer ${adminToken}`
-    }
   });
   if (!response.ok) throw new Error('Failed to delete program');
   return response.json();

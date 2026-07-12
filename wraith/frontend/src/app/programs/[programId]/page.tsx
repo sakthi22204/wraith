@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { toast } from 'sonner';
+import { Finding } from '@/types/graph';
 import { startRecon, fetchReconStatus, cancelRecon } from '@/lib/reconApi';
 import { startAgentSession, fetchSessionStatus, stopAgentSession } from '@/lib/agentApi';
 import { fetchFindings, fetchReviewQueue, deleteProgram } from '@/lib/graphApi';
@@ -14,9 +15,9 @@ import ActiveExploitApproval from '@/components/ActiveExploitApproval';
 export default function ProgramDashboard() {
   const { programId } = useParams();
   const router = useRouter();
-  const [activeRecon, setActiveRecon] = useState<any>(null);
-  const [activeAgent, setActiveAgent] = useState<any>(null);
-  const [findings, setFindings] = useState<any[]>([]);
+  const [activeRecon, setActiveRecon] = useState<string | null>(null);
+  const [activeAgent, setActiveAgent] = useState<string | null>(null);
+  const [findings, setFindings] = useState<Finding[]>([]);
   const [reviewCount, setReviewQueueCount] = useState(0);
   const [deleteConfirm, setDeleteConfirm] = useState('');
   const [isDeleting, setIsDeleteModalOpen] = useState(false);
@@ -122,7 +123,7 @@ export default function ProgramDashboard() {
               {findings.length === 0 ? (
                 <div className="p-12 text-center text-slate-500 italic">No findings recorded yet. Start recon or an agent session.</div>
               ) : (
-                findings.slice(0, 10).map((f: any) => (
+                findings.slice(0, 10).map((f: Finding) => (
                   <div key={f.id} className="p-4 flex items-center justify-between hover:bg-slate-800/30 transition-colors">
                     <div className="flex items-center space-x-4">
                       <SeverityBadge severity={f.severity} />
@@ -280,6 +281,7 @@ export default function ProgramDashboard() {
                     <button onClick={() => setIsCancelReconModalOpen(false)} className="flex-1 bg-slate-800 text-white font-bold py-3 rounded-xl active:scale-95 transition-all">No, Keep Running</button>
                 <button
                   onClick={() => {
+                    if (!activeRecon) return;
                     cancelRecon(activeRecon).then(() => {
                       setActiveRecon(null);
                       setIsCancelReconModalOpen(false);
@@ -309,6 +311,7 @@ export default function ProgramDashboard() {
                     <button onClick={() => setIsStopAgentModalOpen(false)} className="flex-1 bg-slate-800 text-white font-bold py-3 rounded-xl active:scale-95 transition-all">No, Keep Active</button>
                 <button
                   onClick={() => {
+                    if (!activeAgent) return;
                     stopAgentSession(activeAgent).then(() => {
                       setActiveAgent(null);
                       setIsStopAgentModalOpen(false);

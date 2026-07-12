@@ -46,3 +46,33 @@ export interface ExploitProposal {
   status: string;
   created_at: string;
 }
+
+export interface AgentStep {
+  reason?: {
+    reasoning_log: string[];
+    next_tool?: string;
+    next_tool_params?: Record<string, any>;
+  };
+  call_tool?: {
+    reasoning_log: string[];
+    last_tool_result: string;
+  };
+  record_finding?: {
+    findings_this_session: Finding[];
+  };
+  propose_exploit?: {
+    reasoning_log: string[];
+  };
+  [key: string]: any;
+}
+
+export interface ReconSession {
+  id: string;
+  status: string;
+  progress: number;
+}
+
+export interface AgentSession {
+  id: string;
+  status: string;
+}

@@ -1,3 +1,4 @@
+import { AgentStep } from '../types/graph';
 import { config } from './config';
 
 export type AgentEvent = {
@@ -7,8 +8,8 @@ export type AgentEvent = {
 
 export const subscribeToAgentStream = (
   sessionId: string,
-  onMessage: (data: any) => void,
-  onError: (error: any) => void,
+  onMessage: (data: AgentStep) => void,
+  onError: (error: Event) => void,
   onEnd?: () => void
 ) => {
   const url = `${config.agentUrl}/api/v1/agent/sessions/${sessionId}/stream`;
