@@ -1,7 +1,11 @@
 import os
+import json
 from contextvars import ContextVar
 from typing import Optional
 from mcp.server.fastmcp import FastMCP
+from fastapi import HTTPException
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
 from .nmap_server import NmapServer
 from .nuclei_server import NucleiServer
 from .sqlmap_server import SQLMapServer
@@ -21,7 +25,6 @@ def verify_caller(tool_name: str, caller: Optional[str]):
         return
 
     if caller not in AUTHORIZED_DANGEROUS_CALLERS:
-        from fastapi import HTTPException
         raise HTTPException(status_code=403, detail=f"Caller {caller} is not authorized to use {tool_name}")
 
 # Initialize tool providers
@@ -32,9 +35,6 @@ hydra = HydraServer()
 metasploit = MetasploitServer()
 
 # Register tools from each provider to the main mcp instance
-# We need to wrap them or just use the tool decorators directly if we refactored.
-# For now, let's just use the ones we already defined by accessing their tool functions.
-
 @mcp.tool()
 async def run_nmap_scan(target: str, ports: str = "1-1000", scan_type: str = "-sV"):
     caller = caller_context.get()
@@ -71,7 +71,6 @@ async def run_msf_module(module: str, target: str, options: dict):
 @mcp.custom_route("/tools/{tool_name}/call", methods=["POST"])
 async def call_tool_internal(request):
     # FastMCP custom_route passes the Starlette request object
-    import json
     body = await request.json()
     tool_name = request.path_params["tool_name"]
 
@@ -81,17 +80,14 @@ async def call_tool_internal(request):
     # Set context for the duration of this call so @mcp.tool() wrappers can see it
     token = caller_context.set(caller)
 
-    from fastapi.encoders import jsonable_encoder
-    from fastapi.responses import JSONResponse
-
     # FastMCP stores tool handlers in a dictionary
     # For simplicity, we just use call_tool which is an internal method
     # It returns [TextContent, ...]
     try:
         result = await mcp.call_tool(tool_name, body)
     except Exception as e:
-        # Convert internal tool errors to JSON results if possible, or raise
-        return JSONResponse(content={"error": str(e), "success": False}, status_code=200)
+        # Convert internal tool errors to JSON results
+        return JSONResponse(content={"error": str(e), "success": False}, status_code=500)
     finally:
         caller_context.reset(token)
 
