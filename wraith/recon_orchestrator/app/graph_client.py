@@ -1,4 +1,5 @@
 import httpx
+from typing import List, Optional
 from .config import settings
 from .schemas import HostResult, PortResult, EndpointResult
 
@@ -16,6 +17,41 @@ class GraphClient:
             "/scan-sessions",
             params={"program_id": program_id}
         )
+        response.raise_for_status()
+        return response.json()
+
+    async def create_recon_session(self, session_id: str, program_id: str, domains: List[str], status: str):
+        response = await self._client.post(
+            "/recon-sessions",
+            params={
+                "session_id": session_id,
+                "program_id": program_id,
+                "status": status
+            },
+            json=domains
+        )
+        response.raise_for_status()
+        return response.json()
+
+    async def update_recon_session(self, session_id: str, status: str, tool_results: Optional[dict] = None):
+        response = await self._client.patch(
+            f"/recon-sessions/{session_id}",
+            params={"status": status},
+            json=tool_results
+        )
+        response.raise_for_status()
+        return response.json()
+
+    async def list_recon_sessions(self, program_id: str):
+        response = await self._client.get(
+            "/recon-sessions",
+            params={"program_id": program_id}
+        )
+        response.raise_for_status()
+        return response.json()
+
+    async def get_recon_session(self, session_id: str):
+        response = await self._client.get(f"/recon-sessions/{session_id}")
         response.raise_for_status()
         return response.json()
 

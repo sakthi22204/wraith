@@ -111,13 +111,23 @@ export default function ProgramDashboard() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div className="lg:col-span-2 space-y-8">
+          <div className="flex items-center space-x-4 mb-4">
+            <Link href={`/programs/${programId}/recon-sessions`} className="bg-slate-900 border border-slate-800 hover:bg-slate-800 px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-2">
+               <svg className="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+               <span>Recon History</span>
+            </Link>
+            <Link href={`/programs/${programId}/graph`} className="bg-slate-900 border border-slate-800 hover:bg-slate-800 px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-2">
+               <svg className="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 20l-5.447-2.724A2 2 0 013 15.487V6.513a2 2 0 011.553-1.943L9 2l5.447 2.724A2 2 0 0116 6.666v8.821a2 2 0 01-1.553 1.943L9 20z" /></svg>
+               <span>Attack Surface Map</span>
+            </Link>
+          </div>
+
           <section className="bg-gradient-to-br from-slate-900/60 to-slate-950/90 backdrop-blur-md border border-indigo-500/35 rounded-2xl overflow-hidden shadow-xl shadow-indigo-500/12">
             <div className="p-6 border-b border-slate-800 bg-slate-900/50 flex justify-between items-center">
               <h2 className="font-bold text-lg flex items-center font-heading">
                 <span className="w-2 h-2 bg-indigo-500 rounded-full mr-2"></span>
                 Active Findings ({findings.length})
               </h2>
-              <Link href={`/programs/${programId}/graph`} className="text-indigo-400 text-sm font-bold hover:underline">Full Graph →</Link>
             </div>
             <div className="divide-y divide-slate-800">
               {findings.length === 0 ? (
