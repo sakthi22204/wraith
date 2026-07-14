@@ -32,7 +32,7 @@ class ReconOrchestrator:
             graph_session = await graph_client.create_scan_session(program_id)
             graph_session_id = graph_session["id"]
         except Exception as e:
-            print(f"Failed to register session in graph_db: {e}")
+            print(f"Failed to register session in graph_db for session {session_id}: {e}")
 
         tasks = []
         for domain in domains:
@@ -43,15 +43,40 @@ class ReconOrchestrator:
         self.running_tasks[session_id] = tasks
 
         try:
-            await asyncio.gather(*tasks)
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            # Process results to determine overall status
+            any_failed = False
+            all_failed = True
+            for res in results:
+                if isinstance(res, Exception):
+                    any_failed = True
+                    print(f"Session {session_id} task failed unexpectedly: {res}")
+                elif res is False: # Our _run_tool returns False on failure
+                    any_failed = True
+                else:
+                    all_failed = False
+
+            if all_failed and len(results) > 0:
+                session.status = "failed"
+            elif any_failed:
+                session.status = "partial"
+            else:
+                session.status = "completed"
+
         except asyncio.CancelledError:
-             pass
-        session.status = "completed"
-        session.progress = 100.0
+             session.status = "cancelled"
+        except Exception as e:
+             print(f"Session {session_id} failed with critical error: {e}")
+             session.status = "failed"
+        finally:
+            session.progress = 100.0
+            if session_id in self.running_tasks:
+                del self.running_tasks[session_id]
 
         if graph_session_id:
             try:
-                await graph_client.update_scan_session(graph_session_id, "completed")
+                await graph_client.update_scan_session(graph_session_id, session.status)
             except Exception as e:
                 print(f"Failed to update session status in graph_db: {e}")
 
@@ -73,11 +98,15 @@ class ReconOrchestrator:
                 self.results[session_id].endpoints.extend(results.endpoints)
 
                 session.tool_statuses[tool_key] = ToolStatus.COMPLETED
+                return True
             except asyncio.TimeoutError:
+                print(f"Tool {tool.name} timed out for {domain} in session {session_id}")
                 session.tool_statuses[tool_key] = ToolStatus.TIMED_OUT
+                return False
             except Exception as e:
-                print(f"Tool {tool.name} failed for {domain}: {e}")
+                print(f"Tool {tool.name} failed for {domain} in session {session_id}: {e}")
                 session.tool_statuses[tool_key] = ToolStatus.FAILED
+                return False
             finally:
                 # Update overall progress
                 completed = sum(1 for s in session.tool_statuses.values()
