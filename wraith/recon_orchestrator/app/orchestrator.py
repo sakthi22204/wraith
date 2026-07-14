@@ -26,6 +26,11 @@ class ReconOrchestrator:
         session = self.sessions[session_id]
         session.status = "running"
 
+        try:
+            await graph_client.update_recon_session(session_id, "running")
+        except Exception as e:
+            print(f"Failed to update recon session {session_id} to running: {e}")
+
         graph_session_id = None
         # Register session in graph_db
         try:
@@ -79,6 +84,19 @@ class ReconOrchestrator:
                 await graph_client.update_scan_session(graph_session_id, session.status)
             except Exception as e:
                 print(f"Failed to update session status in graph_db: {e}")
+
+        # Final update to ReconSession in graph_db
+        try:
+            # Create a summary of tool results
+            tool_results = {
+                "hosts_found": len(self.results.get(session_id, ToolResults()).hosts),
+                "ports_found": len(self.results.get(session_id, ToolResults()).ports),
+                "endpoints_found": len(self.results.get(session_id, ToolResults()).endpoints),
+                "tool_statuses": {k: v.value for k, v in session.tool_statuses.items()}
+            }
+            await graph_client.update_recon_session(session_id, session.status, tool_results)
+        except Exception as e:
+             print(f"Failed to update recon session {session_id} in graph_db: {e}")
 
     async def _run_tool(self, session_id: str, program_id: str, domain: str, tool):
         async with self.semaphore:
@@ -201,6 +219,12 @@ class ReconOrchestrator:
 
         # Start background task with normalized domains
         asyncio.create_task(self.run_session(session_id, request.program_id, normalized_requested))
+
+        # Persist session to graph_db
+        try:
+            await graph_client.create_recon_session(session_id, request.program_id, normalized_requested, "accepted")
+        except Exception as e:
+            print(f"Failed to persist recon session {session_id} to graph_db: {e}")
 
         return session_id
 

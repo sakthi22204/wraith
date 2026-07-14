@@ -12,7 +12,8 @@ from .schema import (
     Program, ProgramCreate, Host, HostCreate, Port, PortCreate,
     Service, ServiceCreate, Endpoint, EndpointCreate, Parameter, ParameterCreate,
     Finding, FindingCreate, CVE, CVECreate, Node, Link, GraphResponse,
-    FindingStatus, FalsePositivePattern, FalsePositivePatternCreate
+    FindingStatus, FalsePositivePattern, FalsePositivePatternCreate,
+    ReconSession
 )
 
 def generate_id(*args) -> str:
@@ -58,6 +59,7 @@ class Neo4jRepository:
             "CREATE CONSTRAINT cve_id IF NOT EXISTS FOR (c:CVE) REQUIRE c.id IS UNIQUE",
             "CREATE CONSTRAINT tool_id IF NOT EXISTS FOR (t:Tool) REQUIRE t.id IS UNIQUE",
             "CREATE CONSTRAINT scansession_id IF NOT EXISTS FOR (s:ScanSession) REQUIRE s.id IS UNIQUE",
+            "CREATE CONSTRAINT reconsession_id IF NOT EXISTS FOR (r:ReconSession) REQUIRE r.id IS UNIQUE",
             "CREATE CONSTRAINT fppattern_id IF NOT EXISTS FOR (f:FalsePositivePattern) REQUIRE f.id IS UNIQUE"
         ]
         for query in constraints:
@@ -491,6 +493,70 @@ class Neo4jRepository:
         DETACH DELETE node
         """
         await self.session.run(query, program_id=program_id)
+
+    async def create_recon_session(self, session_id: str, program_id: str, domains: List[str], status: str) -> ReconSession:
+        now = datetime.utcnow().isoformat() + "Z"
+        query = """
+        MATCH (p:Program {id: $program_id})
+        MERGE (s:ReconSession {id: $id})
+        ON CREATE SET s.program_id = $program_id, s.domains = $domains, s.status = $status, s.started_at = $now
+        MERGE (p)-[:HAD_RECON_SESSION]->(s)
+        RETURN s
+        """
+        result = await self.session.run(query, id=session_id, program_id=program_id, domains=domains, status=status, now=now)
+        record = await result.single()
+        return ReconSession(**record["s"])
+
+    async def update_recon_session_status(self, session_id: str, status: str, tool_results: Optional[dict] = None) -> ReconSession:
+        now = datetime.utcnow().isoformat() + "Z"
+        query = """
+        MATCH (s:ReconSession {id: $id})
+        SET s.status = $status
+        """
+        if status in ["completed", "partial", "failed"]:
+            query += ", s.completed_at = $now"
+        if tool_results:
+            query += ", s.tool_results = $tool_results"
+
+        query += " RETURN s"
+
+        # Serialize tool_results to JSON string for Neo4j if it's a dict
+        results_json = json.dumps(tool_results) if tool_results else None
+
+        result = await self.session.run(query, id=session_id, status=status, now=now, tool_results=results_json)
+        record = await result.single()
+
+        data = dict(record["s"])
+        if data.get("tool_results"):
+             data["tool_results"] = json.loads(data["tool_results"])
+        return ReconSession(**data)
+
+    @retry_on_transient_error()
+    async def list_recon_sessions(self, program_id: str) -> List[ReconSession]:
+        query = """
+        MATCH (p:Program {id: $program_id})-[:HAD_RECON_SESSION]->(s:ReconSession)
+        RETURN s ORDER BY s.started_at DESC
+        """
+        result = await self.session.run(query, program_id=program_id)
+        sessions = []
+        async for record in result:
+            data = dict(record["s"])
+            if data.get("tool_results"):
+                 data["tool_results"] = json.loads(data["tool_results"])
+            sessions.append(ReconSession(**data))
+        return sessions
+
+    @retry_on_transient_error()
+    async def get_recon_session(self, session_id: str) -> Optional[ReconSession]:
+        query = "MATCH (s:ReconSession {id: $id}) RETURN s"
+        result = await self.session.run(query, id=session_id)
+        record = await result.single()
+        if not record:
+            return None
+        data = dict(record["s"])
+        if data.get("tool_results"):
+             data["tool_results"] = json.loads(data["tool_results"])
+        return ReconSession(**data)
 
     async def deduplicate_findings(self, program_id: str) -> int:
         # Instead of physically merging nodes (which might lose historical data or confuse relationships),

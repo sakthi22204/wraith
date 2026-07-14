@@ -158,6 +158,20 @@ class ScanSession(ScanSessionBase):
     id: str
     ended_at: Optional[datetime] = None
 
+class ReconSessionBase(BaseModel):
+    program_id: str
+    domains: List[str]
+    status: str # "running"|"completed"|"partial"|"failed"
+    started_at: datetime = Field(default_factory=datetime.utcnow)
+
+class ReconSessionCreate(ReconSessionBase):
+    pass
+
+class ReconSession(ReconSessionBase):
+    id: str
+    completed_at: Optional[datetime] = None
+    tool_results: Optional[dict] = None # JSON summary of counts
+
 # For the Graph GET endpoint
 class Node(BaseModel):
     id: str

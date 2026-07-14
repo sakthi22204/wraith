@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Toaster } from "sonner";
 import { Geist, JetBrains_Mono, Space_Grotesk } from "next/font/google";
 import "./globals.css";
+import ReconStatusBannerContainer from "@/components/ReconStatusBannerContainer";
 
 const geist = Geist({
   subsets: ["latin"],
@@ -46,6 +47,7 @@ export default function RootLayout({
         <main className="container mx-auto px-4 py-8">
           {children}
         </main>
+        <ReconStatusBannerContainer />
         <Toaster position="bottom-right" theme="dark" richColors />
       </body>
     </html>

@@ -5,7 +5,8 @@ from pydantic import BaseModel
 from ..schema import (
     Program, ProgramCreate, Host, HostCreate, Port, PortCreate,
     Service, ServiceCreate, Endpoint, EndpointCreate, Parameter, ParameterCreate,
-    Finding, FindingCreate, CVECreate, GraphResponse, FalsePositivePattern
+    Finding, FindingCreate, CVECreate, GraphResponse, FalsePositivePattern,
+    ReconSession
 )
 from ..client import neo4j_client
 from ..repository import Neo4jRepository
@@ -55,6 +56,26 @@ async def create_scan_session(program_id: str, repo: Neo4jRepository = Depends(g
 async def update_scan_session(session_id: str, status: str, repo: Neo4jRepository = Depends(get_repo)):
     await repo.update_scan_session(session_id, status)
     return {"status": "updated"}
+
+# Recon Session Management
+@router.post("/recon-sessions", response_model=ReconSession)
+async def create_recon_session(session_id: str, program_id: str, domains: List[str], status: str, repo: Neo4jRepository = Depends(get_repo)):
+    return await repo.create_recon_session(session_id, program_id, domains, status)
+
+@router.patch("/recon-sessions/{session_id}", response_model=ReconSession)
+async def update_recon_session(session_id: str, status: str, tool_results: Optional[dict] = None, repo: Neo4jRepository = Depends(get_repo)):
+    return await repo.update_recon_session_status(session_id, status, tool_results)
+
+@router.get("/recon-sessions", response_model=List[ReconSession])
+async def list_recon_sessions(program_id: str, repo: Neo4jRepository = Depends(get_repo)):
+    return await repo.list_recon_sessions(program_id)
+
+@router.get("/recon-sessions/{session_id}", response_model=ReconSession)
+async def get_recon_session(session_id: str, repo: Neo4jRepository = Depends(get_repo)):
+    session = await repo.get_recon_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Recon session not found")
+    return session
 
 @router.post("/findings/{finding_id}/session/{session_id}")
 async def link_finding_to_session(finding_id: str, session_id: str, repo: Neo4jRepository = Depends(get_repo)):
