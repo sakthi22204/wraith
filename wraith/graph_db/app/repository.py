@@ -2,9 +2,12 @@ import hashlib
 import json
 import uuid
 import re
+import asyncio
+import random
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 from neo4j import AsyncSession
+import neo4j.exceptions
 from .schema import (
     Program, ProgramCreate, Host, HostCreate, Port, PortCreate,
     Service, ServiceCreate, Endpoint, EndpointCreate, Parameter, ParameterCreate,
@@ -15,6 +18,29 @@ from .schema import (
 def generate_id(*args) -> str:
     seed = ":".join(str(arg) for arg in args)
     return hashlib.sha256(seed.encode()).hexdigest()
+
+def retry_on_transient_error(max_retries=3, initial_delay=0.05):
+    def decorator(func):
+        async def wrapper(*args, **kwargs):
+            retries = 0
+            delay = initial_delay
+            while True:
+                try:
+                    return await func(*args, **kwargs)
+                except neo4j.exceptions.TransientError as e:
+                    if retries >= max_retries:
+                        print(f"Max retries reached for {func.__name__} after TransientError: {e}")
+                        raise
+                    # Check for specific code if possible, but Transaction.Outdated is common for this
+                    retries += 1
+                    sleep_time = delay * (1 + random.random()) # jitter
+                    print(f"TransientError in {func.__name__}, retry {retries}/{max_retries} in {sleep_time:.3f}s: {e}")
+                    await asyncio.sleep(sleep_time)
+                    delay *= 2 # exponential backoff
+                except Exception:
+                    raise
+        return wrapper
+    return decorator
 
 class Neo4jRepository:
     def __init__(self, session: AsyncSession):
@@ -99,6 +125,7 @@ class Neo4jRepository:
         record = await result.single()
         return Program(**record["p"])
 
+    @retry_on_transient_error()
     async def get_program(self, program_id: str) -> Optional[Program]:
         query = "MATCH (p:Program {id: $id}) RETURN p"
         result = await self.session.run(query, id=program_id)
@@ -107,6 +134,7 @@ class Neo4jRepository:
             return None
         return Program(**record["p"])
 
+    @retry_on_transient_error()
     async def list_programs(self) -> List[Program]:
         query = "MATCH (p:Program) RETURN p"
         result = await self.session.run(query)
@@ -369,6 +397,7 @@ class Neo4jRepository:
         await self.session.run(query, finding_id=finding_id, c_id=c_id, cve_id=cve.cve_id,
                               cvss_score=cve.cvss_score, description=cve.description)
 
+    @retry_on_transient_error()
     async def get_attack_surface(self, program_id: str) -> Dict[str, Any]:
         # Use APOC to reliably fetch the connected subgraph up to 5 levels
         query = """
