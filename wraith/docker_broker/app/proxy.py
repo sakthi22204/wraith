@@ -24,6 +24,18 @@ class DockerProxy:
                 # Extract image and command to call correctly
                 image = spec.pop("image")
                 command = spec.pop("command", None)
+
+                # Ensure image is available locally
+                try:
+                    self.client.images.get(image)
+                except docker.errors.ImageNotFound:
+                    print(f"Image {image} not found locally, pulling...")
+                    try:
+                        self.client.images.pull(image)
+                    except Exception as pull_err:
+                        print(f"Failed to pull image {image}: {pull_err}")
+                        raise pull_err
+
                 container = self.client.containers.run(
                     image=image,
                     command=command,

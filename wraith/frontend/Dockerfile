@@ -1,5 +1,5 @@
 # Stage 1: Build
-FROM node:18-slim AS builder
+FROM node:20-alpine AS builder
 
 WORKDIR /app
 
@@ -16,21 +16,21 @@ ENV NEXT_PUBLIC_RECON_URL=$NEXT_PUBLIC_RECON_URL
 ENV NEXT_PUBLIC_EXPLOIT_RUNNER_URL=$NEXT_PUBLIC_EXPLOIT_RUNNER_URL
 ENV NEXT_PUBLIC_REPORTING_URL=$NEXT_PUBLIC_REPORTING_URL
 
-COPY package*.json ./
-RUN npm install
+COPY package.json ./
+RUN npm install -g npm@latest && npm install --include=optional
 
 COPY . .
 RUN npm run build
 
 # Stage 2: Production
-FROM node:18-slim AS runner
+FROM node:20-alpine AS runner
 
 WORKDIR /app
 
 ENV NODE_ENV=production
 
-# Install curl for health checks
-RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+# Install curl for health checks using Alpine's apk
+RUN apk add --no-cache curl
 
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next ./.next
