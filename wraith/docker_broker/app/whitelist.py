@@ -8,9 +8,9 @@ ALLOWED_IMAGES = [
 
 ALLOWED_COMMANDS_PER_IMAGE = {
     "projectdiscovery/subfinder:latest": ["-d", "-json"],
-    "projectdiscovery/httpx:latest": ["-list", "-json"],
-    "projectdiscovery/katana:latest": ["-u", "-json"],
-    "projectdiscovery/naabu:latest": ["-host", "-json"],
+    "projectdiscovery/httpx:latest": ["-u", "-list", "-json", "-silent"],
+    "projectdiscovery/katana:latest": ["-u", "-json", "-silent"],
+    "projectdiscovery/naabu:latest": ["-host", "-json", "-silent"],
     "kalilinux/kali-rolling:latest": ["nmap", "nikto"] # Example restricted commands
 }
 
