@@ -21,7 +21,7 @@ async def test_create_container_allowed():
                     "image": "projectdiscovery/subfinder:latest",
                     "command": ["-d", "example.com"]
                 },
-                headers={"Authorization": f"Bearer {settings.DOCKER_BROKER_TOKEN}"}
+                headers={"Authorization": f"Bearer {settings.RECON_BROKER_TOKEN}"}
             )
 
     assert response.status_code == 200
@@ -35,6 +35,6 @@ async def test_create_container_rejected():
             json={
                 "image": "malicious/image:latest"
             },
-            headers={"Authorization": f"Bearer {settings.DOCKER_BROKER_TOKEN}"}
+            headers={"Authorization": f"Bearer {settings.RECON_BROKER_TOKEN}"}
         )
     assert response.status_code == 403

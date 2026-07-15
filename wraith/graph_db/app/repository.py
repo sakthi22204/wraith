@@ -525,6 +525,8 @@ class Neo4jRepository:
 
         result = await self.session.run(query, id=session_id, status=status, now=now, tool_results=results_json)
         record = await result.single()
+        if record is None:
+             raise ValueError(f"ReconSession {session_id} not found — cannot update status")
 
         data = dict(record["s"])
         if data.get("tool_results"):
