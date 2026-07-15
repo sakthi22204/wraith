@@ -80,3 +80,16 @@ async def test_list_recon_sessions_mock():
     assert len(sessions) == 1
     assert sessions[0].id == "s1"
     assert mock_session.run.call_count == 1
+
+@pytest.mark.asyncio
+async def test_update_recon_session_status_not_found():
+    mock_session = AsyncMock()
+    repo = Neo4jRepository(mock_session)
+
+    mock_result = AsyncMock()
+    mock_result.single.return_value = None
+    mock_session.run.return_value = mock_result
+
+    with pytest.raises(ValueError) as exc:
+        await repo.update_recon_session_status("nonexistent", "completed")
+    assert "not found" in str(exc.value)

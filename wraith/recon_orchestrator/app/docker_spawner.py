@@ -8,7 +8,7 @@ class DockerSpawner:
         self.broker_url = broker_url
 
     async def spawn_container(self, image: str, cmd: List[str], timeout: int = settings.TOOL_TIMEOUT) -> str:
-        headers = {"Authorization": f"Bearer {settings.DOCKER_BROKER_TOKEN}"}
+        headers = {"Authorization": f"Bearer {settings.RECON_BROKER_TOKEN}"}
         async with httpx.AsyncClient(timeout=timeout + 30, headers=headers) as client:
             spec = {
                 "image": image,

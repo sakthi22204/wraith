@@ -217,14 +217,15 @@ class ReconOrchestrator:
             progress=0.0
         )
 
-        # Start background task with normalized domains
-        asyncio.create_task(self.run_session(session_id, request.program_id, normalized_requested))
-
-        # Persist session to graph_db
+        # Persist session to graph_db BEFORE starting the background task to avoid race conditions
         try:
             await graph_client.create_recon_session(session_id, request.program_id, normalized_requested, "accepted")
         except Exception as e:
-            print(f"Failed to persist recon session {session_id} to graph_db: {e}")
+            # Log warning but proceed with in-memory session so recon isn't fully blocked
+            print(f"Warning: Failed to persist recon session {session_id} to graph_db: {e}")
+
+        # Start background task with normalized domains
+        asyncio.create_task(self.run_session(session_id, request.program_id, normalized_requested))
 
         return session_id
 
