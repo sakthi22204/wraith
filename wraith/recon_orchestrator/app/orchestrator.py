@@ -164,7 +164,7 @@ class ReconOrchestrator:
             d = d.split("://")[1]
         return d.split("/")[0]
 
-    async def start_session(self, request: ReconRequest) -> str:
+    async def start_session(self, request: ReconRequest) -> dict:
         # Validate scope before accepting
         try:
             scope_domains = await graph_client.get_program_scope(request.program_id)
@@ -203,6 +203,16 @@ class ReconOrchestrator:
                 detail=f"Requested domains out of scope for program {request.program_id}: {', '.join(out_of_scope)}"
             )
 
+        # Check for existing running session for same program and exact domains
+        try:
+            existing_sessions = await graph_client.list_recon_sessions(request.program_id)
+            for s in existing_sessions:
+                if s["status"] in ["running", "accepted"] and set(s["domains"]) == set(normalized_requested):
+                    print(f"Deduplicating recon session for program {request.program_id}")
+                    return {"session_id": s["id"], "duplicate_of": s["id"]}
+        except Exception as e:
+            print(f"Failed to check for existing sessions: {e}")
+
         session_id = str(uuid.uuid4())
         tool_statuses = {}
         for domain in request.domains:
@@ -227,6 +237,6 @@ class ReconOrchestrator:
         # Start background task with normalized domains
         asyncio.create_task(self.run_session(session_id, request.program_id, normalized_requested))
 
-        return session_id
+        return {"session_id": session_id}
 
 orchestrator = ReconOrchestrator()

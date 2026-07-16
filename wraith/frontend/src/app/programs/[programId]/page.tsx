@@ -16,6 +16,7 @@ export default function ProgramDashboard() {
   const { programId } = useParams();
   const router = useRouter();
   const [activeRecon, setActiveRecon] = useState<string | null>(null);
+  const [isStartingRecon, setIsStartingRecon] = useState(false);
   const [activeAgent, setActiveAgent] = useState<string | null>(null);
   const [findings, setFindings] = useState<Finding[]>([]);
   const [reviewCount, setReviewQueueCount] = useState(0);
@@ -44,15 +45,22 @@ export default function ProgramDashboard() {
   }, [programId]);
 
   const handleStartRecon = async () => {
-    if (!reconDomains) return;
+    if (!reconDomains || isStartingRecon) return;
+    setIsStartingRecon(true);
     try {
       const res = await startRecon(programId as string, reconDomains.split(',').map(s => s.trim()));
       setActiveRecon(res.session_id);
       setIsReconModalOpen(false);
       setReconDomains('');
-      toast.success('Recon session started');
+      if (res.duplicate_of) {
+          toast.info('Recon session already in progress for these domains');
+      } else {
+          toast.success('Recon session started');
+      }
     } catch (e) {
       toast.error('Failed to start recon');
+    } finally {
+      setIsStartingRecon(false);
     }
   };
 
@@ -269,9 +277,10 @@ export default function ProgramDashboard() {
               </div>
               <button
                 onClick={handleStartRecon}
-                className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded-xl transition-all shadow-lg shadow-indigo-600/20 active:scale-95"
+                disabled={isStartingRecon}
+                className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded-xl transition-all shadow-lg shadow-indigo-600/20 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Start Recon
+                {isStartingRecon ? 'Starting...' : 'Start Recon'}
               </button>
             </div>
           </div>

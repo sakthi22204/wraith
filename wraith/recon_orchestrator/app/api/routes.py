@@ -5,10 +5,16 @@ from ..orchestrator import orchestrator
 
 router = APIRouter()
 
-@router.post("/start", status_code=202)
-async def start_recon(request: ReconRequest):
-    session_id = await orchestrator.start_session(request)
-    return {"session_id": session_id}
+from fastapi import Response, status
+
+@router.post("/start")
+async def start_recon(request: ReconRequest, response: Response):
+    res = await orchestrator.start_session(request)
+    if res.get("duplicate_of"):
+        response.status_code = status.HTTP_200_OK
+    else:
+        response.status_code = status.HTTP_202_ACCEPTED
+    return res
 
 @router.get("/{session_id}/status", response_model=ReconSessionStatus)
 async def get_status(session_id: str):
