@@ -17,7 +17,7 @@ ENV NEXT_PUBLIC_EXPLOIT_RUNNER_URL=$NEXT_PUBLIC_EXPLOIT_RUNNER_URL
 ENV NEXT_PUBLIC_REPORTING_URL=$NEXT_PUBLIC_REPORTING_URL
 
 COPY package.json ./
-RUN npm install -g npm@latest && npm install --include=optional
+RUN npm install --include=optional
 
 COPY . .
 RUN npm run build

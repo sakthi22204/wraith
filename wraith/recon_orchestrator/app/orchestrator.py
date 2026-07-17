@@ -86,17 +86,30 @@ class ReconOrchestrator:
                 print(f"Failed to update session status in graph_db: {e}")
 
         # Final update to ReconSession in graph_db
-        try:
-            # Create a summary of tool results
-            tool_results = {
-                "hosts_found": len(self.results.get(session_id, ToolResults()).hosts),
-                "ports_found": len(self.results.get(session_id, ToolResults()).ports),
-                "endpoints_found": len(self.results.get(session_id, ToolResults()).endpoints),
-                "tool_statuses": {k: v.value for k, v in session.tool_statuses.items()}
-            }
-            await graph_client.update_recon_session(session_id, session.status, tool_results)
-        except Exception as e:
-             print(f"Failed to update recon session {session_id} in graph_db: {e}")
+        max_attempts = 3
+        delay = 2.0
+        tool_results = {
+            "hosts_found": len(self.results.get(session_id, ToolResults()).hosts),
+            "ports_found": len(self.results.get(session_id, ToolResults()).ports),
+            "endpoints_found": len(self.results.get(session_id, ToolResults()).endpoints),
+            "tool_statuses": {k: v.value for k, v in session.tool_statuses.items()}
+        }
+
+        for attempt in range(1, max_attempts + 1):
+            try:
+                await graph_client.update_recon_session(session_id, session.status, tool_results)
+                print(f"Successfully updated recon session {session_id} in graph_db on attempt {attempt}")
+                break
+            except Exception as e:
+                if attempt == max_attempts:
+                    import logging
+                    logging.getLogger("recon_orchestrator").error(
+                        f"CRITICAL ERROR: Failed to update recon session {session_id} in graph_db after {max_attempts} attempts: {e}"
+                    )
+                else:
+                    print(f"Failed to update recon session {session_id} in graph_db on attempt {attempt}/{max_attempts}: {e}. Retrying in {delay}s...")
+                    await asyncio.sleep(delay)
+                    delay *= 2
 
     async def _run_tool(self, session_id: str, program_id: str, domain: str, tool):
         async with self.semaphore:
