@@ -94,5 +94,11 @@ async def call_tool_internal(request):
     # Since call_tool returns a list of Content objects, we need to serialize them
     return JSONResponse(content=jsonable_encoder(result))
 
+# Lightweight health check endpoint for Docker healthcheck (avoids relying
+# on the SSE stream endpoint, which never "completes" a normal HTTP request)
+@mcp.custom_route("/health", methods=["GET"])
+async def health_check(request):
+    return JSONResponse(content={"status": "healthy"})
+
 if __name__ == "__main__":
     mcp.run(transport="sse")

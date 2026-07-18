@@ -76,7 +76,7 @@ services:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - GROQ_API_KEY=${GROQ_API_KEY}
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://ollama:11434}
-      - MCP_SERVER_URLS=["http://kali_sandbox:8000"]
+      - MCP_SERVER_URLS=["http://kali_sandbox:8000/sse"]
       - ADMIN_API_TOKEN=${ADMIN_API_TOKEN:-dev-token-change-me}
     networks:
       - wraith_internal
@@ -84,7 +84,7 @@ services:
       graph_api:
         condition: service_healthy
       kali_sandbox:
-        condition: service_started
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
       interval: 10s
@@ -151,6 +151,12 @@ services:
       - MSF_DATABASE_CONFIG=/opt/msf/config/database.yml
     networks:
       - wraith_internal
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf -m 2 http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
 
   # OPTIONAL LOCAL LLM
   ollama:
