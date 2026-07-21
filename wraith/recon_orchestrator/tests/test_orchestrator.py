@@ -24,7 +24,8 @@ async def test_orchestrator_parallelism():
         start_time = time.time()
 
         request = ReconRequest(program_id="test_prog", domains=["example.com"])
-        session_id = await orchestrator.start_session(request)
+        res = await orchestrator.start_session(request)
+        session_id = res["session_id"]
 
         # Wait for background tasks to finish
         # In a real test we'd need a better way to wait for session completion

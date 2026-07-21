@@ -190,8 +190,12 @@ class ReconOrchestrator:
 
         out_of_scope = []
         normalized_requested = []
+        seen = set()
         for domain in request.domains:
             norm_domain = self.normalize_domain(domain)
+            if norm_domain in seen:
+                continue
+            seen.add(norm_domain)
             normalized_requested.append(norm_domain)
 
             is_in_scope = False
@@ -228,7 +232,7 @@ class ReconOrchestrator:
 
         session_id = str(uuid.uuid4())
         tool_statuses = {}
-        for domain in request.domains:
+        for domain in normalized_requested:
             for tool in self.tools:
                 tool_statuses[f"{tool.name}:{domain}"] = ToolStatus.PENDING
 

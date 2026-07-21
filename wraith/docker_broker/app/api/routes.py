@@ -23,6 +23,7 @@ def verify_ownership(container_id: str, caller_id: str):
 async def create_container(spec: dict, caller_id: str = Depends(require_broker_token)):
     # We use caller_id from token or spec.caller if we want more granularity
     identity = spec.get("caller") or caller_id
+    spec.pop("caller", None)
     container_id = await docker_proxy.create_container(spec)
     container_ownership[container_id] = identity
     return {"container_id": container_id}

@@ -12,7 +12,7 @@ async def test_recon_start_api():
     from httpx import ASGITransport
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         with patch("app.orchestrator.orchestrator.start_session") as mock_start:
-            mock_start.return_value = "test-session-id"
+            mock_start.return_value = {"session_id": "test-session-id"}
 
             response = await ac.post("/api/v1/recon/start", json={
                 "program_id": "prog_123",

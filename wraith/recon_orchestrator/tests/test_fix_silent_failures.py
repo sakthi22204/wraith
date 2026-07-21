@@ -19,7 +19,8 @@ async def test_session_failure_on_tool_error():
             tool.run = AsyncMock(side_effect=Exception("Spawn failed"))
 
         request = ReconRequest(program_id="p1", domains=["example.com"])
-        session_id = await orchestrator.start_session(request)
+        res = await orchestrator.start_session(request)
+        session_id = res["session_id"]
 
         # Wait for background task to complete
         timeout = 5
