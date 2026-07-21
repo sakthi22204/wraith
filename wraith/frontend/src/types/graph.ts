@@ -33,8 +33,11 @@ export interface Finding {
   status: string;
   description: string;
   discovered_at: string;
-  ai_confidence?: number;
+  ai_confidence?: number | null;
   ai_reasoning?: string;
+  corroborating_sources?: string[];
+  cvss_vector?: string;
+  evidence?: string;
 }
 
 export interface ExploitProposal {

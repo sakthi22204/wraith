@@ -14,7 +14,8 @@ async def test_start_session_scope_enforcement():
 
         # 1. Fully in-scope
         request = ReconRequest(program_id="p1", domains=["example.com", "sub.example.com"])
-        session_id = await orchestrator.start_session(request)
+        res = await orchestrator.start_session(request)
+        session_id = res["session_id"]
         assert session_id in orchestrator.sessions
         assert orchestrator.sessions[session_id].status == "accepted"
 
