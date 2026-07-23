@@ -55,3 +55,31 @@ async def test_spawn_container_cleanup_on_failure():
 
         # Cleanup should still be called
         assert mock_ac.delete.called
+
+@pytest.mark.asyncio
+async def test_spawn_container_cleanup_logging_on_http_error():
+    from app.docker_spawner import DockerSpawner
+    import httpx
+
+    spawner = DockerSpawner(broker_url="http://broker")
+    dummy_request = Request("POST", "http://broker")
+
+    with patch("httpx.AsyncClient") as mock_client:
+        mock_ac = mock_client.return_value.__aenter__.return_value
+
+        # Mock create/wait success, logs success, delete raising HTTPError
+        mock_ac.post.side_effect = [
+            Response(200, json={"container_id": "test-id"}, request=dummy_request),
+            Response(200, json={"StatusCode": 0}, request=dummy_request)
+        ]
+        mock_ac.get.return_value = Response(200, json={"logs": "test-output"}, request=dummy_request)
+
+        # Raise HTTPError on cleanup
+        mock_ac.delete.side_effect = httpx.HTTPError("cleanup connection error")
+
+        with patch("app.docker_spawner.logger.warning") as mock_warn:
+            output = await spawner.spawn_container("test-image", ["cmd"])
+
+            assert output == "test-output" # should still return output (best effort cleanup)
+            mock_warn.assert_called_once()
+            assert "Failed to cleanup container" in mock_warn.call_args[0][0]

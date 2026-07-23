@@ -1,7 +1,10 @@
 import httpx
 import asyncio
+import logging
 from typing import List
 from .config import settings
+
+logger = logging.getLogger(__name__)
 
 class DockerSpawner:
     def __init__(self, broker_url: str = settings.DOCKER_BROKER_URL):
@@ -45,7 +48,7 @@ class DockerSpawner:
                     await client.delete(
                         f"{self.broker_url}/containers/{container_id}"
                     )
-                except:
-                    pass
+                except httpx.HTTPError as e:
+                    logger.warning(f"Failed to cleanup container '{container_id}' on broker: {e}")
 
 docker_spawner = DockerSpawner()
