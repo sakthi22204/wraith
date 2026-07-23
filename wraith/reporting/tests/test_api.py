@@ -86,3 +86,26 @@ async def test_get_program_report_pdf():
         assert response.status_code == 200
         assert response.headers["content-type"] == "application/pdf"
         assert response.content == b"%PDF-mock"
+
+def test_parse_date():
+    from app.api.routes import parse_date
+    from datetime import datetime
+
+    # Valid string
+    d1 = parse_date("2023-10-01T12:00:00Z")
+    assert d1.year == 2023
+    assert d1.month == 10
+    assert d1.day == 1
+
+    # Invalid string
+    with patch("app.api.routes.logger.warning") as mock_warn:
+        d2 = parse_date("invalid-date-string")
+        assert isinstance(d2, datetime)
+        mock_warn.assert_called_once()
+        assert "Malformed ISO date string" in mock_warn.call_args[0][0]
+
+    # Empty string or None
+    d3 = parse_date("")
+    assert isinstance(d3, datetime)
+    d4 = parse_date(None)
+    assert isinstance(d4, datetime)

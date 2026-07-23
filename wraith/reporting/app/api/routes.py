@@ -16,11 +16,16 @@ env = Environment(
     autoescape=select_autoescape(["html", "j2", "xml"])
 )
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 def parse_date(ts):
     if not ts: return datetime.utcnow()
     try:
-        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
-    except:
+        return datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+    except ValueError as e:
+        logger.warning(f"Malformed ISO date string encountered in parse_date: '{ts}'. Fallback to utcnow. Error: {e}")
         return datetime.utcnow()
 
 @router.get("/reports/{program_id}/findings/{finding_id}", dependencies=[Depends(require_admin_token)])
