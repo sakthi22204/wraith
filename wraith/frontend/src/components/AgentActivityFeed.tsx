@@ -16,29 +16,88 @@ export default function AgentActivityFeed({ sessionId }: AgentActivityFeedProps)
 
   useEffect(() => {
     let unsubscribe: (() => void) | null = null;
+    let isMounted = true;
 
-    const connect = () => {
-      unsubscribe = subscribeToAgentStream(
-        sessionId,
-        (data) => {
-          setSteps((prev) => [...prev, data]);
-          setStatus('connected');
-        },
-        (error) => {
-          console.error('SSE Error:', error);
-          setStatus('reconnecting');
-          // EventSource will automatically retry, but we'll manually re-trigger
-          // our UI state if it stays in error too long
-        },
-        () => {
-          setStatus('completed');
+    const initFeed = async () => {
+      try {
+        // Fetch current status immediately on load/refresh
+        const statusData = await fetchSessionStatus(sessionId);
+        if (!isMounted) return;
+
+        const isCompleted = ['completed', 'stopped', 'failed'].includes(statusData.status);
+
+        // Reconstruct steps from reasoning_log if available
+        if (statusData.reasoning_log && statusData.reasoning_log.length > 0) {
+          const parsedSteps = statusData.reasoning_log.map((log: string) => {
+            if (log.startsWith('Iteration ')) {
+              return {
+                reason: {
+                  reasoning_log: [log],
+                  next_tool: log.includes('run_') ? log.split('run_')[1].split(' ')[0] : undefined,
+                  next_tool_params: {}
+                }
+              };
+            } else if (log.startsWith('Tool ')) {
+              return {
+                call_tool: {
+                  reasoning_log: [log],
+                  last_tool_result: 'See Graph View for discovered endpoints and hosts.'
+                }
+              };
+            } else if (log.startsWith('Recorded finding:')) {
+              return {
+                record_finding: {
+                  findings_this_session: [
+                    {
+                      id: 'finding-recorded',
+                      vuln_type: 'Vulnerability Finding',
+                      description: log,
+                      severity: 'medium'
+                    }
+                  ]
+                }
+              };
+            } else {
+              return {
+                reason: {
+                  reasoning_log: [log]
+                }
+              };
+            }
+          });
+          setSteps(parsedSteps);
         }
-      );
+
+        if (isCompleted) {
+          setStatus('completed');
+        } else {
+          // Attach to SSE stream for live updates going forward
+          setStatus('connecting');
+          unsubscribe = subscribeToAgentStream(
+            sessionId,
+            (data) => {
+              setSteps((prev) => [...prev, data]);
+              setStatus('connected');
+            },
+            (error) => {
+              console.error('SSE Error:', error);
+              setStatus('reconnecting');
+            },
+            () => {
+              setStatus('completed');
+            }
+          );
+        }
+      } catch (err) {
+        console.error('Failed to init Agent Feed:', err);
+        setStatus('error');
+      }
     };
 
-    connect();
+    initFeed();
 
     return () => {
+      isMounted = false;
       if (unsubscribe) unsubscribe();
     };
   }, [sessionId]);

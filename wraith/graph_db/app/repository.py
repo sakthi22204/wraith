@@ -13,7 +13,7 @@ from .schema import (
     Service, ServiceCreate, Endpoint, EndpointCreate, Parameter, ParameterCreate,
     Finding, FindingCreate, CVE, CVECreate, Node, Link, GraphResponse,
     FindingStatus, FalsePositivePattern, FalsePositivePatternCreate,
-    ReconSession
+    ReconSession, AgentSession
 )
 
 def generate_id(*args) -> str:
@@ -60,7 +60,8 @@ class Neo4jRepository:
             "CREATE CONSTRAINT tool_id IF NOT EXISTS FOR (t:Tool) REQUIRE t.id IS UNIQUE",
             "CREATE CONSTRAINT scansession_id IF NOT EXISTS FOR (s:ScanSession) REQUIRE s.id IS UNIQUE",
             "CREATE CONSTRAINT reconsession_id IF NOT EXISTS FOR (r:ReconSession) REQUIRE r.id IS UNIQUE",
-            "CREATE CONSTRAINT fppattern_id IF NOT EXISTS FOR (f:FalsePositivePattern) REQUIRE f.id IS UNIQUE"
+            "CREATE CONSTRAINT fppattern_id IF NOT EXISTS FOR (f:FalsePositivePattern) REQUIRE f.id IS UNIQUE",
+            "CREATE CONSTRAINT agentsession_id IF NOT EXISTS FOR (a:AgentSession) REQUIRE a.id IS UNIQUE"
         ]
         for query in constraints:
             await self.session.run(query)
@@ -591,3 +592,61 @@ class Neo4jRepository:
         count2 = rec2["merged_count"] if rec2 else 0
 
         return count1 + count2
+
+    async def create_agent_session(self, session_id: str, program_id: str, status: str, iteration_count: int = 0, tools_used: List[str] = []) -> AgentSession:
+        now = datetime.utcnow().isoformat() + "Z"
+        query = """
+        MATCH (p:Program {id: $program_id})
+        MERGE (s:AgentSession {id: $id})
+        ON CREATE SET s.program_id = $program_id, s.status = $status, s.started_at = $now, s.iteration_count = $iteration_count, s.tools_used = $tools_used
+        MERGE (p)-[:HAD_AGENT_SESSION]->(s)
+        RETURN s
+        """
+        result = await self.session.run(query, id=session_id, program_id=program_id, status=status, now=now, iteration_count=iteration_count, tools_used=tools_used)
+        record = await result.single()
+        return AgentSession(**record["s"])
+
+    async def update_agent_session_status(self, session_id: str, status: str, iteration_count: Optional[int] = None, tools_used: Optional[List[str]] = None, final_report: Optional[str] = None) -> AgentSession:
+        now = datetime.utcnow().isoformat() + "Z"
+        query = """
+        MATCH (s:AgentSession {id: $id})
+        SET s.status = $status
+        """
+        if status in ["completed", "failed", "stopped"]:
+            query += ", s.completed_at = $now"
+        if iteration_count is not None:
+            query += ", s.iteration_count = $iteration_count"
+        if tools_used is not None:
+            query += ", s.tools_used = $tools_used"
+        if final_report is not None:
+            query += ", s.final_report = $final_report"
+
+        query += " RETURN s"
+
+        result = await self.session.run(query, id=session_id, status=status, now=now, iteration_count=iteration_count, tools_used=tools_used, final_report=final_report)
+        record = await result.single()
+        if record is None:
+             raise ValueError(f"AgentSession {session_id} not found — cannot update status")
+
+        return AgentSession(**record["s"])
+
+    @retry_on_transient_error()
+    async def list_agent_sessions(self, program_id: str) -> List[AgentSession]:
+        query = """
+        MATCH (p:Program {id: $program_id})-[:HAD_AGENT_SESSION]->(s:AgentSession)
+        RETURN s ORDER BY s.started_at DESC
+        """
+        result = await self.session.run(query, program_id=program_id)
+        sessions = []
+        async for record in result:
+            sessions.append(AgentSession(**record["s"]))
+        return sessions
+
+    @retry_on_transient_error()
+    async def get_agent_session(self, session_id: str) -> Optional[AgentSession]:
+        query = "MATCH (s:AgentSession {id: $id}) RETURN s"
+        result = await self.session.run(query, id=session_id)
+        record = await result.single()
+        if not record:
+            return None
+        return AgentSession(**record["s"])

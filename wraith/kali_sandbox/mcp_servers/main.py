@@ -27,6 +27,19 @@ def verify_caller(tool_name: str, caller: Optional[str]):
     if caller not in AUTHORIZED_DANGEROUS_CALLERS:
         raise HTTPException(status_code=403, detail=f"Caller {caller} is not authorized to use {tool_name}")
 
+def get_caller() -> Optional[str]:
+    try:
+        ctx = mcp.get_context()
+        if ctx and ctx._request_context:
+            request = ctx.request_context.request
+            if request and hasattr(request, "headers"):
+                val = request.headers.get("X-Wraith-Caller")
+                if val:
+                    return val
+    except Exception:
+        pass
+    return caller_context.get()
+
 # Initialize tool providers
 nmap = NmapServer()
 nuclei = NucleiServer()
@@ -37,33 +50,33 @@ metasploit = MetasploitServer()
 # Register tools from each provider to the main mcp instance
 @mcp.tool()
 async def run_nmap_scan(target: str, ports: str = "1-1000", scan_type: str = "-sV"):
-    caller = caller_context.get()
+    caller = get_caller()
     return await nmap.mcp.call_tool("run_nmap_scan", {"target": target, "ports": ports, "scan_type": scan_type, "caller": caller})
 
 @mcp.tool()
 async def run_nuclei_scan(target: str, category: str = "default"):
-    caller = caller_context.get()
+    caller = get_caller()
     return await nuclei.mcp.call_tool("run_nuclei_scan", {"target": target, "category": category, "caller": caller})
 
 @mcp.tool()
 async def run_sqlmap(url: str, param: str = None, method: str = "GET", data: str = None):
-    caller = caller_context.get()
+    caller = get_caller()
     return await sqlmap.mcp.call_tool("run_sqlmap", {"url": url, "param": param, "method": method, "data": data, "caller": caller})
 
 @mcp.tool()
 async def run_hydra(target: str, service: str, user: str, pass_list: str):
-    caller = caller_context.get()
+    caller = get_caller()
     verify_caller("run_hydra", caller)
     return await hydra.mcp.call_tool("run_hydra", {"target": target, "service": service, "user": user, "pass_list": pass_list, "caller": caller})
 
 @mcp.tool()
 async def list_msf_modules(search: str):
-    caller = caller_context.get()
+    caller = get_caller()
     return await metasploit.mcp.call_tool("list_modules", {"search": search, "caller": caller})
 
 @mcp.tool()
 async def run_msf_module(module: str, target: str, options: dict):
-    caller = caller_context.get()
+    caller = get_caller()
     verify_caller("run_msf_module", caller)
     return await metasploit.mcp.call_tool("run_module", {"module": module, "target": target, "options": options, "caller": caller})
 

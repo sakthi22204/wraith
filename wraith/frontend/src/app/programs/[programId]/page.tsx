@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { toast } from 'sonner';
 import { Finding } from '@/types/graph';
 import { startRecon, fetchReconStatus, cancelRecon } from '@/lib/reconApi';
-import { startAgentSession, fetchSessionStatus, stopAgentSession } from '@/lib/agentApi';
+import { startAgentSession, fetchSessionStatus, stopAgentSession, fetchAgentSessions } from '@/lib/agentApi';
 import { fetchFindings, fetchReviewQueue, deleteProgram } from '@/lib/graphApi';
 import { fetchReport } from '@/lib/reportingApi';
 import SeverityBadge from '@/components/SeverityBadge';
@@ -33,6 +33,15 @@ export default function ProgramDashboard() {
       setFindings(f);
       const r = await fetchReviewQueue(programId as string);
       setReviewQueueCount(r.length);
+
+      // Load active agent session
+      const sessions = await fetchAgentSessions(programId as string);
+      const runningSession = sessions.find((s: any) => s.status === 'running');
+      if (runningSession) {
+          setActiveAgent(runningSession.id);
+      } else {
+          setActiveAgent(null);
+      }
     } catch (e) {
       console.error(e);
     }
@@ -131,6 +140,10 @@ export default function ProgramDashboard() {
             <Link href={`/programs/${programId}/findings`} className="bg-slate-900 border border-slate-800 hover:bg-slate-800 px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-2">
                <svg className="w-4 h-4 text-rose-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
                <span>Findings List</span>
+            </Link>
+            <Link href={`/programs/${programId}/agent`} className="bg-slate-900 border border-slate-800 hover:bg-slate-800 px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-2">
+               <svg className="w-4 h-4 text-violet-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+               <span>Agent History</span>
             </Link>
           </div>
 

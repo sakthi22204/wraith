@@ -172,6 +172,21 @@ class ReconSession(ReconSessionBase):
     completed_at: Optional[datetime] = None
     tool_results: Optional[dict] = None # JSON summary of counts
 
+class AgentSessionBase(BaseModel):
+    program_id: str
+    status: str # "running"|"completed"|"failed"|"paused_rate_limited"|"stopped"
+    started_at: datetime = Field(default_factory=datetime.utcnow)
+    iteration_count: int = 0
+    tools_used: List[str] = []
+
+class AgentSessionCreate(AgentSessionBase):
+    pass
+
+class AgentSession(AgentSessionBase):
+    id: str
+    completed_at: Optional[datetime] = None
+    final_report: Optional[str] = None
+
 # For the Graph GET endpoint
 class Node(BaseModel):
     id: str

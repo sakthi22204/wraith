@@ -34,3 +34,17 @@ def test_safe_tool_no_header():
     # Nmap is safe
     response = client.post("/tools/run_nmap_scan/call", json={"target": "127.0.0.1"})
     assert response.status_code != 403
+
+def test_get_caller_from_headers():
+    from unittest.mock import MagicMock, patch
+    from mcp_servers.main import get_caller
+
+    mock_request = MagicMock()
+    mock_request.headers.get.return_value = "test_agent_caller"
+
+    with patch("mcp_servers.main.mcp.get_context") as mock_get_context:
+        mock_ctx = MagicMock()
+        mock_ctx.request_context.request = mock_request
+        mock_get_context.return_value = mock_ctx
+
+        assert get_caller() == "test_agent_caller"
