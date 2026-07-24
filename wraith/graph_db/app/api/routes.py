@@ -6,7 +6,7 @@ from ..schema import (
     Program, ProgramCreate, Host, HostCreate, Port, PortCreate,
     Service, ServiceCreate, Endpoint, EndpointCreate, Parameter, ParameterCreate,
     Finding, FindingCreate, CVECreate, GraphResponse, FalsePositivePattern,
-    ReconSession
+    ReconSession, AgentSession
 )
 from ..client import neo4j_client
 from ..repository import Neo4jRepository
@@ -75,6 +75,26 @@ async def get_recon_session(session_id: str, repo: Neo4jRepository = Depends(get
     session = await repo.get_recon_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Recon session not found")
+    return session
+
+# Agent Session Management
+@router.post("/agent-sessions", response_model=AgentSession)
+async def create_agent_session(session_id: str, program_id: str, status: str, iteration_count: int = 0, tools_used: List[str] = [], repo: Neo4jRepository = Depends(get_repo)):
+    return await repo.create_agent_session(session_id, program_id, status, iteration_count, tools_used)
+
+@router.patch("/agent-sessions/{session_id}", response_model=AgentSession)
+async def update_agent_session(session_id: str, status: str, iteration_count: Optional[int] = None, tools_used: Optional[List[str]] = None, final_report: Optional[str] = None, repo: Neo4jRepository = Depends(get_repo)):
+    return await repo.update_agent_session_status(session_id, status, iteration_count, tools_used, final_report)
+
+@router.get("/agent-sessions", response_model=List[AgentSession])
+async def list_agent_sessions(program_id: str, repo: Neo4jRepository = Depends(get_repo)):
+    return await repo.list_agent_sessions(program_id)
+
+@router.get("/agent-sessions/{session_id}", response_model=AgentSession)
+async def get_agent_session(session_id: str, repo: Neo4jRepository = Depends(get_repo)):
+    session = await repo.get_agent_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Agent session not found")
     return session
 
 @router.post("/findings/{finding_id}/session/{session_id}")

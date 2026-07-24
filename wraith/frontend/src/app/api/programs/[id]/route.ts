@@ -7,9 +7,10 @@ export async function DELETE(
   const { id } = await params;
   const adminToken = process.env.ADMIN_API_TOKEN;
   const graphDbUrl = process.env.GRAPH_DB_URL || 'http://graph_api:8001';
+  const baseUrl = graphDbUrl.endsWith('/api/v1') ? graphDbUrl : `${graphDbUrl}/api/v1`;
 
   try {
-    const response = await fetch(`${graphDbUrl}/api/v1/programs/${id}?confirm=true`, {
+    const response = await fetch(`${baseUrl}/programs/${id}?confirm=true`, {
       method: 'DELETE',
       headers: {
         'Authorization': `Bearer ${adminToken}`

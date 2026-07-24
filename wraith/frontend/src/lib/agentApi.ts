@@ -44,6 +44,12 @@ export const fetchSessionStatus = async (sessionId: string) => {
   return response.json();
 };
 
+export const fetchAgentSessions = async (programId: string) => {
+  const response = await fetch(`${config.agentUrl}/api/v1/agent/sessions?program_id=${programId}`);
+  if (!response.ok) throw new Error('Failed to fetch agent sessions');
+  return response.json();
+};
+
 export const startAgentSession = async (programId: string, targetScope: string[], maxIterations: number) => {
   const response = await fetch(`${config.agentUrl}/api/v1/agent/sessions`, {
     method: 'POST',
