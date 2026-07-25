@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { AgentStep } from '@/types/graph';
-import { subscribeToAgentStream } from '../lib/agentApi';
+import { subscribeToAgentStream, fetchSessionStatus } from '../lib/agentApi';
 import AgentStepCard from './AgentStepCard';
 
 interface AgentActivityFeedProps {
