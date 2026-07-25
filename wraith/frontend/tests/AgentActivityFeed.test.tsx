@@ -18,9 +18,22 @@ class MockEventSource {
 
 global.EventSource = MockEventSource as any;
 
+// Mock global fetch
+global.fetch = jest.fn().mockImplementation(() =>
+  Promise.resolve({
+    ok: true,
+    json: () => Promise.resolve({ status: 'running', reasoning_log: [] }),
+  })
+) as any;
+
 describe('AgentActivityFeed', () => {
   it('renders initial state and appends steps', async () => {
     render(<AgentActivityFeed sessionId="test-session" />);
+
+    // Wait for the async initFeed fetch to resolve and instantiate MockEventSource
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
 
     expect(screen.getByText(/Waiting for agent/i)).toBeInTheDocument();
 
