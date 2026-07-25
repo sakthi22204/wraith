@@ -174,10 +174,11 @@ class ReconSession(ReconSessionBase):
 
 class AgentSessionBase(BaseModel):
     program_id: str
-    status: str # "running"|"completed"|"failed"|"paused_rate_limited"|"stopped"
+    status: str # "running"|"completed"|"failed"|"paused_rate_limited"|"stopped"|"interrupted"
     started_at: datetime = Field(default_factory=datetime.utcnow)
     iteration_count: int = 0
     tools_used: List[str] = []
+    reasoning_log: List[str] = []
 
 class AgentSessionCreate(AgentSessionBase):
     pass
