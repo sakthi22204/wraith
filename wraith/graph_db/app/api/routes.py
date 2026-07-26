@@ -79,16 +79,19 @@ async def get_recon_session(session_id: str, repo: Neo4jRepository = Depends(get
 
 # Agent Session Management
 @router.post("/agent-sessions", response_model=AgentSession)
-async def create_agent_session(session_id: str, program_id: str, status: str, iteration_count: int = 0, tools_used: List[str] = [], repo: Neo4jRepository = Depends(get_repo)):
-    return await repo.create_agent_session(session_id, program_id, status, iteration_count, tools_used)
+async def create_agent_session(session_id: str, program_id: str, status: str, iteration_count: int = 0, tools_used: List[str] = [], reasoning_log: List[str] = [], repo: Neo4jRepository = Depends(get_repo)):
+    return await repo.create_agent_session(session_id, program_id, status, iteration_count, tools_used, reasoning_log)
 
 @router.patch("/agent-sessions/{session_id}", response_model=AgentSession)
-async def update_agent_session(session_id: str, status: str, iteration_count: Optional[int] = None, tools_used: Optional[List[str]] = None, final_report: Optional[str] = None, repo: Neo4jRepository = Depends(get_repo)):
-    return await repo.update_agent_session_status(session_id, status, iteration_count, tools_used, final_report)
+async def update_agent_session(session_id: str, status: str, iteration_count: Optional[int] = None, tools_used: Optional[List[str]] = None, final_report: Optional[str] = None, reasoning_log: Optional[List[str]] = None, repo: Neo4jRepository = Depends(get_repo)):
+    return await repo.update_agent_session_status(session_id, status, iteration_count, tools_used, final_report, reasoning_log)
 
 @router.get("/agent-sessions", response_model=List[AgentSession])
-async def list_agent_sessions(program_id: str, repo: Neo4jRepository = Depends(get_repo)):
-    return await repo.list_agent_sessions(program_id)
+async def list_agent_sessions(program_id: Optional[str] = None, repo: Neo4jRepository = Depends(get_repo)):
+    if program_id:
+        return await repo.list_agent_sessions(program_id)
+    else:
+        return await repo.list_all_agent_sessions()
 
 @router.get("/agent-sessions/{session_id}", response_model=AgentSession)
 async def get_agent_session(session_id: str, repo: Neo4jRepository = Depends(get_repo)):
@@ -96,6 +99,11 @@ async def get_agent_session(session_id: str, repo: Neo4jRepository = Depends(get
     if not session:
         raise HTTPException(status_code=404, detail="Agent session not found")
     return session
+
+@router.post("/agent-sessions/cleanup-orphaned")
+async def cleanup_orphaned_agent_sessions(repo: Neo4jRepository = Depends(get_repo)):
+    count = await repo.cleanup_orphaned_agent_sessions()
+    return {"cleaned_count": count}
 
 @router.post("/findings/{finding_id}/session/{session_id}")
 async def link_finding_to_session(finding_id: str, session_id: str, repo: Neo4jRepository = Depends(get_repo)):

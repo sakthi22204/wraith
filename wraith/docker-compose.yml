@@ -58,7 +58,7 @@ services:
       graph_api:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health')"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -86,7 +86,7 @@ services:
       kali_sandbox:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/health')"]
       interval: 10s
       timeout: 5s
       retries: 5
