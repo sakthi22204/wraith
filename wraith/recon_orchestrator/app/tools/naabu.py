@@ -13,7 +13,6 @@ class NaabuTool(ReconTool):
 
     def parse_output(self, output: str) -> ToolResults:
         results = ToolResults()
-        seen_ports = set()
         for line in output.strip().split("\n"):
             if not line:
                 continue
@@ -22,10 +21,6 @@ class NaabuTool(ReconTool):
                 host = data.get("host")
                 port = data.get("port")
                 if host and port:
-                    port_key = (host.lower(), int(port))
-                    if port_key in seen_ports:
-                        continue
-                    seen_ports.add(port_key)
                     results.ports.append(PortResult(
                         host=host,
                         number=int(port),
