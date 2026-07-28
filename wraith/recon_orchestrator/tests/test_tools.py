@@ -42,3 +42,16 @@ def test_naabu_parser():
     assert len(results.ports) == 2
     assert results.ports[0].number == 80
     assert results.ports[1].number == 443
+
+
+def test_naabu_parser_deduplicates_ports():
+    tool = NaabuTool()
+    output = '\n'.join([
+        '{"host":"example.com","port":443}',
+        '{"host":"EXAMPLE.COM","port":443}',
+    ])
+
+    results = tool.parse_output(output)
+
+    assert len(results.ports) == 1
+    assert results.ports[0].number == 443
