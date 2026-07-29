@@ -19,18 +19,18 @@ const AttackSurfaceGraph = dynamic(() => import('@/components/AttackSurfaceGraph
 
 export default function GraphPage() {
   const params = useParams();
-  const programId = params?.programId as string;
+  const investigationId = params?.investigationId as string;
   const [data, setData] = useState<GraphResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
 
   useEffect(() => {
-    if (!programId) return;
+    if (!investigationId) return;
     const loadData = async () => {
       try {
         setLoading(true);
-        const graphData = await fetchGraph(programId);
+        const graphData = await fetchGraph(investigationId);
         setData(graphData);
         setError(null);
       } catch (e) {
@@ -42,7 +42,7 @@ export default function GraphPage() {
     };
 
     loadData();
-  }, [programId]);
+  }, [investigationId]);
 
   if (loading) {
     return (

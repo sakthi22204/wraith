@@ -30,9 +30,7 @@ class ReportGenerator:
             cvss_display = "CVSS score not calculated"
 
         severity = finding.get("severity", band).capitalize()
-        # The graph finding object uses 'ai_confidence' as a float
         ai_conf = finding.get("ai_confidence")
-        # However, some parts of the system might put it in 'confidence' as a string
         if ai_conf is None:
             try:
                 ai_conf = float(finding.get("confidence"))
@@ -76,7 +74,6 @@ class ReportGenerator:
 
         # 7. Exploit / PoC
         audit_entries = await audit_client.get_audit_entries(program_id, target=target_details.get("host") if target_details else None)
-        # Search for tools or vuln type in action
         relevant_audit = [
             e for e in audit_entries
             if vuln_type.lower() in e["action"].lower() or (tool_name.lower() in e["action"].lower() and e["action"].lower() != "run_nmap_scan")
@@ -145,7 +142,6 @@ class ReportGenerator:
         duplicates = [f for f in findings_raw if f.get("status") == "DUPLICATE"]
         false_positives = [f for f in findings_raw if f.get("status") == "FALSE_POSITIVE"]
 
-        # Filter findings
         active_findings_raw = [
             f for f in findings_raw
             if f.get("status") not in ["DUPLICATE", "FALSE_POSITIVE"]
@@ -156,14 +152,13 @@ class ReportGenerator:
             report_finding = await self.generate_finding_report(program_id, f)
             findings.append(report_finding)
 
-        # Sort by severity Critical -> High -> Medium -> Low
         severity_order = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3, "Info": 4}
         findings.sort(key=lambda x: severity_order.get(x.severity, 5))
 
         summary = f"{len(duplicates)} duplicate and {len(false_positives)} false-positive finding(s) excluded from this report."
 
         return ProgramReport(
-            program_name=program_data.get("name", "Unknown Program") if program_data else "Unknown",
+            investigation_name=program_data.get("name", "Unknown Program") if program_data else "Unknown",
             generated_at=datetime.utcnow(),
             findings=findings,
             summary_line=summary

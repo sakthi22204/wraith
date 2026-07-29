@@ -28,18 +28,19 @@ def parse_date(ts):
         logger.warning(f"Malformed ISO date string encountered in parse_date: '{ts}'. Fallback to utcnow. Error: {e}")
         return datetime.utcnow()
 
-@router.get("/reports/{program_id}/findings/{finding_id}", dependencies=[Depends(require_admin_token)])
-async def get_finding_report(program_id: str, finding_id: str, format: str = Query("markdown", pattern="^(markdown|pdf)$")):
-    finding = await graph_db_client.get_finding(program_id, finding_id)
+# Primary Investigation Report routes
+@router.get("/reports/{investigation_id}/findings/{finding_id}", dependencies=[Depends(require_admin_token)])
+async def get_finding_report(investigation_id: str, finding_id: str, format: str = Query("markdown", pattern="^(markdown|pdf)$")):
+    finding = await graph_db_client.get_finding(investigation_id, finding_id)
 
     if not finding:
         raise HTTPException(status_code=404, detail="Finding not found")
 
-    report_finding = await generator.generate_finding_report(program_id, finding)
-    program_data = await graph_db_client.get_program(program_id)
+    report_finding = await generator.generate_finding_report(investigation_id, finding)
+    investigation_data = await graph_db_client.get_investigation(investigation_id)
 
     report_data = {
-        "program_name": program_data.get("name", "Unknown") if program_data else "Unknown",
+        "program_name": investigation_data.get("name", "Unknown") if investigation_data else "Unknown",
         "generated_at": parse_date(report_finding.discovery_metadata["timestamp"]),
         "findings": [report_finding]
     }
@@ -54,17 +55,26 @@ async def get_finding_report(program_id: str, finding_id: str, format: str = Que
         md_out = template.render(**report_data)
         return Response(content=md_out, media_type="text/markdown")
 
-@router.get("/reports/{program_id}", dependencies=[Depends(require_admin_token)])
-async def get_program_report(program_id: str, format: str = Query("markdown", pattern="^(markdown|pdf)$")):
-    report = await generator.generate_program_report(program_id)
+@router.get("/reports/{investigation_id}", dependencies=[Depends(require_admin_token)])
+async def get_investigation_report(investigation_id: str, format: str = Query("markdown", pattern="^(markdown|pdf)$")):
+    report = await generator.generate_program_report(investigation_id)
     report_data = report.model_dump()
 
     if format == "pdf":
         pdf_bytes = pdf_exporter.export_report(report_data)
         return Response(content=pdf_bytes, media_type="application/pdf", headers={
-            "Content-Disposition": f"attachment; filename=program_{program_id}.pdf"
+            "Content-Disposition": f"attachment; filename=investigation_{investigation_id}.pdf"
         })
     else:
         template = env.get_template("finding_report.md.j2")
         md_out = template.render(**report_data)
         return Response(content=md_out, media_type="text/markdown")
+
+# Backwards compatible alias program endpoints
+@router.get("/reports/program/{program_id}/findings/{finding_id}", dependencies=[Depends(require_admin_token)])
+async def get_program_finding_report_alias(program_id: str, finding_id: str, format: str = Query("markdown", pattern="^(markdown|pdf)$")):
+    return await get_finding_report(program_id, finding_id, format)
+
+@router.get("/reports/program/{program_id}", dependencies=[Depends(require_admin_token)])
+async def get_program_report_alias(program_id: str, format: str = Query("markdown", pattern="^(markdown|pdf)$")):
+    return await get_investigation_report(program_id, format)

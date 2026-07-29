@@ -5,9 +5,9 @@ import ReconStatusBanner from './ReconStatusBanner';
 
 export default function ReconStatusBannerContainer() {
   const params = useParams();
-  const programId = params?.programId as string | undefined;
+  const investigationId = params?.investigationId as string | undefined;
 
-  if (!programId) return null;
+  if (!investigationId) return null;
 
-  return <ReconStatusBanner programId={programId} />;
+  return <ReconStatusBanner investigationId={investigationId} />;
 }

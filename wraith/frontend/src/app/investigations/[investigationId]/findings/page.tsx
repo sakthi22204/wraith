@@ -9,7 +9,7 @@ import FindingsList from '@/components/FindingsList';
 import Skeleton from '@/components/Skeleton';
 
 export default function FindingsPage() {
-  const { programId } = useParams();
+  const { investigationId } = useParams();
   const [findings, setFindings] = useState<Finding[]>([]);
   const [graph, setGraph] = useState<GraphResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -17,15 +17,15 @@ export default function FindingsPage() {
 
   useEffect(() => {
     async function loadData() {
-      if (!programId) return;
+      if (!investigationId) return;
       try {
         setIsLoading(true);
         setError(null);
 
         // Fetch findings list and full attack surface graph in parallel
         const [findingsData, graphData] = await Promise.all([
-          fetchFindings(programId as string),
-          fetchGraph(programId as string),
+          fetchFindings(investigationId as string),
+          fetchGraph(investigationId as string),
         ]);
 
         setFindings(findingsData);
@@ -39,22 +39,22 @@ export default function FindingsPage() {
     }
 
     loadData();
-  }, [programId]);
+  }, [investigationId]);
 
   return (
     <div className="space-y-8 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      {/* Back to program header */}
+      {/* Back to dashboard header */}
       <div>
         <Link
-          href={`/programs/${programId}`}
+          href={`/investigations/${investigationId}`}
           className="text-indigo-400 text-sm font-bold hover:underline mb-2 inline-block font-sans"
         >
           ← Back to Dashboard
         </Link>
         <h1 className="text-4xl font-bold tracking-tight font-heading text-white">
-          Program Findings
+          Investigation Findings
         </h1>
-        <p className="text-slate-400 font-mono text-xs mt-1">Program ID: {programId}</p>
+        <p className="text-slate-400 font-mono text-xs mt-1">Investigation ID: {investigationId}</p>
       </div>
 
       {isLoading ? (

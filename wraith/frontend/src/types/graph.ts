@@ -23,6 +23,7 @@ export interface Program {
   platform: string;
   scope_domains: string[];
   created_at: string;
+  target?: string;
 }
 
 export interface Finding {
@@ -43,6 +44,7 @@ export interface Finding {
 export interface ExploitProposal {
   id: number;
   program_id: string;
+  investigation_id?: string;
   target: string;
   action: string;
   params: Record<string, any>;

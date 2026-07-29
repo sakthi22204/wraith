@@ -10,7 +10,7 @@ import SeverityBadge from '@/components/SeverityBadge';
 import Skeleton from '@/components/Skeleton';
 
 export default function ReviewQueuePage() {
-  const { programId } = useParams();
+  const { investigationId } = useParams();
   const [queue, setQueue] = useState<Finding[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedFinding, setSelectedFinding] = useState<Finding | null>(null);
@@ -18,7 +18,7 @@ export default function ReviewQueuePage() {
 
   const loadQueue = async () => {
     try {
-      const data = await fetchReviewQueue(programId as string);
+      const data = await fetchReviewQueue(investigationId as string);
       setQueue(data);
     } catch (e) {
       console.error(e);
@@ -29,7 +29,7 @@ export default function ReviewQueuePage() {
 
   useEffect(() => {
     loadQueue();
-  }, [programId]);
+  }, [investigationId]);
 
   const handleReview = async (decision: 'confirmed' | 'false_positive') => {
     if (!selectedFinding) return;
@@ -48,9 +48,9 @@ export default function ReviewQueuePage() {
     <div className="space-y-8">
       <div className="flex justify-between items-start">
         <div>
-          <Link href={`/programs/${programId}`} className="text-indigo-400 text-sm font-bold hover:underline mb-2 inline-block">← Back to Dashboard</Link>
+          <Link href={`/investigations/${investigationId}`} className="text-indigo-400 text-sm font-bold hover:underline mb-2 inline-block">← Back to Dashboard</Link>
           <h1 className="text-4xl font-bold tracking-tight">Review Queue</h1>
-          <p className="text-slate-400">Verify low-confidence findings for program: <span className="font-mono">{programId}</span></p>
+          <p className="text-slate-400">Verify low-confidence findings for investigation: <span className="font-mono">{investigationId}</span></p>
         </div>
       </div>
 

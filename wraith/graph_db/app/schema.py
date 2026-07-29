@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, AliasChoices, computed_field
 from datetime import datetime
 from typing import List, Optional
 from enum import Enum
@@ -36,6 +36,29 @@ class ProgramCreate(ProgramBase):
 class Program(ProgramBase):
     id: str
     created_at: datetime
+
+# Investigation Models (New Primary Entity)
+class InvestigationBase(BaseModel):
+    name: str
+    target: str
+
+class InvestigationCreate(InvestigationBase):
+    pass
+
+class Investigation(InvestigationBase):
+    id: str
+    scope_domains: List[str] = []
+    created_at: datetime
+
+    @computed_field
+    @property
+    def program_id(self) -> str:
+        return self.id
+
+    @computed_field
+    @property
+    def platform(self) -> str:
+        return "automatic"
 
 class HostBase(BaseModel):
     value: str
@@ -159,7 +182,7 @@ class ScanSession(ScanSessionBase):
     ended_at: Optional[datetime] = None
 
 class ReconSessionBase(BaseModel):
-    program_id: str
+    investigation_id: str = Field(..., validation_alias=AliasChoices("investigation_id", "program_id"))
     domains: List[str]
     status: str # "running"|"completed"|"partial"|"failed"
     started_at: datetime = Field(default_factory=datetime.utcnow)
@@ -172,8 +195,13 @@ class ReconSession(ReconSessionBase):
     completed_at: Optional[datetime] = None
     tool_results: Optional[dict] = None # JSON summary of counts
 
+    @computed_field
+    @property
+    def program_id(self) -> str:
+        return self.investigation_id
+
 class AgentSessionBase(BaseModel):
-    program_id: str
+    investigation_id: str = Field(..., validation_alias=AliasChoices("investigation_id", "program_id"))
     status: str # "running"|"completed"|"failed"|"paused_rate_limited"|"stopped"|"interrupted"
     started_at: datetime = Field(default_factory=datetime.utcnow)
     iteration_count: int = 0
@@ -187,6 +215,11 @@ class AgentSession(AgentSessionBase):
     id: str
     completed_at: Optional[datetime] = None
     final_report: Optional[str] = None
+
+    @computed_field
+    @property
+    def program_id(self) -> str:
+        return self.investigation_id
 
 # For the Graph GET endpoint
 class Node(BaseModel):

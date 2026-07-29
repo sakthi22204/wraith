@@ -7,13 +7,13 @@ import { toast } from 'sonner';
 import { Finding } from '@/types/graph';
 import { startRecon, fetchReconStatus, cancelRecon } from '@/lib/reconApi';
 import { startAgentSession, fetchSessionStatus, stopAgentSession, fetchAgentSessions } from '@/lib/agentApi';
-import { fetchFindings, fetchReviewQueue, deleteProgram } from '@/lib/graphApi';
+import { fetchFindings, fetchReviewQueue, deleteProgram as deleteInvestigation } from '@/lib/graphApi';
 import { fetchReport } from '@/lib/reportingApi';
 import SeverityBadge from '@/components/SeverityBadge';
 import ActiveExploitApproval from '@/components/ActiveExploitApproval';
 
-export default function ProgramDashboard() {
-  const { programId } = useParams();
+export default function InvestigationDashboard() {
+  const { investigationId } = useParams();
   const router = useRouter();
   const [activeRecon, setActiveRecon] = useState<string | null>(null);
   const [isStartingRecon, setIsStartingRecon] = useState(false);
@@ -29,13 +29,13 @@ export default function ProgramDashboard() {
 
   const loadData = async () => {
     try {
-      const f = await fetchFindings(programId as string);
+      const f = await fetchFindings(investigationId as string);
       setFindings(f);
-      const r = await fetchReviewQueue(programId as string);
+      const r = await fetchReviewQueue(investigationId as string);
       setReviewQueueCount(r.length);
 
       // Load active agent session
-      const sessions = await fetchAgentSessions(programId as string);
+      const sessions = await fetchAgentSessions(investigationId as string);
       const runningSession = sessions.find((s: any) => s.status === 'running');
       if (runningSession) {
           setActiveAgent(runningSession.id);
@@ -51,13 +51,13 @@ export default function ProgramDashboard() {
     loadData();
     const interval = setInterval(loadData, 10000);
     return () => clearInterval(interval);
-  }, [programId]);
+  }, [investigationId]);
 
   const handleStartRecon = async () => {
     if (!reconDomains || isStartingRecon) return;
     setIsStartingRecon(true);
     try {
-      const res = await startRecon(programId as string, reconDomains.split(',').map(s => s.trim()));
+      const res = await startRecon(investigationId as string, reconDomains.split(',').map(s => s.trim()));
       setActiveRecon(res.session_id);
       setIsReconModalOpen(false);
       setReconDomains('');
@@ -75,10 +75,10 @@ export default function ProgramDashboard() {
 
   const handleStartAgent = async () => {
     try {
-      const res = await startAgentSession(programId as string, [], 10);
+      const res = await startAgentSession(investigationId as string, [], 10);
       setActiveAgent(res.session_id);
       toast.success('Agent session started');
-      router.push(`/programs/${programId}/agent/${res.session_id}`);
+      router.push(`/investigations/${investigationId}/agent/${res.session_id}`);
     } catch (e) {
       toast.error('Failed to start agent');
     }
@@ -86,12 +86,12 @@ export default function ProgramDashboard() {
 
   const downloadReport = async (format: 'markdown' | 'pdf') => {
     try {
-      const data = await fetchReport(programId as string, undefined, format);
+      const data = await fetchReport(investigationId as string, undefined, format);
       const blob = format === 'pdf' ? (data as Blob) : new Blob([data as string], { type: 'text/markdown' });
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `report_${programId}.${format === 'pdf' ? 'pdf' : 'md'}`;
+      a.download = `report_${investigationId}.${format === 'pdf' ? 'pdf' : 'md'}`;
       a.click();
     } catch (e) {
       toast.error('Failed to download report');
@@ -100,11 +100,11 @@ export default function ProgramDashboard() {
 
   const handleDelete = async () => {
     try {
-      await deleteProgram(programId as string);
-      toast.success('Program deleted');
+      await deleteInvestigation(investigationId as string);
+      toast.success('Investigation deleted');
       router.push('/');
     } catch (e) {
-      toast.error('Failed to delete program');
+      toast.error('Failed to delete investigation');
     }
   };
 
@@ -112,9 +112,9 @@ export default function ProgramDashboard() {
     <div className="space-y-8">
       <div className="flex justify-between items-start">
         <div>
-          <Link href="/" className="text-indigo-400 text-sm font-bold hover:underline mb-2 inline-block font-sans">← Back to Programs</Link>
-          <h1 className="text-4xl font-bold tracking-tight font-heading">Program Dashboard</h1>
-          <p className="text-slate-400 font-mono text-xs mt-1">{programId}</p>
+          <Link href="/" className="text-indigo-400 text-sm font-bold hover:underline mb-2 inline-block font-sans">← Back to Investigations</Link>
+          <h1 className="text-4xl font-bold tracking-tight font-heading">Investigation Dashboard</h1>
+          <p className="text-slate-400 font-mono text-xs mt-1">{investigationId}</p>
         </div>
         <div className="flex space-x-3">
            <button onClick={() => downloadReport('markdown')} className="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-lg text-sm font-bold transition-all border border-slate-700 active:scale-95">
@@ -129,19 +129,19 @@ export default function ProgramDashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div className="lg:col-span-2 space-y-8">
           <div className="flex items-center space-x-4 mb-4">
-            <Link href={`/programs/${programId}/recon-sessions`} className="bg-slate-900 border border-slate-800 hover:bg-slate-800 px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-2">
+            <Link href={`/investigations/${investigationId}/recon-sessions`} className="bg-slate-900 border border-slate-800 hover:bg-slate-800 px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-2">
                <svg className="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
                <span>Recon History</span>
             </Link>
-            <Link href={`/programs/${programId}/graph`} className="bg-slate-900 border border-slate-800 hover:bg-slate-800 px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-2">
+            <Link href={`/investigations/${investigationId}/graph`} className="bg-slate-900 border border-slate-800 hover:bg-slate-800 px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-2">
                <svg className="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 20l-5.447-2.724A2 2 0 013 15.487V6.513a2 2 0 011.553-1.943L9 2l5.447 2.724A2 2 0 0116 6.666v8.821a2 2 0 01-1.553 1.943L9 20z" /></svg>
                <span>Attack Surface Map</span>
             </Link>
-            <Link href={`/programs/${programId}/findings`} className="bg-slate-900 border border-slate-800 hover:bg-slate-800 px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-2">
+            <Link href={`/investigations/${investigationId}/findings`} className="bg-slate-900 border border-slate-800 hover:bg-slate-800 px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-2">
                <svg className="w-4 h-4 text-rose-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
                <span>Findings List</span>
             </Link>
-            <Link href={`/programs/${programId}/agent`} className="bg-slate-900 border border-slate-800 hover:bg-slate-800 px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-2">
+            <Link href={`/investigations/${investigationId}/agent`} className="bg-slate-900 border border-slate-800 hover:bg-slate-800 px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-2">
                <svg className="w-4 h-4 text-violet-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
                <span>Agent History</span>
             </Link>
@@ -180,7 +180,7 @@ export default function ProgramDashboard() {
                   <h3 className="font-bold text-slate-200 font-heading">Recon Cycle</h3>
                   <div className={`h-2 w-2 rounded-full ${activeRecon ? 'bg-indigo-500 animate-pulse' : 'bg-slate-700'}`}></div>
                 </div>
-                <p className="text-slate-400 text-sm">Orchestrate automated discovery across the program scope.</p>
+                <p className="text-slate-400 text-sm">Orchestrate automated discovery across the investigation scope.</p>
                 <div className="pt-2">
                   {activeRecon ? (
                     <div className="space-y-4">
@@ -210,11 +210,11 @@ export default function ProgramDashboard() {
                   <h3 className="font-bold text-slate-200 font-heading">Exploit Agent</h3>
                   <div className={`h-2 w-2 rounded-full ${activeAgent ? 'bg-indigo-500 animate-pulse' : 'bg-slate-700'}`}></div>
                 </div>
-                <p className="text-slate-400 text-sm">Autonomous reasoning loop for vulnerability validation.</p>
+                <p className="text-slate-400 text-sm">Autonomous reasoning loop for live target validation.</p>
                 <div className="pt-2">
                   {activeAgent ? (
                     <div className="space-y-3">
-                       <Link href={`/programs/${programId}/agent/${activeAgent}`} className="block text-center bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 font-bold py-3 rounded-xl text-sm hover:bg-indigo-600/30 transition-all active:scale-95">
+                       <Link href={`/investigations/${investigationId}/agent/${activeAgent}`} className="block text-center bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 font-bold py-3 rounded-xl text-sm hover:bg-indigo-600/30 transition-all active:scale-95">
                           Monitor Session
                        </Link>
                        <button
@@ -245,7 +245,7 @@ export default function ProgramDashboard() {
                 <span className="text-5xl font-bold text-white tracking-tighter">{reviewCount}</span>
                 <span className="text-slate-500 text-xs font-bold uppercase tracking-widest">Pending Verification</span>
               </div>
-              <Link href={`/programs/${programId}/review`} className="block w-full text-center bg-slate-800 hover:bg-slate-700 text-white font-bold py-3 rounded-xl text-sm transition-all border border-slate-700 shadow-lg active:scale-95">
+              <Link href={`/investigations/${investigationId}/review`} className="block w-full text-center bg-slate-800 hover:bg-slate-700 text-white font-bold py-3 rounded-xl text-sm transition-all border border-slate-700 shadow-lg active:scale-95">
                 Open Queue
               </Link>
            </section>
@@ -256,7 +256,7 @@ export default function ProgramDashboard() {
                 Safety Gate
               </h3>
               <p className="text-slate-400 text-sm mb-4">Pending approvals for active exploitation modules.</p>
-              <ActiveExploitApproval programId={programId as string} />
+              <ActiveExploitApproval investigationId={investigationId as string} />
            </section>
 
            <div className="pt-10 border-t border-slate-800 mt-10">
@@ -268,7 +268,7 @@ export default function ProgramDashboard() {
                 onClick={() => setIsDeleteModalOpen(true)}
                 className="w-full bg-red-900/10 hover:bg-red-900/20 text-red-500 border border-red-900/30 font-bold py-3 rounded-xl text-sm transition-all"
               >
-                Delete Program
+                Delete Investigation
               </button>
            </div>
         </div>
@@ -372,10 +372,10 @@ export default function ProgramDashboard() {
               </div>
               <div className="p-6 space-y-4">
                  <p className="text-slate-400 text-sm">
-                   This will delete the entire program knowledge graph including hosts, endpoints, findings, and audit history. This cannot be undone.
+                   This will delete the entire investigation knowledge graph including hosts, endpoints, findings, and audit history. This cannot be undone.
                  </p>
                  <div>
-                    <label className="text-xs font-bold text-slate-500 uppercase block mb-2">Type program ID to confirm: <span className="text-slate-300 font-mono select-all">{programId}</span></label>
+                    <label className="text-xs font-bold text-slate-500 uppercase block mb-2">Type investigation ID to confirm: <span className="text-slate-300 font-mono select-all">{investigationId}</span></label>
                     <input
                       className="w-full bg-slate-950 border border-red-900/30 rounded-xl p-3 text-white outline-none focus:border-red-500 font-mono text-sm"
                       value={deleteConfirm}
@@ -387,7 +387,7 @@ export default function ProgramDashboard() {
                     <button onClick={() => setIsDeleteModalOpen(false)} className="flex-1 bg-slate-800 text-white font-bold py-3 rounded-xl text-sm active:scale-95 transition-all">Cancel</button>
                     <button
                       onClick={handleDelete}
-                      disabled={deleteConfirm !== programId}
+                      disabled={deleteConfirm !== investigationId}
                       className="flex-[2] bg-red-600 disabled:opacity-30 text-white font-bold py-3 rounded-xl text-sm shadow-lg shadow-red-900/20 active:scale-95 transition-all"
                     >
                       Delete Everything

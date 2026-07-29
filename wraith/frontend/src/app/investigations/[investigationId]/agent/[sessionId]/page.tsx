@@ -6,7 +6,7 @@ import AgentActivityFeed from '@/components/AgentActivityFeed';
 
 export default function AgentFeedPage() {
   const params = useParams();
-  const programId = params?.programId as string;
+  const investigationId = params?.investigationId as string;
   const sessionId = params?.sessionId as string;
 
   return (
@@ -19,8 +19,8 @@ export default function AgentFeedPage() {
           </p>
         </div>
         <div className="bg-slate-900 border border-slate-800 px-4 py-2 rounded-lg flex items-center space-x-3">
-             <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Program</div>
-             <div className="text-sm font-bold text-slate-300">{programId?.slice(0, 8)}...</div>
+             <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Investigation</div>
+             <div className="text-sm font-bold text-slate-300">{investigationId?.slice(0, 8)}...</div>
         </div>
       </div>
 

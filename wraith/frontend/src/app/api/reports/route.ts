@@ -2,20 +2,20 @@ import { NextResponse } from 'next/server';
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
-  const programId = searchParams.get('programId');
+  const investigationId = searchParams.get('investigationId') || searchParams.get('programId');
   const findingId = searchParams.get('findingId');
   const format = searchParams.get('format') || 'markdown';
 
   const adminToken = process.env.ADMIN_API_TOKEN;
   const reportingUrl = process.env.REPORTING_URL || 'http://reporting:8006';
 
-  if (!programId) {
-    return NextResponse.json({ error: 'Missing programId' }, { status: 400 });
+  if (!investigationId) {
+    return NextResponse.json({ error: 'Missing investigationId' }, { status: 400 });
   }
 
   const url = findingId
-    ? `${reportingUrl}/api/v1/reports/${programId}/findings/${findingId}?format=${format}`
-    : `${reportingUrl}/api/v1/reports/${programId}?format=${format}`;
+    ? `${reportingUrl}/api/v1/reports/${investigationId}/findings/${findingId}?format=${format}`
+    : `${reportingUrl}/api/v1/reports/${investigationId}?format=${format}`;
 
   try {
     const response = await fetch(url, {

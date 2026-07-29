@@ -1,11 +1,9 @@
-from fastapi import APIRouter, HTTPException
-from typing import List
+from fastapi import APIRouter, HTTPException, Query, Response, status
+from typing import List, Optional
 from ..schemas import ReconRequest, ReconSessionStatus, ReconSessionResults
 from ..orchestrator import orchestrator
 
 router = APIRouter()
-
-from fastapi import Response, status
 
 @router.post("/start")
 async def start_recon(request: ReconRequest, response: Response):
@@ -25,32 +23,32 @@ async def get_status(session_id: str):
     try:
         from ..graph_client import graph_client
         session = await graph_client.get_recon_session(session_id)
-        # Convert ReconSession from graph to ReconSessionStatus
-        # Some fields like progress or detailed tool_statuses might be lost/summarized
-        # if not stored in tool_results.
-        tool_results = session.get("tool_results", {})
-        tool_statuses_raw = tool_results.get("tool_statuses", {})
+        tool_results = session.get("tool_results", {}) or {}
+        tool_statuses_raw = tool_results.get("tool_statuses", {}) or {}
 
-        # ReconSessionStatus expects ToolStatus enum values
         from ..schemas import ToolStatus
         tool_statuses = {k: ToolStatus(v) for k, v in tool_statuses_raw.items()}
 
         return ReconSessionStatus(
             session_id=session["id"],
-            program_id=session["program_id"],
+            investigation_id=session.get("investigation_id") or session.get("program_id", ""),
             status=session["status"],
             tool_statuses=tool_statuses,
-            progress=100.0 if session["status"] != "running" else 0.0 # simplified
+            progress=100.0 if session["status"] != "running" else 0.0
         )
     except Exception as e:
         print(f"Fallback to graph_db failed for session {session_id}: {e}")
         raise HTTPException(status_code=404, detail="Session not found")
 
 @router.get("/sessions", response_model=List[dict])
-async def list_sessions(program_id: str):
+async def list_sessions(investigation_id: Optional[str] = None, program_id: Optional[str] = None):
+    inv_id = investigation_id or program_id
+    if not inv_id:
+        raise HTTPException(status_code=400, detail="investigation_id or program_id query parameter is required")
+
     from ..graph_client import graph_client
     try:
-        return await graph_client.list_recon_sessions(program_id)
+        return await graph_client.list_recon_sessions(inv_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch sessions: {e}")
 

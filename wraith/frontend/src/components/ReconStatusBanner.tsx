@@ -6,10 +6,10 @@ import { toast } from 'sonner';
 import Link from 'next/link';
 
 interface ReconStatusBannerProps {
-  programId: string;
+  investigationId: string;
 }
 
-export default function ReconStatusBanner({ programId }: ReconStatusBannerProps) {
+export default function ReconStatusBanner({ investigationId }: ReconStatusBannerProps) {
   const [activeSessions, setActiveSessions] = useState<ReconSession[]>([]);
   const lastStatuses = useRef<Record<string, string>>({});
 
@@ -18,7 +18,7 @@ export default function ReconStatusBanner({ programId }: ReconStatusBannerProps)
 
     const checkSessions = async () => {
       try {
-        const sessions = await listReconSessions(programId);
+        const sessions = await listReconSessions(investigationId);
         const running = sessions.filter(s => s.status === 'running' || s.status === 'accepted');
 
         // Check for transitions
@@ -46,13 +46,13 @@ export default function ReconStatusBanner({ programId }: ReconStatusBannerProps)
     interval = setInterval(checkSessions, 10000);
 
     return () => clearInterval(interval);
-  }, [programId]);
+  }, [investigationId]);
 
   if (activeSessions.length === 0) return null;
 
   return (
     <div className="fixed bottom-6 right-6 z-40">
-      <Link href={`/programs/${programId}/recon-sessions`}>
+      <Link href={`/investigations/${investigationId}/recon-sessions`}>
         <div className="bg-indigo-600/90 backdrop-blur-sm hover:bg-indigo-500 text-white px-4 py-3 rounded-2xl shadow-xl shadow-indigo-500/20 flex items-center space-x-3 cursor-pointer transition-all border border-indigo-400/30 group">
           <div className="w-2 h-2 bg-white rounded-full animate-pulse shadow-[0_0_8px_rgba(255,255,255,0.8)]" />
           <div className="text-sm font-bold tracking-tight">
