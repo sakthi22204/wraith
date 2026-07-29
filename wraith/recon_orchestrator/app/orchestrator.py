@@ -1,5 +1,6 @@
 import asyncio
 import uuid
+from datetime import datetime
 from typing import Dict, List
 from fastapi import HTTPException
 from .schemas import ReconRequest, ReconSessionStatus, ToolStatus, ToolResults, HostResult
@@ -25,6 +26,7 @@ class ReconOrchestrator:
     async def run_session(self, session_id: str, investigation_id: str, domains: List[str]):
         session = self.sessions[session_id]
         session.status = "running"
+        session.logs.append(f"[{datetime.utcnow().strftime('%H:%M:%S')}] Automatic recon workflow started.")
 
         try:
             await graph_client.update_recon_session(session_id, "running")
@@ -76,6 +78,8 @@ class ReconOrchestrator:
              session.status = "failed"
         finally:
             session.progress = 100.0
+            session.current_tool = None
+            session.logs.append(f"[{datetime.utcnow().strftime('%H:%M:%S')}] Automatic recon workflow finished with status: {session.status}")
             if session_id in self.running_tasks:
                 del self.running_tasks[session_id]
 
@@ -92,7 +96,8 @@ class ReconOrchestrator:
             "hosts_found": len(self.results.get(session_id, ToolResults()).hosts),
             "ports_found": len(self.results.get(session_id, ToolResults()).ports),
             "endpoints_found": len(self.results.get(session_id, ToolResults()).endpoints),
-            "tool_statuses": {k: v.value for k, v in session.tool_statuses.items()}
+            "tool_statuses": {k: v.value for k, v in session.tool_statuses.items()},
+            "logs": session.logs
         }
 
         for attempt in range(1, max_attempts + 1):
@@ -112,37 +117,67 @@ class ReconOrchestrator:
                     delay *= 2
 
     async def _run_tool(self, session_id: str, investigation_id: str, domain: str, tool):
+        session = self.sessions[session_id]
+        tool_key = f"{tool.name}:{domain}"
+
         async with self.semaphore:
-            session = self.sessions[session_id]
-            tool_key = f"{tool.name}:{domain}"
-            session.tool_statuses[tool_key] = ToolStatus.RUNNING
+            session.current_tool = tool.name
+            max_attempts = 3
+            success = False
 
-            try:
-                results = await tool.run(domain)
-                await self._push_to_graph(investigation_id, results)
+            for attempt in range(1, max_attempts + 1):
+                timestamp = datetime.utcnow().strftime("%H:%M:%S")
+                if attempt == 1:
+                    session.tool_statuses[tool_key] = ToolStatus.RUNNING
+                    session.logs.append(f"[{timestamp}] Starting {tool.name} on {domain} (Attempt {attempt}/{max_attempts})")
+                else:
+                    session.tool_statuses[tool_key] = ToolStatus.RETRYING
+                    session.logs.append(f"[{timestamp}] Retrying {tool.name} on {domain} (Attempt {attempt}/{max_attempts})")
 
-                # Store results for the session
-                if session_id not in self.results:
-                    self.results[session_id] = ToolResults()
-                self.results[session_id].hosts.extend(results.hosts)
-                self.results[session_id].ports.extend(results.ports)
-                self.results[session_id].endpoints.extend(results.endpoints)
+                try:
+                    results = await tool.run(domain)
+                    timestamp_done = datetime.utcnow().strftime("%H:%M:%S")
+                    session.logs.append(f"[{timestamp_done}] {tool.name} completed successfully on {domain}")
 
-                session.tool_statuses[tool_key] = ToolStatus.COMPLETED
-                return True
-            except asyncio.TimeoutError:
-                print(f"Tool {tool.name} timed out for {domain} in session {session_id}")
-                session.tool_statuses[tool_key] = ToolStatus.TIMED_OUT
-                return False
-            except Exception as e:
-                print(f"Tool {tool.name} failed for {domain} in session {session_id}: {e}")
+                    await self._push_to_graph(investigation_id, results)
+
+                    # Store results for the session
+                    if session_id not in self.results:
+                        self.results[session_id] = ToolResults()
+                    self.results[session_id].hosts.extend(results.hosts)
+                    self.results[session_id].ports.extend(results.ports)
+                    self.results[session_id].endpoints.extend(results.endpoints)
+
+                    session.tool_statuses[tool_key] = ToolStatus.COMPLETED
+                    success = True
+                    break
+                except asyncio.TimeoutError:
+                    timestamp_err = datetime.utcnow().strftime("%H:%M:%S")
+                    session.logs.append(f"[{timestamp_err}] {tool.name} timed out on {domain} (Attempt {attempt}/{max_attempts})")
+                    if attempt < max_attempts:
+                        await asyncio.sleep(1) # wait 1s before retry
+                except Exception as e:
+                    timestamp_err = datetime.utcnow().strftime("%H:%M:%S")
+                    session.logs.append(f"[{timestamp_err}] {tool.name} failed on {domain}: {e} (Attempt {attempt}/{max_attempts})")
+                    if attempt < max_attempts:
+                        await asyncio.sleep(1) # wait 1s before retry
+
+            if not success:
+                timestamp_failed = datetime.utcnow().strftime("%H:%M:%S")
+                session.logs.append(f"[{timestamp_failed}] {tool.name} failed on {domain} after {max_attempts} attempts.")
                 session.tool_statuses[tool_key] = ToolStatus.FAILED
-                return False
-            finally:
-                # Update overall progress
-                completed = sum(1 for s in session.tool_statuses.values()
-                               if s in [ToolStatus.COMPLETED, ToolStatus.TIMED_OUT, ToolStatus.FAILED])
-                session.progress = (completed / len(session.tool_statuses)) * 100.0
+
+            # Reset current tool if this was the last running one
+            if session.current_tool == tool.name:
+                other_running = [k.split(":")[0] for k, v in session.tool_statuses.items() if v in [ToolStatus.RUNNING, ToolStatus.RETRYING] and k != tool_key]
+                session.current_tool = other_running[0] if other_running else None
+
+            # Update overall progress
+            completed = sum(1 for s in session.tool_statuses.values()
+                           if s in [ToolStatus.COMPLETED, ToolStatus.TIMED_OUT, ToolStatus.FAILED])
+            session.progress = (completed / len(session.tool_statuses)) * 100.0
+
+            return success
 
     async def _push_to_graph(self, investigation_id: str, results: ToolResults):
         for host in results.hosts:
@@ -205,7 +240,9 @@ class ReconOrchestrator:
                 investigation_id=request.investigation_id,
                 status="rejected",
                 tool_statuses={},
-                progress=0.0
+                progress=0.0,
+                current_tool=None,
+                logs=[]
             )
             raise HTTPException(
                 status_code=400,
@@ -226,14 +263,16 @@ class ReconOrchestrator:
         tool_statuses = {}
         for domain in normalized_requested:
             for tool in self.tools:
-                tool_statuses[f"{tool.name}:{domain}"] = ToolStatus.PENDING
+                tool_statuses[f"{tool.name}:{domain}"] = ToolStatus.WAITING
 
         self.sessions[session_id] = ReconSessionStatus(
             session_id=session_id,
             investigation_id=request.investigation_id,
             status="accepted",
             tool_statuses=tool_statuses,
-            progress=0.0
+            progress=0.0,
+            current_tool=None,
+            logs=[f"[{datetime.utcnow().strftime('%H:%M:%S')}] Recon session accepted."]
         )
 
         try:

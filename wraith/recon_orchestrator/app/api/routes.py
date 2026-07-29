@@ -25,6 +25,7 @@ async def get_status(session_id: str):
         session = await graph_client.get_recon_session(session_id)
         tool_results = session.get("tool_results", {}) or {}
         tool_statuses_raw = tool_results.get("tool_statuses", {}) or {}
+        logs = tool_results.get("logs", [])
 
         from ..schemas import ToolStatus
         tool_statuses = {k: ToolStatus(v) for k, v in tool_statuses_raw.items()}
@@ -34,7 +35,9 @@ async def get_status(session_id: str):
             investigation_id=session.get("investigation_id") or session.get("program_id", ""),
             status=session["status"],
             tool_statuses=tool_statuses,
-            progress=100.0 if session["status"] != "running" else 0.0
+            progress=100.0 if session["status"] != "running" else 0.0,
+            current_tool=None,
+            logs=logs
         )
     except Exception as e:
         print(f"Fallback to graph_db failed for session {session_id}: {e}")

@@ -3,11 +3,13 @@ from typing import List, Dict, Optional, Any
 from enum import Enum
 
 class ToolStatus(str, Enum):
+    WAITING = "waiting"
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
     TIMED_OUT = "timed_out"
     FAILED = "failed"
+    RETRYING = "retrying"
 
 class ReconRequest(BaseModel):
     investigation_id: str = Field(..., validation_alias=AliasChoices("investigation_id", "program_id"))
@@ -41,6 +43,8 @@ class ReconSessionStatus(BaseModel):
     status: str
     tool_statuses: Dict[str, ToolStatus]
     progress: float
+    current_tool: Optional[str] = None
+    logs: List[str] = []
 
     @computed_field
     @property
