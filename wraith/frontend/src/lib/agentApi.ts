@@ -44,17 +44,17 @@ export const fetchSessionStatus = async (sessionId: string) => {
   return response.json();
 };
 
-export const fetchAgentSessions = async (programId: string) => {
-  const response = await fetch(`${config.agentUrl}/api/v1/agent/sessions?program_id=${programId}`);
+export const fetchAgentSessions = async (investigationId: string) => {
+  const response = await fetch(`${config.agentUrl}/api/v1/agent/sessions?investigation_id=${investigationId}`);
   if (!response.ok) throw new Error('Failed to fetch agent sessions');
   return response.json();
 };
 
-export const startAgentSession = async (programId: string, targetScope: string[], maxIterations: number) => {
+export const startAgentSession = async (investigationId: string, targetScope: string[], maxIterations: number) => {
   const response = await fetch(`${config.agentUrl}/api/v1/agent/sessions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ program_id: programId, target_scope: targetScope, max_iterations: maxIterations })
+    body: JSON.stringify({ investigation_id: investigationId, target_scope: targetScope, max_iterations: maxIterations })
   });
   if (!response.ok) throw new Error('Failed to start session');
   return response.json();

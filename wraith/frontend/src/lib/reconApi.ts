@@ -2,7 +2,8 @@ import { config } from './config';
 
 export interface ReconSession {
   id: string;
-  program_id: string;
+  investigation_id: string;
+  program_id?: string;
   domains: string[];
   status: 'running' | 'completed' | 'partial' | 'failed' | 'accepted';
   started_at: string;
@@ -15,11 +16,11 @@ export interface ReconSession {
   };
 }
 
-export const startRecon = async (programId: string, domains: string[]) => {
+export const startRecon = async (investigationId: string, domains: string[]) => {
   const response = await fetch(`${config.reconUrl}/api/v1/recon/start`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ program_id: programId, domains })
+    body: JSON.stringify({ investigation_id: investigationId, domains })
   });
   if (!response.ok) throw new Error('Failed to start recon');
   return response.json();
@@ -39,8 +40,8 @@ export const fetchReconStatus = async (sessionId: string) => {
   return response.json();
 };
 
-export const listReconSessions = async (programId: string): Promise<ReconSession[]> => {
-  const response = await fetch(`${config.reconUrl}/api/v1/recon/sessions?program_id=${programId}`);
+export const listReconSessions = async (investigationId: string): Promise<ReconSession[]> => {
+  const response = await fetch(`${config.reconUrl}/api/v1/recon/sessions?investigation_id=${investigationId}`);
   if (!response.ok) throw new Error('Failed to fetch recon sessions');
   return response.json();
 };

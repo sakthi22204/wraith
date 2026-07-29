@@ -13,7 +13,7 @@ from .schema import (
     Service, ServiceCreate, Endpoint, EndpointCreate, Parameter, ParameterCreate,
     Finding, FindingCreate, CVE, CVECreate, Node, Link, GraphResponse,
     FindingStatus, FalsePositivePattern, FalsePositivePatternCreate,
-    ReconSession, AgentSession
+    ReconSession, AgentSession, Investigation, InvestigationCreate
 )
 
 def generate_id(*args) -> str:
@@ -61,7 +61,8 @@ class Neo4jRepository:
             "CREATE CONSTRAINT scansession_id IF NOT EXISTS FOR (s:ScanSession) REQUIRE s.id IS UNIQUE",
             "CREATE CONSTRAINT reconsession_id IF NOT EXISTS FOR (r:ReconSession) REQUIRE r.id IS UNIQUE",
             "CREATE CONSTRAINT fppattern_id IF NOT EXISTS FOR (f:FalsePositivePattern) REQUIRE f.id IS UNIQUE",
-            "CREATE CONSTRAINT agentsession_id IF NOT EXISTS FOR (a:AgentSession) REQUIRE a.id IS UNIQUE"
+            "CREATE CONSTRAINT agentsession_id IF NOT EXISTS FOR (a:AgentSession) REQUIRE a.id IS UNIQUE",
+            "CREATE CONSTRAINT investigation_id IF NOT EXISTS FOR (i:Investigation) REQUIRE i.id IS UNIQUE"
         ]
         for query in constraints:
             await self.session.run(query)
@@ -84,17 +85,17 @@ class Neo4jRepository:
         """
         await self.session.run(query, finding_id=finding_id, tool_id=tool_id)
 
-    async def create_scan_session(self, program_id: str) -> dict:
+    async def create_scan_session(self, investigation_id: str) -> dict:
         s_id = str(uuid.uuid4())
         now = datetime.utcnow().isoformat() + "Z"
         query = """
-        MATCH (p:Program {id: $program_id})
+        MATCH (i:Investigation {id: $investigation_id})
         MERGE (s:ScanSession {id: $s_id})
         ON CREATE SET s.started_at = $started_at, s.status = "running"
-        MERGE (s)-[:TARGETED]->(p)
+        MERGE (s)-[:TARGETED]->(i)
         RETURN s
         """
-        result = await self.session.run(query, program_id=program_id, s_id=s_id, started_at=now)
+        result = await self.session.run(query, investigation_id=investigation_id, s_id=s_id, started_at=now)
         record = await result.single()
         return dict(record["s"])
 
@@ -115,49 +116,70 @@ class Neo4jRepository:
         """
         await self.session.run(query, finding_id=finding_id, session_id=session_id)
 
-    async def create_program(self, program: ProgramCreate) -> Program:
-        p_id = generate_id(program.name, program.platform)
+    async def create_investigation(self, investigation: InvestigationCreate) -> Investigation:
+        i_id = str(uuid.uuid4())
         now = datetime.utcnow().isoformat()
+        name = investigation.name.strip() if investigation.name else f"Investigation of {investigation.target}"
         query = """
-        MERGE (p:Program {id: $id})
-        ON CREATE SET p.name = $name, p.platform = $platform, p.scope_domains = $scope_domains, p.created_at = $created_at
-        RETURN p
+        MERGE (i:Investigation {id: $id})
+        ON CREATE SET i.name = $name, i.target = $target, i.scope_domains = $scope_domains, i.created_at = $created_at
+        RETURN i
         """
-        result = await self.session.run(query, id=p_id, name=program.name, platform=program.platform,
-                                      scope_domains=program.scope_domains, created_at=now)
+        result = await self.session.run(query, id=i_id, name=name, target=investigation.target,
+                                      scope_domains=[investigation.target], created_at=now)
         record = await result.single()
-        return Program(**record["p"])
+        return Investigation(**record["i"])
 
     @retry_on_transient_error()
-    async def get_program(self, program_id: str) -> Optional[Program]:
-        query = "MATCH (p:Program {id: $id}) RETURN p"
-        result = await self.session.run(query, id=program_id)
+    async def get_investigation(self, investigation_id: str) -> Optional[Investigation]:
+        query = "MATCH (i:Investigation {id: $id}) RETURN i"
+        result = await self.session.run(query, id=investigation_id)
         record = await result.single()
         if not record:
             return None
-        return Program(**record["p"])
+        return Investigation(**record["i"])
+
+    @retry_on_transient_error()
+    async def list_investigations(self) -> List[Investigation]:
+        query = "MATCH (i:Investigation) RETURN i"
+        result = await self.session.run(query)
+        investigations = []
+        async for record in result:
+            investigations.append(Investigation(**record["i"]))
+        return investigations
+
+    # Legacy Program support
+    async def create_program(self, program: ProgramCreate) -> Program:
+        target = program.scope_domains[0] if program.scope_domains else "unknown"
+        investigation_create = InvestigationCreate(name=program.name, target=target)
+        inv = await self.create_investigation(investigation_create)
+        # Use APOC or MERGE to keep them in-sync as a fallback
+        return Program(id=inv.id, name=inv.name, platform="automatic", scope_domains=inv.scope_domains, created_at=inv.created_at)
+
+    @retry_on_transient_error()
+    async def get_program(self, program_id: str) -> Optional[Program]:
+        inv = await self.get_investigation(program_id)
+        if not inv:
+            return None
+        return Program(id=inv.id, name=inv.name, platform="automatic", scope_domains=inv.scope_domains, created_at=inv.created_at)
 
     @retry_on_transient_error()
     async def list_programs(self) -> List[Program]:
-        query = "MATCH (p:Program) RETURN p"
-        result = await self.session.run(query)
-        programs = []
-        async for record in result:
-            programs.append(Program(**record["p"]))
-        return programs
+        invs = await self.list_investigations()
+        return [Program(id=i.id, name=i.name, platform="automatic", scope_domains=i.scope_domains, created_at=i.created_at) for i in invs]
 
-    async def upsert_host(self, host: HostCreate, program_id: str) -> Host:
+    async def upsert_host(self, host: HostCreate, investigation_id: str) -> Host:
         h_id = generate_id(host.value)
         now = datetime.utcnow().isoformat()
         query = """
-        MATCH (p:Program {id: $program_id})
+        MATCH (i:Investigation {id: $investigation_id})
         MERGE (h:Host {id: $h_id})
         ON CREATE SET h.value = $value, h.first_seen = $now, h.last_seen = $now
         ON MATCH SET h.last_seen = $now
-        MERGE (p)-[:IN_SCOPE]->(h)
+        MERGE (i)-[:IN_SCOPE]->(h)
         RETURN h
         """
-        result = await self.session.run(query, program_id=program_id, h_id=h_id, value=host.value, now=now)
+        result = await self.session.run(query, investigation_id=investigation_id, h_id=h_id, value=host.value, now=now)
         record = await result.single()
         return Host(**record["h"])
 
@@ -313,38 +335,38 @@ class Neo4jRepository:
             MATCH (f:Finding {id: $finding_id})<-[:HAS_FINDING]-(target)
             OPTIONAL MATCH (target)-[:HAS_PARAMETER]-(e:Endpoint)
             WITH coalesce(e, target) as endpoint, f
-            MATCH (endpoint)<-[:HAS_ENDPOINT]-(h:Host)<-[:IN_SCOPE]-(p:Program)
-            RETURN endpoint.url as url, target.name as param_name, p.id as program_id
+            MATCH (endpoint)<-[:HAS_ENDPOINT]-(h:Host)<-[:IN_SCOPE]-(i:Investigation)
+            RETURN endpoint.url as url, target.name as param_name, i.id as investigation_id
             """
             url_res = await self.session.run(url_query, finding_id=finding_id)
             url_rec = await url_res.single()
             if url_rec:
                 url = url_rec["url"]
                 param_name = url_rec["param_name"] if "name" in url_rec else None
-                program_id = url_rec["program_id"]
+                investigation_id = url_rec["investigation_id"]
 
                 pattern = self._derive_endpoint_pattern(url)
-                fp_id = generate_id(program_id, finding_data["vuln_type"], pattern, param_name)
+                fp_id = generate_id(investigation_id, finding_data["vuln_type"], pattern, param_name)
 
                 fp_query = """
-                MATCH (p:Program {id: $program_id}), (f:Finding {id: $finding_id})
+                MATCH (i:Investigation {id: $investigation_id}), (f:Finding {id: $finding_id})
                 MERGE (fp:FalsePositivePattern {id: $fp_id})
                 ON CREATE SET fp.vuln_type = $vuln_type, fp.endpoint_pattern = $pattern,
                               fp.parameter_name = $param_name, fp.reason = $reason,
                               fp.created_at = $now
-                MERGE (p)-[:HAS_FP_PATTERN]->(fp)
+                MERGE (i)-[:HAS_FP_PATTERN]->(fp)
                 MERGE (f)-[:MATCHES_FP_PATTERN]->(fp)
                 """
-                await self.session.run(fp_query, program_id=program_id, finding_id=finding_id,
+                await self.session.run(fp_query, investigation_id=investigation_id, finding_id=finding_id,
                                       fp_id=fp_id, vuln_type=finding_data["vuln_type"],
                                       pattern=pattern, param_name=param_name,
                                       reason=reviewer_note, now=datetime.utcnow().isoformat() + "Z")
 
         return Finding(**finding_data)
 
-    async def get_findings_needing_review(self, program_id: str, threshold: float = 0.7) -> List[Finding]:
+    async def get_findings_needing_review(self, investigation_id: str, threshold: float = 0.7) -> List[Finding]:
         query = """
-        MATCH (p:Program {id: $program_id})-[:IN_SCOPE]->(h:Host)
+        MATCH (i:Investigation {id: $investigation_id})-[:IN_SCOPE]->(h:Host)
         OPTIONAL MATCH (h)-[:HAS_ENDPOINT]->(e:Endpoint)-[:HAS_FINDING]->(f1:Finding)
         OPTIONAL MATCH (e)-[:HAS_PARAMETER]->(param:Parameter)-[:HAS_FINDING]->(f2:Finding)
         WITH collect(f1) + collect(f2) as findings
@@ -364,16 +386,16 @@ class Neo4jRepository:
         ORDER BY sev_score DESC, f.ai_confidence ASC
         RETURN f
         """
-        result = await self.session.run(query, program_id=program_id, threshold=threshold)
+        result = await self.session.run(query, investigation_id=investigation_id, threshold=threshold)
         findings = []
         async for record in result:
             findings.append(Finding(**record["f"]))
         return findings
 
-    async def check_known_false_positive_patterns(self, program_id: str, vuln_type: str, endpoint: str, parameter: Optional[str] = None) -> List[FalsePositivePattern]:
+    async def check_known_false_positive_patterns(self, investigation_id: str, vuln_type: str, endpoint: str, parameter: Optional[str] = None) -> List[FalsePositivePattern]:
         pattern = self._derive_endpoint_pattern(endpoint)
         query = """
-        MATCH (p:Program {id: $program_id})-[:HAS_FP_PATTERN]->(fp:FalsePositivePattern)
+        MATCH (i:Investigation {id: $investigation_id})-[:HAS_FP_PATTERN]->(fp:FalsePositivePattern)
         WHERE fp.vuln_type = $vuln_type AND fp.endpoint_pattern = $pattern
         """
         if parameter:
@@ -383,7 +405,7 @@ class Neo4jRepository:
 
         query += " RETURN fp"
 
-        result = await self.session.run(query, program_id=program_id, vuln_type=vuln_type, pattern=pattern, parameter=parameter)
+        result = await self.session.run(query, investigation_id=investigation_id, vuln_type=vuln_type, pattern=pattern, parameter=parameter)
         patterns = []
         async for record in result:
             patterns.append(FalsePositivePattern(**record["fp"]))
@@ -401,18 +423,18 @@ class Neo4jRepository:
                               cvss_score=cve.cvss_score, description=cve.description)
 
     @retry_on_transient_error()
-    async def get_attack_surface(self, program_id: str) -> Dict[str, Any]:
+    async def get_attack_surface(self, investigation_id: str) -> Dict[str, Any]:
         # Use APOC to reliably fetch the connected subgraph up to 5 levels
         query = """
-        MATCH (p:Program {id: $program_id})
-        CALL apoc.path.subgraphAll(p, {
+        MATCH (i:Investigation {id: $investigation_id})
+        CALL apoc.path.subgraphAll(i, {
             maxLevel: 5,
             relationshipFilter: ''
         })
         YIELD nodes, relationships
-        RETURN nodes, relationships, p
+        RETURN nodes, relationships, i
         """
-        result = await self.session.run(query, program_id=program_id)
+        result = await self.session.run(query, investigation_id=investigation_id)
         record = await result.single()
 
         nodes = []
@@ -423,9 +445,13 @@ class Neo4jRepository:
             for n in record["nodes"]:
                 # Handle both real Neo4j nodes and mock nodes in tests
                 properties = dict(n.items()) if hasattr(n, 'items') else dict(n)
+                labels = list(n.labels)
+                # Map Investigation label back to Program if any legacy components require it
+                if "Investigation" in labels:
+                    labels.append("Program")
                 nodes.append({
                     "id": n["id"],
-                    "labels": list(n.labels),
+                    "labels": labels,
                     "properties": properties
                 })
 
@@ -438,12 +464,12 @@ class Neo4jRepository:
 
         return {"nodes": nodes, "links": links}
 
-    async def get_findings_by_severity(self, program_id: str, min_severity: str) -> List[Finding]:
+    async def get_findings_by_severity(self, investigation_id: str, min_severity: str) -> List[Finding]:
         severity_map = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
         min_val = severity_map.get(min_severity.lower(), 0)
 
         query = """
-        MATCH (p:Program {id: $program_id})-[:IN_SCOPE]->(h:Host)
+        MATCH (i:Investigation {id: $investigation_id})-[:IN_SCOPE]->(h:Host)
         OPTIONAL MATCH (h)-[:HAS_ENDPOINT]->(e:Endpoint)-[:HAS_FINDING]->(f1:Finding)
         OPTIONAL MATCH (e)-[:HAS_PARAMETER]->(param:Parameter)-[:HAS_FINDING]->(f2:Finding)
         WITH collect(f1) + collect(f2) as findings
@@ -452,7 +478,7 @@ class Neo4jRepository:
         WHERE f IS NOT NULL AND f.status <> 'DUPLICATE'
         RETURN f
         """
-        result = await self.session.run(query, program_id=program_id)
+        result = await self.session.run(query, investigation_id=investigation_id)
         findings = []
         async for record in result:
             f = record["f"]
@@ -476,35 +502,39 @@ class Neo4jRepository:
             })
         return paths
 
-    async def delete_program_recursive(self, program_id: str) -> None:
-        # Delete Program node and everything reachable ONLY through it.
+    async def delete_investigation_recursive(self, investigation_id: str) -> None:
+        # Delete Investigation node and everything reachable ONLY through it.
         # shared nodes like Tool or CVE with other incoming rels should be preserved.
         query = """
-        MATCH (p:Program {id: $program_id})
+        MATCH (i:Investigation {id: $investigation_id})
         // Find all reachable nodes
-        OPTIONAL MATCH (p)-[*1..10]->(n)
-        WITH p, collect(DISTINCT n) as reachable_nodes
-        UNWIND reachable_nodes + [p] as node
+        OPTIONAL MATCH (i)-[*1..10]->(n)
+        WITH i, collect(DISTINCT n) as reachable_nodes
+        UNWIND reachable_nodes + [i] as node
 
         // For each node, check if it has any incoming rel from a node NOT in reachable_nodes
         OPTIONAL MATCH (other)-[r]->(node)
-        WHERE NOT other IN reachable_nodes AND NOT other = p
+        WHERE NOT other IN reachable_nodes AND NOT other = i
         WITH node, count(r) as external_rels
         WHERE external_rels = 0
         DETACH DELETE node
         """
-        await self.session.run(query, program_id=program_id)
+        await self.session.run(query, investigation_id=investigation_id)
 
-    async def create_recon_session(self, session_id: str, program_id: str, domains: List[str], status: str) -> ReconSession:
+    # Legacy Program deletion fallback
+    async def delete_program_recursive(self, program_id: str) -> None:
+        await self.delete_investigation_recursive(program_id)
+
+    async def create_recon_session(self, session_id: str, investigation_id: str, domains: List[str], status: str) -> ReconSession:
         now = datetime.utcnow().isoformat() + "Z"
         query = """
-        MATCH (p:Program {id: $program_id})
+        MATCH (i:Investigation {id: $investigation_id})
         MERGE (s:ReconSession {id: $id})
-        ON CREATE SET s.program_id = $program_id, s.domains = $domains, s.status = $status, s.started_at = $now
-        MERGE (p)-[:HAD_RECON_SESSION]->(s)
+        ON CREATE SET s.investigation_id = $investigation_id, s.domains = $domains, s.status = $status, s.started_at = $now
+        MERGE (i)-[:HAD_RECON_SESSION]->(s)
         RETURN s
         """
-        result = await self.session.run(query, id=session_id, program_id=program_id, domains=domains, status=status, now=now)
+        result = await self.session.run(query, id=session_id, investigation_id=investigation_id, domains=domains, status=status, now=now)
         record = await result.single()
         return ReconSession(**record["s"])
 
@@ -535,12 +565,12 @@ class Neo4jRepository:
         return ReconSession(**data)
 
     @retry_on_transient_error()
-    async def list_recon_sessions(self, program_id: str) -> List[ReconSession]:
+    async def list_recon_sessions(self, investigation_id: str) -> List[ReconSession]:
         query = """
-        MATCH (p:Program {id: $program_id})-[:HAD_RECON_SESSION]->(s:ReconSession)
+        MATCH (i:Investigation {id: $investigation_id})-[:HAD_RECON_SESSION]->(s:ReconSession)
         RETURN s ORDER BY s.started_at DESC
         """
-        result = await self.session.run(query, program_id=program_id)
+        result = await self.session.run(query, investigation_id=investigation_id)
         sessions = []
         async for record in result:
             data = dict(record["s"])
@@ -561,11 +591,11 @@ class Neo4jRepository:
              data["tool_results"] = json.loads(data["tool_results"])
         return ReconSession(**data)
 
-    async def deduplicate_findings(self, program_id: str) -> int:
+    async def deduplicate_findings(self, investigation_id: str) -> int:
         # Instead of physically merging nodes (which might lose historical data or confuse relationships),
         # we mark the older ones as DUPLICATE.
         query = """
-        MATCH (p:Program {id: $program_id})-[:IN_SCOPE]->(h:Host)-[:HAS_ENDPOINT]->(e:Endpoint)
+        MATCH (i:Investigation {id: $investigation_id})-[:IN_SCOPE]->(h:Host)-[:HAS_ENDPOINT]->(e:Endpoint)
         MATCH (e)-[:HAS_FINDING]->(f:Finding)
         WITH e, f.vuln_type as vtype, collect(f) as findings
         WHERE size(findings) > 1
@@ -574,7 +604,7 @@ class Neo4jRepository:
         RETURN count(duplicate) as merged_count
         """
         query_param = """
-        MATCH (p:Program {id: $program_id})-[:IN_SCOPE]->(h:Host)-[:HAS_ENDPOINT]->(e:Endpoint)-[:HAS_PARAMETER]->(param:Parameter)
+        MATCH (i:Investigation {id: $investigation_id})-[:IN_SCOPE]->(h:Host)-[:HAS_ENDPOINT]->(e:Endpoint)-[:HAS_PARAMETER]->(param:Parameter)
         MATCH (param)-[:HAS_FINDING]->(f:Finding)
         WITH param, f.vuln_type as vtype, collect(f) as findings
         WHERE size(findings) > 1
@@ -583,26 +613,26 @@ class Neo4jRepository:
         RETURN count(duplicate) as merged_count
         """
 
-        res1 = await self.session.run(query, program_id=program_id)
+        res1 = await self.session.run(query, investigation_id=investigation_id)
         rec1 = await res1.single()
         count1 = rec1["merged_count"] if rec1 else 0
 
-        res2 = await self.session.run(query_param, program_id=program_id)
+        res2 = await self.session.run(query_param, investigation_id=investigation_id)
         rec2 = await res2.single()
         count2 = rec2["merged_count"] if rec2 else 0
 
         return count1 + count2
 
-    async def create_agent_session(self, session_id: str, program_id: str, status: str, iteration_count: int = 0, tools_used: List[str] = [], reasoning_log: List[str] = []) -> AgentSession:
+    async def create_agent_session(self, session_id: str, investigation_id: str, status: str, iteration_count: int = 0, tools_used: List[str] = [], reasoning_log: List[str] = []) -> AgentSession:
         now = datetime.utcnow().isoformat() + "Z"
         query = """
-        MATCH (p:Program {id: $program_id})
+        MATCH (i:Investigation {id: $investigation_id})
         MERGE (s:AgentSession {id: $id})
-        ON CREATE SET s.program_id = $program_id, s.status = $status, s.started_at = $now, s.iteration_count = $iteration_count, s.tools_used = $tools_used, s.reasoning_log = $reasoning_log
-        MERGE (p)-[:HAD_AGENT_SESSION]->(s)
+        ON CREATE SET s.investigation_id = $investigation_id, s.status = $status, s.started_at = $now, s.iteration_count = $iteration_count, s.tools_used = $tools_used, s.reasoning_log = $reasoning_log
+        MERGE (i)-[:HAD_AGENT_SESSION]->(s)
         RETURN s
         """
-        result = await self.session.run(query, id=session_id, program_id=program_id, status=status, now=now, iteration_count=iteration_count, tools_used=tools_used, reasoning_log=reasoning_log)
+        result = await self.session.run(query, id=session_id, investigation_id=investigation_id, status=status, now=now, iteration_count=iteration_count, tools_used=tools_used, reasoning_log=reasoning_log)
         record = await result.single()
         return AgentSession(**record["s"])
 
@@ -633,12 +663,12 @@ class Neo4jRepository:
         return AgentSession(**record["s"])
 
     @retry_on_transient_error()
-    async def list_agent_sessions(self, program_id: str) -> List[AgentSession]:
+    async def list_agent_sessions(self, investigation_id: str) -> List[AgentSession]:
         query = """
-        MATCH (p:Program {id: $program_id})-[:HAD_AGENT_SESSION]->(s:AgentSession)
+        MATCH (i:Investigation {id: $investigation_id})-[:HAD_AGENT_SESSION]->(s:AgentSession)
         RETURN s ORDER BY s.started_at DESC
         """
-        result = await self.session.run(query, program_id=program_id)
+        result = await self.session.run(query, investigation_id=investigation_id)
         sessions = []
         async for record in result:
             sessions.append(AgentSession(**record["s"]))

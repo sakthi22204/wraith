@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, AliasChoices, computed_field
 from typing import List, Dict, Optional, Any
 from enum import Enum
 
@@ -10,7 +10,7 @@ class ToolStatus(str, Enum):
     FAILED = "failed"
 
 class ReconRequest(BaseModel):
-    program_id: str
+    investigation_id: str = Field(..., validation_alias=AliasChoices("investigation_id", "program_id"))
     domains: List[str]
 
 class HostResult(BaseModel):
@@ -37,10 +37,15 @@ class ToolResults(BaseModel):
 
 class ReconSessionStatus(BaseModel):
     session_id: str
-    program_id: str
+    investigation_id: str = Field(..., validation_alias=AliasChoices("investigation_id", "program_id"))
     status: str
     tool_statuses: Dict[str, ToolStatus]
     progress: float
+
+    @computed_field
+    @property
+    def program_id(self) -> str:
+        return self.investigation_id
 
 class ReconSessionResults(BaseModel):
     session_id: str

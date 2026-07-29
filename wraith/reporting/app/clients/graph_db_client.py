@@ -8,33 +8,36 @@ class GraphDBClient:
 
     async def get_program(self, program_id: str):
         async with httpx.AsyncClient(headers=self.headers) as client:
-            response = await client.get(f"{self.base_url}/programs/{program_id}/graph")
+            response = await client.get(f"{self.base_url}/investigations/{program_id}/graph")
             response.raise_for_status()
-            # The graph endpoint returns program in the 'nodes' or as a separate 'p' property
-            # For simplicity, we assume we can fetch it or derive from nodes
             data = response.json()
-            # Program node usually has 'Program' label
             for node in data.get("nodes", []):
-                if "Program" in node.get("labels", []):
+                if "Investigation" in node.get("labels", []) or "Program" in node.get("labels", []):
                     return node.get("properties")
             return None
 
-    async def get_finding(self, program_id: str, finding_id: str):
+    async def get_investigation(self, investigation_id: str):
+        return await self.get_program(investigation_id)
+
+    async def get_finding(self, investigation_id: str, finding_id: str):
         async with httpx.AsyncClient(headers=self.headers) as client:
-            response = await client.get(f"{self.base_url}/programs/{program_id}/findings")
+            response = await client.get(f"{self.base_url}/investigations/{investigation_id}/findings")
             response.raise_for_status()
             findings = response.json()
             return next((f for f in findings if f["id"] == finding_id), None)
 
     async def get_findings_for_program(self, program_id: str):
         async with httpx.AsyncClient(headers=self.headers) as client:
-            response = await client.get(f"{self.base_url}/programs/{program_id}/findings")
+            response = await client.get(f"{self.base_url}/investigations/{program_id}/findings")
             response.raise_for_status()
             return response.json()
 
-    async def get_target_details(self, program_id: str, target_id: str):
+    async def get_findings_for_investigation(self, investigation_id: str):
+        return await self.get_findings_for_program(investigation_id)
+
+    async def get_target_details(self, investigation_id: str, target_id: str):
         async with httpx.AsyncClient(headers=self.headers) as client:
-            response = await client.get(f"{self.base_url}/programs/{program_id}/graph")
+            response = await client.get(f"{self.base_url}/investigations/{investigation_id}/graph")
             response.raise_for_status()
             data = response.json()
 
@@ -79,9 +82,9 @@ class GraphDBClient:
 
             return details
 
-    async def get_discovering_tool(self, program_id: str, finding_id: str):
+    async def get_discovering_tool(self, investigation_id: str, finding_id: str):
         async with httpx.AsyncClient(headers=self.headers) as client:
-            response = await client.get(f"{self.base_url}/programs/{program_id}/graph")
+            response = await client.get(f"{self.base_url}/investigations/{investigation_id}/graph")
             response.raise_for_status()
             data = response.json()
 

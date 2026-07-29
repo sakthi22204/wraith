@@ -12,20 +12,20 @@ class GraphClient:
     async def close(self):
         await self._client.aclose()
 
-    async def create_scan_session(self, program_id: str):
+    async def create_scan_session(self, investigation_id: str):
         response = await self._client.post(
             "/scan-sessions",
-            params={"program_id": program_id}
+            params={"investigation_id": investigation_id}
         )
         response.raise_for_status()
         return response.json()
 
-    async def create_recon_session(self, session_id: str, program_id: str, domains: List[str], status: str):
+    async def create_recon_session(self, session_id: str, investigation_id: str, domains: List[str], status: str):
         response = await self._client.post(
             "/recon-sessions",
             params={
                 "session_id": session_id,
-                "program_id": program_id,
+                "investigation_id": investigation_id,
                 "status": status
             },
             json=domains
@@ -42,10 +42,10 @@ class GraphClient:
         response.raise_for_status()
         return response.json()
 
-    async def list_recon_sessions(self, program_id: str):
+    async def list_recon_sessions(self, investigation_id: str):
         response = await self._client.get(
             "/recon-sessions",
-            params={"program_id": program_id}
+            params={"investigation_id": investigation_id}
         )
         response.raise_for_status()
         return response.json()
@@ -56,10 +56,14 @@ class GraphClient:
         return response.json()
 
     async def get_program_scope(self, program_id: str):
-        response = await self._client.get(f"/programs/{program_id}")
+        response = await self._client.get(f"/investigations/{program_id}")
         response.raise_for_status()
         data = response.json()
         return data.get("scope_domains", [])
+
+    async def get_investigation_scope(self, investigation_id: str):
+        # Standard implementation delegates to get_program_scope to support legacy test patching perfectly
+        return await self.get_program_scope(investigation_id)
 
     async def update_scan_session(self, session_id: str, status: str):
         response = await self._client.patch(
@@ -69,9 +73,9 @@ class GraphClient:
         response.raise_for_status()
         return response.json()
 
-    async def upsert_host(self, program_id: str, host: HostResult):
+    async def upsert_host(self, investigation_id: str, host: HostResult):
         response = await self._client.post(
-            f"/programs/{program_id}/hosts",
+            f"/investigations/{investigation_id}/hosts",
             json={"value": host.value}
         )
         response.raise_for_status()
@@ -101,8 +105,6 @@ class GraphClient:
         return response.json()
 
     async def create_finding(self, target_id: str, target_type: str, finding_data: dict):
-        # Note: graph_db API contract for /findings takes FindingCreate model
-        # which now includes target_id and target_type in the body based on Phase 1 updates.
         payload = {**finding_data, "target_id": target_id, "target_type": target_type}
         response = await self._client.post(
             "/findings",
