@@ -15,7 +15,6 @@ export default function ReconSessionsPage() {
     try {
       const data = await listReconSessions(investigationId as string);
 
-      // For any running/accepted sessions, fetch their detailed live status (which includes logs/current_tool from orchestrator memory)
       const updatedSessions = await Promise.all(
         data.map(async (s) => {
           if (s.status === 'running' || s.status === 'accepted') {
@@ -41,9 +40,8 @@ export default function ReconSessionsPage() {
   useEffect(() => {
     loadData();
 
-    // Check if there are any active sessions
     const hasActive = sessions.some(s => s.status === 'running' || s.status === 'accepted');
-    const intervalTime = hasActive ? 3000 : 10000; // Poll faster if there is live execution!
+    const intervalTime = hasActive ? 3000 : 10000;
 
     const interval = setInterval(loadData, intervalTime);
     return () => clearInterval(interval);
@@ -87,6 +85,13 @@ export default function ReconSessionsPage() {
             const toolStatuses = session.tool_statuses || {};
             const logs = session.logs || [];
 
+            // Extract unique tool names from toolStatuses keys dynamically
+            const toolNames = Array.from(new Set(Object.keys(toolStatuses).map(k => k.split(":")[0])));
+            const sortedToolNames = toolNames.length > 0 ? toolNames.sort() : [
+              'subfinder', 'naabu', 'httpx_probe', 'katana', 'dnsx', 'tlsx', 'gau', 'waybackurls',
+              'ffuf', 'kiterunner', 'linkfinder', 'secretfinder', 'trufflehog', 'gittools', 'wpscan', 'cloud_enum'
+            ];
+
             return (
               <div key={session.id} className="bg-gradient-to-br from-slate-900/60 to-slate-950/90 border border-indigo-500/15 hover:border-indigo-500/25 rounded-2xl p-6 transition-all shadow-xl space-y-6">
 
@@ -127,12 +132,11 @@ export default function ReconSessionsPage() {
                   </div>
                 </div>
 
-                {/* Grid Timeline of Tools */}
+                {/* Grid Timeline of Tools (Dynamically Rendered!) */}
                 <div className="space-y-3">
                   <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Execution Timeline</h3>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    {['subfinder', 'naabu', 'katana', 'httpx'].map(toolName => {
-                      // Find the status of this tool in toolStatuses (keys are typically toolName:domain)
+                    {sortedToolNames.map(toolName => {
                       const matchingKeys = Object.keys(toolStatuses).filter(k => k.startsWith(`${toolName}:`));
                       const toolStatus = matchingKeys.length > 0 ? toolStatuses[matchingKeys[0]] : 'waiting';
 
