@@ -93,8 +93,9 @@ async def test_get_program():
     mock_record.__getitem__.return_value = {
         "id": "p1",
         "name": "test",
-        "platform": "hackerone",
+        "target": "example.com",
         "scope_domains": ["example.com"],
+        "status": "active",
         "created_at": datetime.utcnow().isoformat()
     }
     mock_result.single.return_value = mock_record
@@ -127,8 +128,8 @@ async def test_list_programs():
             return self.data[key]
 
     mock_records = [
-        MockRecord({"p": {"id": "p1", "name": "n1", "platform": "h1", "scope_domains": [], "created_at": datetime.utcnow().isoformat()}}),
-        MockRecord({"p": {"id": "p2", "name": "n2", "platform": "h2", "scope_domains": [], "created_at": datetime.utcnow().isoformat()}})
+        MockRecord({"i": {"id": "p1", "name": "n1", "target": "example.com", "status": "active", "created_at": datetime.utcnow().isoformat()}}),
+        MockRecord({"i": {"id": "p2", "name": "n2", "target": "example2.com", "status": "active", "created_at": datetime.utcnow().isoformat()}})
     ]
 
     mock_result.__aiter__.return_value = mock_records

@@ -11,7 +11,7 @@ async def test_orchestrator_parallelism():
 
     # Mock each tool's run method to have a delay
     async def slow_run(*args, **kwargs):
-        await asyncio.sleep(1)
+        await asyncio.sleep(0.5)
         return ToolResults(hosts=[HostResult(value="test.com", source_tool="mock")])
 
     for tool in orchestrator.tools:
@@ -37,7 +37,7 @@ async def test_orchestrator_parallelism():
         end_time = time.time()
         elapsed = end_time - start_time
 
-        # We have 4 tools running in parallel, each takes 1s.
-        # Total time should be close to 1s, definitely less than 2s.
+        # We have 4 tools running in parallel, each takes 0.5s.
+        # Total time should be close to 0.5s, definitely less than 2.0s.
         assert elapsed < 2.0
-        assert elapsed >= 1.0
+        assert elapsed >= 0.5

@@ -123,9 +123,12 @@ class AssessmentEngine:
 
         if not validation_plan:
             # Fallback default plan
+            target_val = "localhost"
+            if hosts:
+                target_val = hosts[0]["properties"].get("value", "localhost")
             validation_plan.append(ValidationTask(
                 step=1,
-                target=domains[0] if domains else "localhost",
+                target=target_val,
                 action="run_nmap_scan",
                 reason="Default baseline port scan on available scope domains."
             ))
