@@ -101,11 +101,10 @@ class ReconOrchestrator:
                 tool_key = f"{tool.name}:{domain}"
                 queued_keys.add(tool_key)
 
-        # Launch base tools synchronously in the running_tasks list
+        # Launch base tools and track wrapper tasks
         for domain in domains:
             for tool in base_tools:
                 t = asyncio.create_task(self._run_tool(session_id, investigation_id, domain, tool))
-                running_tasks.append(t)
 
                 async def wait_and_trigger(task, t_tool, d_domain):
                     try:
@@ -113,10 +112,13 @@ class ReconOrchestrator:
                         if success:
                             # Trigger appropriate downstream tools based on dynamic conditions!
                             await self._evaluate_conditional_triggers(session_id, investigation_id, d_domain, t_tool, queued_keys, running_tasks)
+                        return success
                     except Exception as e:
                         print(f"Task {t_tool.name} failed: {e}")
+                        return False
 
-                asyncio.create_task(wait_and_trigger(t, tool, domain))
+                wrapper_task = asyncio.create_task(wait_and_trigger(t, tool, domain))
+                running_tasks.append(wrapper_task)
 
         # Wait until all queued tasks (including dynamically added ones) are complete
         while True:
@@ -194,13 +196,14 @@ class ReconOrchestrator:
         async def launch_tool(tool, domain):
             tool_key = f"{tool.name}:{domain}"
             t = asyncio.create_task(self._run_tool(session_id, investigation_id, domain, tool))
-            running_tasks.append(t)
             try:
                 success = await t
                 if success:
                     await self._evaluate_conditional_triggers(session_id, investigation_id, domain, tool, queued_keys, running_tasks)
+                return success
             except Exception as e:
                 print(f"Task {tool_key} failed: {e}")
+                return False
 
         # 1. WordPress detection (Trigger WPScan)
         wordpress_detected = False
@@ -215,7 +218,8 @@ class ReconOrchestrator:
                 queued_keys.add(wpscan_key)
                 session.tool_statuses[wpscan_key] = ToolStatus.WAITING
                 session.logs.append(f"[{datetime.utcnow().strftime('%H:%M:%S')}] WordPress detected on {domain}. Scheduling WPScan.")
-                asyncio.create_task(launch_tool(self.wpscan, domain))
+                task_launch = asyncio.create_task(launch_tool(self.wpscan, domain))
+                running_tasks.append(task_launch)
 
         # 2. JavaScript found (Trigger LinkFinder and SecretFinder)
         js_detected = False
@@ -230,7 +234,8 @@ class ReconOrchestrator:
                     queued_keys.add(tool_key)
                     session.tool_statuses[tool_key] = ToolStatus.WAITING
                     session.logs.append(f"[{datetime.utcnow().strftime('%H:%M:%S')}] JavaScript file(s) detected. Scheduling {tool.name}.")
-                    asyncio.create_task(launch_tool(tool, domain))
+                    task_launch = asyncio.create_task(launch_tool(tool, domain))
+                    running_tasks.append(task_launch)
 
         # 3. API endpoints found (Trigger Kiterunner)
         api_detected = False
@@ -245,7 +250,8 @@ class ReconOrchestrator:
                 queued_keys.add(kiterunner_key)
                 session.tool_statuses[kiterunner_key] = ToolStatus.WAITING
                 session.logs.append(f"[{datetime.utcnow().strftime('%H:%M:%S')}] API endpoint(s) detected. Scheduling Kiterunner.")
-                asyncio.create_task(launch_tool(self.kiterunner, domain))
+                task_launch = asyncio.create_task(launch_tool(self.kiterunner, domain))
+                running_tasks.append(task_launch)
 
         # 4. Host discovery (Trigger dnsx)
         if completed_tool.name == "subfinder" and results.hosts:
@@ -254,7 +260,8 @@ class ReconOrchestrator:
                 queued_keys.add(dnsx_key)
                 session.tool_statuses[dnsx_key] = ToolStatus.WAITING
                 session.logs.append(f"[{datetime.utcnow().strftime('%H:%M:%S')}] Hosts discovered. Scheduling dnsx resolution.")
-                asyncio.create_task(launch_tool(self.dnsx, domain))
+                task_launch = asyncio.create_task(launch_tool(self.dnsx, domain))
+                running_tasks.append(task_launch)
 
         # 5. Discovered open ports (Trigger Nmap and tlsx)
         if completed_tool.name == "naabu" and results.ports:
@@ -264,7 +271,8 @@ class ReconOrchestrator:
                 queued_keys.add(nmap_key)
                 session.tool_statuses[nmap_key] = ToolStatus.WAITING
                 session.logs.append(f"[{datetime.utcnow().strftime('%H:%M:%S')}] Open ports discovered. Scheduling Nmap scan.")
-                asyncio.create_task(launch_tool(self.nmap, domain))
+                task_launch = asyncio.create_task(launch_tool(self.nmap, domain))
+                running_tasks.append(task_launch)
 
             # Trigger tlsx on TLS ports
             has_tls_ports = any(p.number in [443, 8443] or p.protocol == "https" for p in results.ports)
@@ -274,7 +282,8 @@ class ReconOrchestrator:
                     queued_keys.add(tlsx_key)
                     session.tool_statuses[tlsx_key] = ToolStatus.WAITING
                     session.logs.append(f"[{datetime.utcnow().strftime('%H:%M:%S')}] TLS ports discovered. Scheduling tlsx.")
-                    asyncio.create_task(launch_tool(self.tlsx, domain))
+                    task_launch = asyncio.create_task(launch_tool(self.tlsx, domain))
+                    running_tasks.append(task_launch)
 
         # 6. Active HTTP web service found (Trigger GitTools, ffuf, TruffleHog)
         if completed_tool.name in ["httpx_probe", "katana"] and results.endpoints:
@@ -284,7 +293,8 @@ class ReconOrchestrator:
                     queued_keys.add(tool_key)
                     session.tool_statuses[tool_key] = ToolStatus.WAITING
                     session.logs.append(f"[{datetime.utcnow().strftime('%H:%M:%S')}] Active web endpoints found. Scheduling {tool.name}.")
-                    asyncio.create_task(launch_tool(tool, domain))
+                    task_launch = asyncio.create_task(launch_tool(tool, domain))
+                    running_tasks.append(task_launch)
 
     async def _run_tool(self, session_id: str, investigation_id: str, domain: str, tool):
         session = self.sessions[session_id]
