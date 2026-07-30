@@ -118,6 +118,53 @@ class ReportGenerator:
             "status": finding.get("status")
         }
 
+        # 12. Structured Risk Rating
+        risk_rating = {
+            "score": score if score is not None else (10.0 if severity.lower() == "critical" else 8.0 if severity.lower() == "high" else 5.0 if severity.lower() == "medium" else 2.0),
+            "band": band if band != "Unknown" else severity,
+            "cvss_vector": cvss_vector or "N/A",
+            "ai_confidence": ai_confidence_display,
+            "criticality": severity
+        }
+
+        # 13. Attack Graph Path representation
+        attack_nodes = []
+        if target_details:
+            if target_details.get("host"):
+                attack_nodes.append(f"Host: {target_details['host']}")
+            if "Endpoint" in target_details["labels"]:
+                attack_nodes.append(f"Endpoint: {target_details['properties'].get('url')}")
+            if "Parameter" in target_details["labels"]:
+                attack_nodes.append(f"Parameter: {target_details['properties'].get('name')}")
+        attack_nodes.append(f"Finding: {title} ({severity})")
+        attack_graph_text = " -> ".join(attack_nodes)
+        attack_graph = {
+            "path_ascii": attack_graph_text,
+            "nodes": attack_nodes,
+            "total_hops": max(0, len(attack_nodes) - 1)
+        }
+
+        # 14. Validation Timeline for finding
+        finding_time = finding.get("discovered_at") or datetime.utcnow().isoformat()
+        timeline = [
+            {"timestamp": finding_time, "event": f"Vulnerability '{vuln_type.upper()}' first discovered by {tool_name}."}
+        ]
+        if relevant_audit:
+            for entry in relevant_audit:
+                timestamp = entry.get("timestamp") or finding_time
+                timeline.append({
+                    "timestamp": timestamp,
+                    "event": f"Active validation '{entry['action']}' performed on host {entry.get('target', 'unknown host')}. Action output: {entry.get('result', 'Success')}"
+                })
+        timeline.sort(key=lambda x: x["timestamp"])
+
+        # 15. Support Contacts
+        support_resources = [
+            {"channel": "Wraith Product Security", "contact": "security@wraith.io"},
+            {"channel": "Remediation Guide", "contact": "https://wraith.io/remediation/remediating-vulnerabilities"},
+            {"channel": "Internal Slack Channel", "contact": "#security-remediation-q-and-a"}
+        ]
+
         return ReportFinding(
             title=title,
             vulnerability_type=vulnerability_type,
@@ -132,7 +179,11 @@ class ReportGenerator:
             evidence=evidence,
             business_impact=business_impact,
             suggested_remediation=suggested_remediation,
-            discovery_metadata=discovery_metadata
+            discovery_metadata=discovery_metadata,
+            risk_rating=risk_rating,
+            timeline=timeline,
+            attack_graph=attack_graph,
+            support_resources=support_resources
         )
 
     async def generate_program_report(self, program_id: str) -> ProgramReport:
@@ -157,11 +208,68 @@ class ReportGenerator:
 
         summary = f"{len(duplicates)} duplicate and {len(false_positives)} false-positive finding(s) excluded from this report."
 
+        # Program Executive Summary
+        severity_counts = {"Critical": 0, "High": 0, "Medium": 0, "Low": 0, "Info": 0}
+        total_score = 0.0
+        for f in findings:
+            severity_counts[f.severity] = severity_counts.get(f.severity, 0) + 1
+            if f.risk_rating:
+                total_score += f.risk_rating.get("score", 0.0)
+
+        avg_score = round(total_score / len(findings), 1) if findings else 0.0
+        posture = "HIGH RISK / ACTION REQUIRED" if (severity_counts["Critical"] > 0 or severity_counts["High"] > 0) else "SECURE"
+
+        executive_summary = {
+            "overall_posture": posture,
+            "average_risk_score": avg_score,
+            "severity_breakdown": severity_counts,
+            "assessment_comment": f"An automated security assessment identified {len(findings)} active security issues. {severity_counts['Critical']} critical and {severity_counts['High']} high severity findings require immediate remediation."
+        }
+
+        # Program Validation Timeline
+        program_timeline = []
+        for f in findings:
+            program_timeline.append({
+                "timestamp": f.discovery_metadata.get("timestamp") or datetime.utcnow().isoformat(),
+                "event": f"Vulnerability found: {f.title} ({f.severity})"
+            })
+
+        all_audit_entries = await audit_client.get_audit_entries(program_id)
+        for entry in all_audit_entries:
+            program_timeline.append({
+                "timestamp": entry.get("timestamp") or datetime.utcnow().isoformat(),
+                "event": f"Active exploitation task '{entry['action']}' performed on target {entry.get('target', 'unknown host')}. Action output: {entry.get('result', 'Success')}"
+            })
+
+        program_timeline.sort(key=lambda x: x["timestamp"])
+
+        # Overall Attack Graph paths summary
+        paths_ascii = []
+        for f in findings:
+            if f.attack_graph:
+                paths_ascii.append(f.attack_graph.get("path_ascii"))
+
+        program_attack_graph = {
+            "total_attack_paths": len(findings),
+            "paths_summary": paths_ascii[:5]
+        }
+
+        # Program Support Resources
+        program_support_resources = [
+            {"channel": "Wraith Product Security", "contact": "prodsec@wraith.io"},
+            {"channel": "Wraith Security On-Call", "contact": "https://wraith.io/oncall"},
+            {"channel": "Incident Response Line", "contact": "+1 (800) WRAITH-SEC"}
+        ]
+
         return ProgramReport(
             investigation_name=program_data.get("name", "Unknown Program") if program_data else "Unknown",
             generated_at=datetime.utcnow(),
             findings=findings,
-            summary_line=summary
+            summary_line=summary,
+            executive_summary=executive_summary,
+            timeline=program_timeline,
+            attack_graph=program_attack_graph,
+            support_resources=program_support_resources
         )
 
 generator = ReportGenerator()

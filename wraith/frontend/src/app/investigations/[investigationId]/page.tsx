@@ -84,14 +84,24 @@ export default function InvestigationDashboard() {
     }
   };
 
-  const downloadReport = async (format: 'markdown' | 'pdf') => {
+  const downloadReport = async (format: 'markdown' | 'pdf' | 'html' | 'json') => {
     try {
       const data = await fetchReport(investigationId as string, undefined, format);
-      const blob = format === 'pdf' ? (data as Blob) : new Blob([data as string], { type: 'text/markdown' });
+      let blob;
+      if (format === 'pdf') {
+        blob = data as Blob;
+      } else if (format === 'html') {
+        blob = new Blob([data as string], { type: 'text/html' });
+      } else if (format === 'json') {
+        blob = new Blob([data as string], { type: 'application/json' });
+      } else {
+        blob = new Blob([data as string], { type: 'text/markdown' });
+      }
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `report_${investigationId}.${format === 'pdf' ? 'pdf' : 'md'}`;
+      const ext = format === 'markdown' ? 'md' : format;
+      a.download = `report_${investigationId}.${ext}`;
       a.click();
     } catch (e) {
       toast.error('Failed to download report');
@@ -120,11 +130,17 @@ export default function InvestigationDashboard() {
            <Link href={`/investigations/${investigationId}/assessment`} className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-lg text-sm font-bold transition-all flex items-center active:scale-95 shadow-md">
              View Assessment
            </Link>
-           <button onClick={() => downloadReport('markdown')} className="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-lg text-sm font-bold transition-all border border-slate-700 active:scale-95">
+           <button onClick={() => downloadReport('markdown')} className="bg-slate-800 hover:bg-slate-700 text-white px-3 py-2 rounded-lg text-sm font-bold transition-all border border-slate-700 active:scale-95 shadow-md">
              MD Report
            </button>
-           <button onClick={() => downloadReport('pdf')} className="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-lg text-sm font-bold transition-all border border-slate-700 active:scale-95">
+           <button onClick={() => downloadReport('pdf')} className="bg-slate-800 hover:bg-slate-700 text-white px-3 py-2 rounded-lg text-sm font-bold transition-all border border-slate-700 active:scale-95 shadow-md">
              PDF Report
+           </button>
+           <button onClick={() => downloadReport('html')} className="bg-slate-800 hover:bg-slate-700 text-white px-3 py-2 rounded-lg text-sm font-bold transition-all border border-slate-700 active:scale-95 shadow-md">
+             HTML Report
+           </button>
+           <button onClick={() => downloadReport('json')} className="bg-slate-800 hover:bg-slate-700 text-white px-3 py-2 rounded-lg text-sm font-bold transition-all border border-slate-700 active:scale-95 shadow-md">
+             JSON Report
            </button>
         </div>
       </div>
