@@ -157,7 +157,7 @@ export default function ReconSessionsPage() {
                   <div className="space-y-3">
                     <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Live Execution Logs</h3>
                     <div className="bg-slate-950 border border-slate-800 rounded-xl p-4 h-48 overflow-y-auto font-mono text-[11px] text-indigo-300/90 leading-relaxed shadow-inner flex flex-col space-y-1 scroll-smooth">
-                      {logs.map((log, index) => (
+                      {logs.map((log: string, index: number) => (
                         <div key={index} className="hover:bg-slate-900/30 px-1 py-0.5 rounded transition-colors whitespace-pre-wrap">
                           <span className="text-indigo-500/60 font-bold select-none mr-2">›</span>
                           {log}
