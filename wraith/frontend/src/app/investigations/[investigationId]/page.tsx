@@ -1,25 +1,59 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { toast } from 'sonner';
-import { Finding } from '@/types/graph';
-import { startRecon, fetchReconStatus, cancelRecon } from '@/lib/reconApi';
+import { Finding, GraphResponse } from '@/types/graph';
+import { startRecon, fetchReconStatus, cancelRecon, listReconSessions } from '@/lib/reconApi';
 import { startAgentSession, fetchSessionStatus, stopAgentSession, fetchAgentSessions } from '@/lib/agentApi';
-import { fetchFindings, fetchReviewQueue, deleteProgram as deleteInvestigation } from '@/lib/graphApi';
+import { fetchFindings, fetchReviewQueue, deleteProgram as deleteInvestigation, fetchGraph } from '@/lib/graphApi';
 import { fetchReport } from '@/lib/reportingApi';
 import SeverityBadge from '@/components/SeverityBadge';
 import ActiveExploitApproval from '@/components/ActiveExploitApproval';
+import { config } from '@/lib/config';
 
 export default function InvestigationDashboard() {
   const { investigationId } = useParams();
   const router = useRouter();
-  const [activeRecon, setActiveRecon] = useState<string | null>(null);
-  const [isStartingRecon, setIsStartingRecon] = useState(false);
-  const [activeAgent, setActiveAgent] = useState<string | null>(null);
+
+  // Graph and Stats States
+  const [graphStats, setGraphStats] = useState({
+    hosts: 0,
+    services: 0,
+    endpoints: 0,
+    findings: 0
+  });
+
+  // Findings & Queue
   const [findings, setFindings] = useState<Finding[]>([]);
   const [reviewCount, setReviewQueueCount] = useState(0);
+
+  // Assessment & Approvals States
+  const [riskScore, setRiskScore] = useState<number | null>(null);
+  const [approvalStatus, setApprovalStatus] = useState<any>(null);
+
+  // Recon Session Real-time States
+  const [activeReconId, setActiveReconId] = useState<string | null>(null);
+  const [reconProgress, setReconProgress] = useState(0);
+  const [reconCurrentTool, setReconCurrentTool] = useState<string | null>(null);
+  const [reconCompletedTools, setReconCompletedTools] = useState<string[]>([]);
+  const [reconFailedTools, setReconFailedTools] = useState<string[]>([]);
+  const [reconLogs, setReconLogs] = useState<string[]>([]);
+  const [reconStartTime, setReconStartTime] = useState<string | null>(null);
+
+  // Agent Session Real-time States
+  const [activeAgentId, setActiveAgentId] = useState<string | null>(null);
+  const [agentStartTime, setAgentStartTime] = useState<string | null>(null);
+  const [agentLogs, setAgentLogs] = useState<string[]>([]);
+  const [agentCurrentTool, setAgentCurrentTool] = useState<string | null>(null);
+
+  // Live Timer State (MM:SS formatting)
+  const [reconElapsed, setReconElapsed] = useState('00:00');
+  const [agentElapsed, setAgentElapsed] = useState('00:00');
+
+  // Modal / UI States
+  const [isStartingRecon, setIsStartingRecon] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState('');
   const [isDeleting, setIsDeleteModalOpen] = useState(false);
   const [isReconModalOpen, setIsReconModalOpen] = useState(false);
@@ -27,30 +61,171 @@ export default function InvestigationDashboard() {
   const [isCancelReconModalOpen, setIsCancelReconModalOpen] = useState(false);
   const [isStopAgentModalOpen, setIsStopAgentModalOpen] = useState(false);
 
+  // Terminal scroll helper ref
+  const terminalEndRef = useRef<HTMLDivElement>(null);
+
+  // Helper to format duration from ISO timestamp to now
+  const computeDurationString = (startedAt: string | null): string => {
+    if (!startedAt) return '00:00';
+    const start = new Date(startedAt).getTime();
+    const now = Date.now();
+    const diff = Math.max(0, now - start);
+    const secs = Math.floor(diff / 1000);
+    const minutes = Math.floor(secs / 60);
+    const hours = Math.floor(minutes / 60);
+
+    const formattedSecs = String(secs % 60).padStart(2, '0');
+    const formattedMins = String(minutes % 60).padStart(2, '0');
+
+    if (hours > 0) {
+      return `${String(hours).padStart(2, '0')}:${formattedMins}:${formattedSecs}`;
+    }
+    return `${formattedMins}:${formattedSecs}`;
+  };
+
+  // Poll timer loop for active sessions (updates every 1s)
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (reconStartTime) {
+        setReconElapsed(computeDurationString(reconStartTime));
+      } else {
+        setReconElapsed('00:00');
+      }
+      if (agentStartTime) {
+        setAgentElapsed(computeDurationString(agentStartTime));
+      } else {
+        setAgentElapsed('00:00');
+      }
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [reconStartTime, agentStartTime]);
+
+  // Terminal scroll to bottom on new logs
+  useEffect(() => {
+    terminalEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [reconLogs, agentLogs]);
+
+  // Real-time Automated Polling Handler (runs every 2s)
   const loadData = async () => {
     try {
-      const f = await fetchFindings(investigationId as string);
-      setFindings(f);
-      const r = await fetchReviewQueue(investigationId as string);
-      setReviewQueueCount(r.length);
+      const investigation_id = investigationId as string;
 
-      // Load active agent session
-      const sessions = await fetchAgentSessions(investigationId as string);
-      const runningSession = sessions.find((s: any) => s.status === 'running');
-      if (runningSession) {
-          setActiveAgent(runningSession.id);
-      } else {
-          setActiveAgent(null);
+      // 1. Fetch Graph & compute stats dynamically
+      try {
+        const graphData: GraphResponse = await fetchGraph(investigation_id);
+        const nodes = graphData.nodes || [];
+        const counts = { hosts: 0, services: 0, endpoints: 0, findings: 0 };
+        nodes.forEach(n => {
+          if (n.labels.includes('Host')) counts.hosts++;
+          if (n.labels.includes('Service')) counts.services++;
+          if (n.labels.includes('Endpoint')) counts.endpoints++;
+          if (n.labels.includes('Finding')) counts.findings++;
+        });
+        setGraphStats(counts);
+      } catch (e) {
+        console.error('Failed to poll graph statistics', e);
+      }
+
+      // 2. Fetch Findings & Review Queue length
+      try {
+        const f = await fetchFindings(investigation_id);
+        setFindings(f);
+        const r = await fetchReviewQueue(investigation_id);
+        setReviewQueueCount(r.length);
+      } catch (e) {
+        console.error('Failed to poll findings or review queue', e);
+      }
+
+      // 3. Fetch Assessment risk score
+      try {
+        const assessResp = await fetch(`${config.assessmentUrl}/api/v1/assessments/${investigation_id}`);
+        if (assessResp.ok) {
+          const assessData = await assessResp.json();
+          setRiskScore(assessData.risk_score);
+        }
+      } catch (e) {
+        console.error('Failed to poll assessment score', e);
+      }
+
+      // 4. Fetch Global Exploit Approval status
+      try {
+        const approveResp = await fetch(`${config.exploitRunnerUrl}/api/v1/exploit/investigations/${investigation_id}/approval-status`);
+        if (approveResp.ok) {
+          const approveData = await approveResp.json();
+          setApprovalStatus(approveData);
+        }
+      } catch (e) {
+        console.error('Failed to poll approval status', e);
+      }
+
+      // 5. Poll active Recon Session details
+      try {
+        const sessions = await listReconSessions(investigation_id);
+        const activeRecon = sessions.find(s => s.status === 'running' || s.status === 'accepted');
+        if (activeRecon) {
+          setActiveReconId(activeRecon.id);
+          setReconStartTime(activeRecon.started_at);
+
+          // Fetch live recon status metrics (progress, logs, current_tool, tool_statuses)
+          const status = await fetchReconStatus(activeRecon.id);
+          setReconProgress(status.progress || 0);
+          setReconCurrentTool(status.current_tool || null);
+          setReconLogs(status.logs || []);
+
+          // Separate completed and failed tools
+          const toolStatuses = status.tool_statuses || {};
+          const completed: string[] = [];
+          const failed: string[] = [];
+          Object.entries(toolStatuses).forEach(([tool, state]) => {
+            if (state === 'completed') completed.push(tool);
+            if (state === 'failed') failed.push(tool);
+          });
+          setReconCompletedTools(completed);
+          setReconFailedTools(failed);
+        } else {
+          setActiveReconId(null);
+          setReconStartTime(null);
+          setReconProgress(0);
+          setReconCurrentTool(null);
+        }
+      } catch (e) {
+        console.error('Failed to poll recon sessions', e);
+      }
+
+      // 6. Poll active Agent Session details
+      try {
+        const agentSessions = await fetchAgentSessions(investigation_id);
+        const activeAgent = agentSessions.find((s: any) => s.status === 'running');
+        if (activeAgent) {
+          setActiveAgentId(activeAgent.id);
+          setAgentStartTime(activeAgent.started_at);
+
+          // Fetch live status for agent
+          const agentStatus = await fetchSessionStatus(activeAgent.id);
+          setAgentLogs(agentStatus.reasoning_log || []);
+          if (agentStatus.tools_used && agentStatus.tools_used.length > 0) {
+            setAgentCurrentTool(agentStatus.tools_used[agentStatus.tools_used.length - 1]);
+          } else {
+            setAgentCurrentTool(null);
+          }
+        } else {
+          setActiveAgentId(null);
+          setAgentStartTime(null);
+          setAgentCurrentTool(null);
+        }
+      } catch (e) {
+        console.error('Failed to poll agent sessions', e);
       }
     } catch (e) {
-      console.error(e);
+      console.error('Dashboard polling cycle error', e);
     }
   };
 
+  // Polling Trigger (polls every 2 seconds without full page refreshes)
   useEffect(() => {
     loadData();
-    const interval = setInterval(loadData, 10000);
-    return () => clearInterval(interval);
+    const pollingInterval = setInterval(loadData, 2000);
+    return () => clearInterval(pollingInterval);
   }, [investigationId]);
 
   const handleStartRecon = async () => {
@@ -58,7 +233,7 @@ export default function InvestigationDashboard() {
     setIsStartingRecon(true);
     try {
       const res = await startRecon(investigationId as string, reconDomains.split(',').map(s => s.trim()));
-      setActiveRecon(res.session_id);
+      setActiveReconId(res.session_id);
       setIsReconModalOpen(false);
       setReconDomains('');
       if (res.duplicate_of) {
@@ -66,6 +241,7 @@ export default function InvestigationDashboard() {
       } else {
           toast.success('Recon session started');
       }
+      loadData();
     } catch (e) {
       toast.error('Failed to start recon');
     } finally {
@@ -76,7 +252,7 @@ export default function InvestigationDashboard() {
   const handleStartAgent = async () => {
     try {
       const res = await startAgentSession(investigationId as string, [], 10);
-      setActiveAgent(res.session_id);
+      setActiveAgentId(res.session_id);
       toast.success('Agent session started');
       router.push(`/investigations/${investigationId}/agent/${res.session_id}`);
     } catch (e) {
@@ -118,15 +294,39 @@ export default function InvestigationDashboard() {
     }
   };
 
+  // Severity Chart calculations
+  const severityCounts = {
+    critical: findings.filter(f => f.severity.toLowerCase() === 'critical').length,
+    high: findings.filter(f => f.severity.toLowerCase() === 'high').length,
+    medium: findings.filter(f => f.severity.toLowerCase() === 'medium').length,
+    low: findings.filter(f => f.severity.toLowerCase() === 'low').length,
+    info: findings.filter(f => f.severity.toLowerCase() === 'info').length
+  };
+  const totalSeverities = findings.length || 1;
+
+  // Determine Current Phase dynamically
+  const getCurrentPhase = (): string => {
+    if (activeReconId) return 'Recon';
+    if (activeAgentId) return 'Exploit Validation';
+    if (findings.length > 0) return 'Reporting';
+    return 'Pending';
+  };
+
   return (
-    <div className="space-y-8">
-      <div className="flex justify-between items-start">
+    <div className="space-y-8 font-sans">
+      {/* Top Banner Header */}
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <Link href="/" className="text-indigo-400 text-sm font-bold hover:underline mb-2 inline-block font-sans">← Back to Investigations</Link>
-          <h1 className="text-4xl font-bold tracking-tight font-heading">Investigation Dashboard</h1>
+          <h1 className="text-4xl font-bold tracking-tight font-heading flex items-center gap-3">
+            Investigation Dashboard
+            <span className="text-xs bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 px-2.5 py-1 rounded-full uppercase font-mono font-bold tracking-widest">
+              {getCurrentPhase()} Phase
+            </span>
+          </h1>
           <p className="text-slate-400 font-mono text-xs mt-1">{investigationId}</p>
         </div>
-        <div className="flex space-x-3 items-center">
+        <div className="flex flex-wrap gap-2 items-center">
            <Link href={`/investigations/${investigationId}/assessment`} className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-lg text-sm font-bold transition-all flex items-center active:scale-95 shadow-md">
              View Assessment
            </Link>
@@ -145,7 +345,112 @@ export default function InvestigationDashboard() {
         </div>
       </div>
 
+      {/* Real-time Status and Phase Indicator Bar */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-1">
+            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block">Dashboard Phase</span>
+            <div className="text-lg font-bold text-slate-200">{getCurrentPhase()}</div>
+         </div>
+         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-1">
+            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block">Assessment Risk Rating</span>
+            <div className="text-lg font-bold text-rose-500">{riskScore ? `${riskScore.toFixed(1)} / 10` : 'N/A'}</div>
+         </div>
+         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-1">
+            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block">Exploit Approval Status</span>
+            <div className={`text-lg font-bold ${approvalStatus?.approved ? 'text-emerald-400' : 'text-amber-500'}`}>
+               {approvalStatus?.approved ? '✓ Approved' : '⚠️ Pending'}
+            </div>
+         </div>
+         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-1">
+            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block">Report Generation Status</span>
+            <div className="text-lg font-bold text-indigo-400">{findings.length > 0 ? 'Ready to Export' : 'No findings'}</div>
+         </div>
+      </div>
+
+      {/* Real-time Active Operation Panels */}
+      {(activeReconId || activeAgentId) && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 bg-slate-950 border border-indigo-500/20 rounded-3xl p-6 shadow-2xl">
+          {/* Active Recon Stats Panel */}
+          {activeReconId ? (
+            <div className="space-y-4">
+              <div className="flex justify-between items-center">
+                <div className="flex items-center space-x-2">
+                  <span className="relative flex h-2.5 w-2.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-indigo-500"></span>
+                  </span>
+                  <span className="text-xs font-bold text-slate-300 font-mono">RECON PIPELINE ACTIVE</span>
+                </div>
+                <div className="text-xs text-slate-500 font-mono">Running time: <span className="text-indigo-400 font-bold">{reconElapsed}</span></div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-4 bg-slate-900/50 p-4 rounded-xl border border-slate-800 text-center">
+                <div>
+                  <div className="text-[10px] font-bold text-slate-500 uppercase">Current Tool</div>
+                  <div className="text-xs font-bold text-indigo-400 mt-1 font-mono truncate">{reconCurrentTool || 'Waiting...'}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] font-bold text-slate-500 uppercase">Completed Tools</div>
+                  <div className="text-xs font-bold text-slate-300 mt-1">{reconCompletedTools.length}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] font-bold text-slate-500 uppercase">Failed Tools</div>
+                  <div className="text-xs font-bold text-red-400 mt-1">{reconFailedTools.length}</div>
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <div className="flex justify-between text-[10px] font-bold text-slate-400 uppercase">
+                  <span>Pipeline Progress</span>
+                  <span>{reconProgress}%</span>
+                </div>
+                <div className="w-full bg-slate-900 rounded-full h-2.5 overflow-hidden border border-slate-800">
+                  <div className="bg-indigo-500 h-full transition-all duration-500" style={{ width: `${reconProgress}%` }}></div>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-center justify-center p-8 bg-slate-900/10 rounded-2xl border border-dashed border-slate-800 text-slate-500 text-xs italic">
+              No active recon session.
+            </div>
+          )}
+
+          {/* Active Exploit Agent Stats Panel */}
+          {activeAgentId ? (
+            <div className="space-y-4">
+              <div className="flex justify-between items-center">
+                <div className="flex items-center space-x-2">
+                  <span className="relative flex h-2.5 w-2.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+                  </span>
+                  <span className="text-xs font-bold text-slate-300 font-mono">EXPLOIT AGENT ACTIVE</span>
+                </div>
+                <div className="text-xs text-slate-500 font-mono">Running time: <span className="text-emerald-400 font-bold">{agentElapsed}</span></div>
+              </div>
+
+              <div className="bg-slate-900/50 p-4 rounded-xl border border-slate-800 space-y-2">
+                <div className="flex justify-between text-xs">
+                  <span className="text-slate-500 uppercase text-[10px] font-bold">Agent Current State</span>
+                  <span className="text-emerald-400 font-mono font-bold truncate max-w-[200px]">{agentCurrentTool || 'Reasoning / Evaluating'}</span>
+                </div>
+                <p className="text-[11px] text-slate-400 leading-relaxed font-mono truncate">
+                  {agentLogs.length > 0 ? agentLogs[agentLogs.length - 1] : 'Initializing autonomous exploit loop...'}
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-center justify-center p-8 bg-slate-900/10 rounded-2xl border border-dashed border-slate-800 text-slate-500 text-xs italic">
+              No active exploit agent session.
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Main Content Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+
+        {/* Left Columns */}
         <div className="lg:col-span-2 space-y-8">
           <div className="flex items-center space-x-4 mb-4">
             <Link href={`/investigations/${investigationId}/recon-sessions`} className="bg-slate-900 border border-slate-800 hover:bg-slate-800 px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-2">
@@ -166,6 +471,85 @@ export default function InvestigationDashboard() {
             </Link>
           </div>
 
+          {/* Severity Distribution Chart / Visualization bar */}
+          <section className="bg-slate-900 border border-slate-800 p-6 rounded-2xl space-y-4">
+             <h3 className="font-bold text-sm text-slate-200 uppercase tracking-wider font-heading">Severity Distribution Chart</h3>
+             <div className="w-full flex h-6 rounded-full overflow-hidden border border-slate-950">
+               {findings.length === 0 ? (
+                 <div className="w-full bg-slate-800 flex items-center justify-center text-slate-500 text-[10px] font-bold">NO FINDINGS YET</div>
+               ) : (
+                 <>
+                   {severityCounts.critical > 0 && <div className="bg-rose-600 transition-all" style={{ width: `${(severityCounts.critical / totalSeverities) * 100}%` }} title={`Critical: ${severityCounts.critical}`}></div>}
+                   {severityCounts.high > 0 && <div className="bg-amber-500 transition-all" style={{ width: `${(severityCounts.high / totalSeverities) * 100}%` }} title={`High: ${severityCounts.high}`}></div>}
+                   {severityCounts.medium > 0 && <div className="bg-yellow-400 transition-all" style={{ width: `${(severityCounts.medium / totalSeverities) * 100}%` }} title={`Medium: ${severityCounts.medium}`}></div>}
+                   {severityCounts.low > 0 && <div className="bg-emerald-500 transition-all" style={{ width: `${(severityCounts.low / totalSeverities) * 100}%` }} title={`Low: ${severityCounts.low}`}></div>}
+                   {severityCounts.info > 0 && <div className="bg-sky-400 transition-all" style={{ width: `${(severityCounts.info / totalSeverities) * 100}%` }} title={`Info: ${severityCounts.info}`}></div>}
+                 </>
+               )}
+             </div>
+             <div className="flex flex-wrap justify-center gap-4 text-xs font-mono">
+               <div className="flex items-center space-x-1.5"><span className="w-3 h-3 rounded bg-rose-600"></span><span className="text-slate-300">Critical ({severityCounts.critical})</span></div>
+               <div className="flex items-center space-x-1.5"><span className="w-3 h-3 rounded bg-amber-500"></span><span className="text-slate-300">High ({severityCounts.high})</span></div>
+               <div className="flex items-center space-x-1.5"><span className="w-3 h-3 rounded bg-yellow-400"></span><span className="text-slate-300">Medium ({severityCounts.medium})</span></div>
+               <div className="flex items-center space-x-1.5"><span className="w-3 h-3 rounded bg-emerald-500"></span><span className="text-slate-300">Low ({severityCounts.low})</span></div>
+               <div className="flex items-center space-x-1.5"><span className="w-3 h-3 rounded bg-sky-400"></span><span className="text-slate-300">Info ({severityCounts.info})</span></div>
+             </div>
+          </section>
+
+          {/* Neo4j Graph Statistics Cards */}
+          <section className="grid grid-cols-2 md:grid-cols-4 gap-6">
+             <div className="bg-slate-900/60 border border-slate-800/80 p-5 rounded-xl text-center space-y-1">
+                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block">Hosts</span>
+                <div className="text-3xl font-black text-slate-200">{graphStats.hosts}</div>
+             </div>
+             <div className="bg-slate-900/60 border border-slate-800/80 p-5 rounded-xl text-center space-y-1">
+                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block">Services</span>
+                <div className="text-3xl font-black text-indigo-400">{graphStats.services}</div>
+             </div>
+             <div className="bg-slate-900/60 border border-slate-800/80 p-5 rounded-xl text-center space-y-1">
+                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block">Endpoints</span>
+                <div className="text-3xl font-black text-sky-400">{graphStats.endpoints}</div>
+             </div>
+             <div className="bg-slate-900/60 border border-slate-800/80 p-5 rounded-xl text-center space-y-1">
+                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block">Findings</span>
+                <div className="text-3xl font-black text-emerald-400">{graphStats.findings}</div>
+             </div>
+          </section>
+
+          {/* Terminal / Live Logs Viewer */}
+          {(activeReconId || activeAgentId) && (
+            <section className="bg-slate-950 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
+               <div className="bg-slate-900 px-5 py-3 border-b border-slate-800 flex justify-between items-center">
+                  <h3 className="text-xs font-bold text-slate-300 uppercase tracking-widest font-heading flex items-center gap-1.5">
+                     <span className="w-2 h-2 bg-rose-500 rounded-full animate-ping"></span>
+                     Live Terminal Console Output
+                  </h3>
+                  <span className="text-[10px] text-slate-500 font-mono">Stream: {activeReconId ? 'RECON' : 'AGENT'}</span>
+               </div>
+               <div className="p-4 h-64 overflow-y-auto font-mono text-xs text-emerald-400 space-y-2 bg-slate-950">
+                  {activeReconId ? (
+                     reconLogs.length === 0 ? (
+                       <div className="text-slate-600 italic">Waiting for logs...</div>
+                     ) : (
+                       reconLogs.map((log, idx) => (
+                         <div key={idx} className="whitespace-pre-wrap">{log}</div>
+                       ))
+                     )
+                  ) : (
+                     agentLogs.length === 0 ? (
+                       <div className="text-slate-600 italic">Waiting for agent reasoning logs...</div>
+                     ) : (
+                       agentLogs.map((log, idx) => (
+                         <div key={idx} className="whitespace-pre-wrap">[{new Date().toLocaleTimeString()}] {log}</div>
+                       ))
+                     )
+                  )}
+                  <div ref={terminalEndRef}></div>
+               </div>
+            </section>
+          )}
+
+          {/* Active Findings list */}
           <section className="bg-gradient-to-br from-slate-900/60 to-slate-950/90 backdrop-blur-md border border-indigo-500/35 rounded-2xl overflow-hidden shadow-xl shadow-indigo-500/12">
             <div className="p-6 border-b border-slate-800 bg-slate-900/50 flex justify-between items-center">
               <h2 className="font-bold text-lg flex items-center font-heading">
@@ -193,15 +577,35 @@ export default function InvestigationDashboard() {
             </div>
           </section>
 
+          {/* Chronological Validation Timeline */}
+          <section className="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-4">
+             <h3 className="font-bold text-sm text-slate-200 uppercase tracking-wider font-heading">Validation Timeline</h3>
+             <div className="relative border-l border-slate-800 pl-4 space-y-6">
+                {findings.length === 0 ? (
+                  <p className="text-slate-500 italic text-xs">No validation events recorded yet.</p>
+                ) : (
+                  findings.map((f, idx) => (
+                    <div key={f.id} className="relative">
+                       <span className="absolute -left-[21px] top-1 bg-indigo-500 w-2.5 h-2.5 rounded-full border border-slate-900"></span>
+                       <div className="text-[10px] font-mono text-indigo-400">{new Date(f.discovered_at).toLocaleString()}</div>
+                       <div className="font-bold text-xs text-slate-200 mt-0.5">{f.vuln_type.toUpperCase()} Discovery</div>
+                       <p className="text-[11px] text-slate-400 mt-0.5 leading-relaxed">{f.description}</p>
+                    </div>
+                  ))
+                )}
+             </div>
+          </section>
+
+          {/* Actions grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
              <section className="bg-gradient-to-br from-slate-900/60 to-slate-950/90 backdrop-blur-md border border-indigo-500/35 rounded-2xl p-6 space-y-4 hover:border-indigo-500/60 transition-all shadow-lg shadow-indigo-500/12">
                 <div className="flex justify-between items-center">
                   <h3 className="font-bold text-slate-200 font-heading">Recon Cycle</h3>
-                  <div className={`h-2 w-2 rounded-full ${activeRecon ? 'bg-indigo-500 animate-pulse' : 'bg-slate-700'}`}></div>
+                  <div className={`h-2 w-2 rounded-full ${activeReconId ? 'bg-indigo-500 animate-pulse' : 'bg-slate-700'}`}></div>
                 </div>
                 <p className="text-slate-400 text-sm">Orchestrate automated discovery across the investigation scope.</p>
                 <div className="pt-2">
-                  {activeRecon ? (
+                  {activeReconId ? (
                     <div className="space-y-4">
                        <div className="bg-slate-950 rounded-xl p-4 flex justify-between items-center border border-slate-800">
                           <div className="flex flex-col">
@@ -227,13 +631,13 @@ export default function InvestigationDashboard() {
              <section className="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-4 hover:border-indigo-500/30 transition-colors shadow-lg">
                 <div className="flex justify-between items-center">
                   <h3 className="font-bold text-slate-200 font-heading">Exploit Agent</h3>
-                  <div className={`h-2 w-2 rounded-full ${activeAgent ? 'bg-indigo-500 animate-pulse' : 'bg-slate-700'}`}></div>
+                  <div className={`h-2 w-2 rounded-full ${activeAgentId ? 'bg-indigo-500 animate-pulse' : 'bg-slate-700'}`}></div>
                 </div>
                 <p className="text-slate-400 text-sm">Autonomous reasoning loop for live target validation.</p>
                 <div className="pt-2">
-                  {activeAgent ? (
+                  {activeAgentId ? (
                     <div className="space-y-3">
-                       <Link href={`/investigations/${investigationId}/agent/${activeAgent}`} className="block text-center bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 font-bold py-3 rounded-xl text-sm hover:bg-indigo-600/30 transition-all active:scale-95">
+                       <Link href={`/investigations/${investigationId}/agent/${activeAgentId}`} className="block text-center bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 font-bold py-3 rounded-xl text-sm hover:bg-indigo-600/30 transition-all active:scale-95">
                           Monitor Session
                        </Link>
                        <button
@@ -253,6 +657,7 @@ export default function InvestigationDashboard() {
           </div>
         </div>
 
+        {/* Right Sidebar Columns */}
         <div className="space-y-8">
            <section className="bg-gradient-to-br from-slate-900/60 to-slate-950/90 backdrop-blur-md border border-indigo-500/35 rounded-2xl p-6 overflow-hidden relative group shadow-lg shadow-indigo-500/12 hover:border-indigo-500/60 transition-all">
               <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
@@ -336,9 +741,9 @@ export default function InvestigationDashboard() {
                     <button onClick={() => setIsCancelReconModalOpen(false)} className="flex-1 bg-slate-800 text-white font-bold py-3 rounded-xl active:scale-95 transition-all">No, Keep Running</button>
                 <button
                   onClick={() => {
-                    if (!activeRecon) return;
-                    cancelRecon(activeRecon).then(() => {
-                      setActiveRecon(null);
+                    if (!activeReconId) return;
+                    cancelRecon(activeReconId).then(() => {
+                      setActiveReconId(null);
                       setIsCancelReconModalOpen(false);
                       toast.success('Recon session cancelled');
                     });
@@ -366,9 +771,9 @@ export default function InvestigationDashboard() {
                     <button onClick={() => setIsStopAgentModalOpen(false)} className="flex-1 bg-slate-800 text-white font-bold py-3 rounded-xl active:scale-95 transition-all">No, Keep Active</button>
                 <button
                   onClick={() => {
-                    if (!activeAgent) return;
-                    stopAgentSession(activeAgent).then(() => {
-                      setActiveAgent(null);
+                    if (!activeAgentId) return;
+                    stopAgentSession(activeAgentId).then(() => {
+                      setActiveAgentId(null);
                       setIsStopAgentModalOpen(false);
                       toast.success('Agent session stopped');
                     });
