@@ -17,12 +17,20 @@ class ReportFinding(BaseModel):
     business_impact: str
     suggested_remediation: str
     discovery_metadata: dict # tool, timestamp, program
+    risk_rating: Optional[dict] = None
+    timeline: Optional[list] = []
+    attack_graph: Optional[dict] = None
+    support_resources: Optional[list] = []
 
 class ProgramReport(BaseModel):
     investigation_name: str = Field(..., validation_alias=AliasChoices("investigation_name", "program_name"))
     generated_at: datetime
     findings: List[ReportFinding]
     summary_line: Optional[str] = None
+    executive_summary: Optional[dict] = None
+    timeline: Optional[list] = []
+    attack_graph: Optional[dict] = None
+    support_resources: Optional[list] = []
 
     @computed_field
     @property

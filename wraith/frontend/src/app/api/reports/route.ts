@@ -40,9 +40,16 @@ export async function GET(request: Request) {
     }
 
     const text = await response.text();
+    let contentType = 'text/markdown';
+    if (format === 'html') {
+      contentType = 'text/html';
+    } else if (format === 'json') {
+      contentType = 'application/json';
+    }
+
     return new Response(text, {
       headers: {
-        'Content-Type': 'text/markdown'
+        'Content-Type': contentType
       }
     });
   } catch (error: any) {
