@@ -4,4 +4,5 @@ export const config = {
   reconUrl: process.env.NEXT_PUBLIC_RECON_URL || 'http://localhost:8002',
   exploitRunnerUrl: process.env.NEXT_PUBLIC_EXPLOIT_RUNNER_URL || 'http://localhost:8004',
   reportingUrl: process.env.NEXT_PUBLIC_REPORTING_URL || 'http://localhost:8006',
+  assessmentUrl: process.env.NEXT_PUBLIC_ASSESSMENT_URL || 'http://localhost:8007',
 };

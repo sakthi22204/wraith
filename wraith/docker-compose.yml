@@ -184,6 +184,21 @@ services:
       graph_api:
         condition: service_healthy
 
+  # ASSESSMENT SERVICE
+  assessment_service:
+    build:
+      context: ./assessment_service
+    ports:
+      - "8007:8007"
+    environment:
+      - GRAPH_DB_URL=http://graph_api:8001/api/v1
+      - ADMIN_API_TOKEN=${ADMIN_API_TOKEN:-dev-token-change-me}
+    networks:
+      - wraith_internal
+    depends_on:
+      graph_api:
+        condition: service_healthy
+
   # PHASE 7/10 — FRONTEND CONTROL PANEL
   frontend:
     build:
@@ -194,6 +209,7 @@ services:
         - NEXT_PUBLIC_RECON_URL=http://localhost:8002
         - NEXT_PUBLIC_EXPLOIT_RUNNER_URL=http://localhost:8004
         - NEXT_PUBLIC_REPORTING_URL=http://localhost:8006
+        - NEXT_PUBLIC_ASSESSMENT_URL=http://localhost:8007
     environment:
       - ADMIN_API_TOKEN=${ADMIN_API_TOKEN:-dev-token-change-me}
       - GRAPH_DB_URL=http://graph_api:8001/api/v1
@@ -217,7 +233,6 @@ services:
     image: bkimminich/juice-shop
     networks:
       - wraith_internal
-    # No ports exposed to host for safety
 
 networks:
   wraith_internal:

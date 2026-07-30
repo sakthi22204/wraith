@@ -116,7 +116,10 @@ export default function InvestigationDashboard() {
           <h1 className="text-4xl font-bold tracking-tight font-heading">Investigation Dashboard</h1>
           <p className="text-slate-400 font-mono text-xs mt-1">{investigationId}</p>
         </div>
-        <div className="flex space-x-3">
+        <div className="flex space-x-3 items-center">
+           <Link href={`/investigations/${investigationId}/assessment`} className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-lg text-sm font-bold transition-all flex items-center active:scale-95 shadow-md">
+             View Assessment
+           </Link>
            <button onClick={() => downloadReport('markdown')} className="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-lg text-sm font-bold transition-all border border-slate-700 active:scale-95">
              MD Report
            </button>
