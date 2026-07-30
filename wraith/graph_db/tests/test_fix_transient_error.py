@@ -18,7 +18,7 @@ async def test_list_programs_retry_on_transient_error():
             return self.data[key]
 
     mock_records = [
-        MockRecord({"p": {"id": "p1", "name": "n1", "platform": "h1", "scope_domains": [], "created_at": "2023-01-01T00:00:00"}})
+        MockRecord({"i": {"id": "p1", "name": "n1", "target": "example.com", "status": "active", "created_at": "2023-01-01T00:00:00"}})
     ]
 
     # First call raises TransientError, second succeeds
