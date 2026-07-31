@@ -79,7 +79,7 @@ export default function AssessmentPage() {
   }
 
   const findingsSummary = assessment?.findings_summary || {};
-  const totalFindings = Object.values(findingsSummary).reduce((a: any, b: any) => a + b, 0);
+  const totalFindings = Object.values(findingsSummary).reduce((a: any, b: any) => a + b, 0) as number;
 
   return (
     <div className="space-y-8 max-w-5xl mx-auto py-8 px-4 sm:px-6 lg:px-8">
