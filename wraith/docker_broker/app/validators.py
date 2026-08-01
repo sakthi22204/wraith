@@ -11,13 +11,19 @@ def validate_container_spec(spec: dict):
     if command and image in ALLOWED_COMMANDS_PER_IMAGE:
         base_cmd = command[0]
         allowed_cmds = ALLOWED_COMMANDS_PER_IMAGE[image]
-        # Strict validation: command[0] must be in the allowlist via exact match.
-        # This handles images where the tool is the entrypoint (so command[0] is an arg)
-        # or where the tool is called explicitly.
-        if base_cmd not in allowed_cmds:
-             # If it's not the first arg, maybe it's the executable itself?
-             # For security, we only allow what's explicitly in the list as the first element.
-             raise HTTPException(status_code=403, detail=f"Command {command} is not allowed for image {image}.")
+        if allowed_cmds is None:
+            # Special case for bare domain tools like gau/waybackurls
+            # Rule: only exactly 1 argument is allowed, and it cannot start with a flag (-) or contain shell metacharacters.
+            if len(command) != 1:
+                raise HTTPException(status_code=403, detail="Multiple arguments are forbidden for this tool.")
+            if base_cmd.startswith("-"):
+                raise HTTPException(status_code=403, detail="Flags/options are forbidden for this tool.")
+            import re
+            if not re.match(r'^[a-zA-Z0-9.-]+$', base_cmd):
+                raise HTTPException(status_code=403, detail=f"Invalid positional argument/domain: {base_cmd}")
+        else:
+            if base_cmd not in allowed_cmds:
+                raise HTTPException(status_code=403, detail=f"Command {command} is not allowed for image {image}.")
 
     # Forbidden features
     if spec.get("privileged"):
