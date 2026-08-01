@@ -234,6 +234,32 @@ services:
     networks:
       - wraith_internal
 
+  # Local Custom Recon Tool Images
+  kiterunner_image:
+    build:
+      context: ./recon_orchestrator/tool_images/kiterunner
+    image: kiterunner:latest
+
+  linkfinder_image:
+    build:
+      context: ./recon_orchestrator/tool_images/linkfinder
+    image: linkfinder:latest
+
+  secretfinder_image:
+    build:
+      context: ./recon_orchestrator/tool_images/secretfinder
+    image: secretfinder:latest
+
+  gittools_image:
+    build:
+      context: ./recon_orchestrator/tool_images/gittools
+    image: gittools:latest
+
+  ffuf_image:
+    build:
+      context: ./recon_orchestrator/tool_images/ffuf
+    image: ffuf/ffuf:latest
+
 networks:
   wraith_internal:
     driver: bridge

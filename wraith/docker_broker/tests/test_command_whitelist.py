@@ -38,6 +38,95 @@ def test_httpx_list_still_allowed():
     }
     validate_container_spec(spec_httpx_list) # Should not raise
 
+def test_new_recon_tool_commands_whitelisted():
+    # dnsx
+    validate_container_spec({
+        "image": "projectdiscovery/dnsx:latest",
+        "command": ["-d", "example.com"]
+    })
+    # nmap
+    validate_container_spec({
+        "image": "instrumentisto/nmap:latest",
+        "command": ["-T4", "example.com"]
+    })
+    # tlsx
+    validate_container_spec({
+        "image": "projectdiscovery/tlsx:latest",
+        "command": ["-u", "example.com"]
+    })
+    # ffuf
+    validate_container_spec({
+        "image": "ffuf/ffuf:latest",
+        "command": ["-u", "http://example.com/FUZZ", "-w", "/wordlists/common.txt", "-json"]
+    })
+    # kiterunner
+    validate_container_spec({
+        "image": "kiterunner:latest",
+        "command": ["kb", "scan", "http://example.com/api", "-o", "json"]
+    })
+    # linkfinder
+    validate_container_spec({
+        "image": "linkfinder:latest",
+        "command": ["-i", "http://example.com", "-o", "cli"]
+    })
+    # secretfinder
+    validate_container_spec({
+        "image": "secretfinder:latest",
+        "command": ["-e", "http://example.com", "-o", "cli"]
+    })
+    # trufflehog
+    validate_container_spec({
+        "image": "trufflesecurity/trufflehog:latest",
+        "command": ["git", "http://example.com"]
+    })
+    # gittools
+    validate_container_spec({
+        "image": "gittools:latest",
+        "command": ["-u", "http://example.com"]
+    })
+    # wpscan
+    validate_container_spec({
+        "image": "wpscanteam/wpscan:latest",
+        "command": ["--url", "http://example.com"]
+    })
+    # cloud_enum
+    validate_container_spec({
+        "image": "initstring/cloud_enum:latest",
+        "command": ["-d", "example.com"]
+    })
+
+def test_bare_domain_tools_validation():
+    # gau and waybackurls safe domains accepted
+    for img in ["lc/gau:latest", "tomnomnom/waybackurls:latest"]:
+        validate_container_spec({
+            "image": img,
+            "command": ["example.com"]
+        })
+
+        # Rejected flag smuggling
+        with pytest.raises(HTTPException) as exc:
+            validate_container_spec({
+                "image": img,
+                "command": ["-h"]
+            })
+        assert exc.value.status_code == 403
+
+        # Rejected multiple arguments
+        with pytest.raises(HTTPException) as exc:
+            validate_container_spec({
+                "image": img,
+                "command": ["example.com", "extra_arg"]
+            })
+        assert exc.value.status_code == 403
+
+        # Rejected shell metacharacters
+        with pytest.raises(HTTPException) as exc:
+            validate_container_spec({
+                "image": img,
+                "command": ["example.com; rm -rf /"]
+            })
+        assert exc.value.status_code == 403
+
 def test_invalid_command_rejected():
     spec_invalid = {
         "image": "projectdiscovery/httpx:latest",

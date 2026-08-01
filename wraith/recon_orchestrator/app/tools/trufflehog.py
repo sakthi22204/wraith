@@ -5,7 +5,7 @@ from ..schemas import ToolResults, EndpointResult
 
 class TrufflehogTool(ReconTool):
     def __init__(self):
-        super().__init__(name="trufflehog", image="trufflehog:latest")
+        super().__init__(name="trufflehog", image="trufflesecurity/trufflehog:latest")
 
     def get_command(self, domain: str) -> List[str]:
         return ["git", f"http://{domain}"]
