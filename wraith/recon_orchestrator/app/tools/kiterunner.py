@@ -8,7 +8,7 @@ class KiterunnerTool(ReconTool):
         super().__init__(name="kiterunner", image="kiterunner:latest")
 
     def get_command(self, domain: str) -> List[str]:
-        return ["kb", "scan", f"http://{domain}/api", "-o", "json"]
+        return ["kb", "scan", f"http://{domain}/api", "-w", "/wordlists/routes.kite", "-o", "json"]
 
     def parse_output(self, output: str) -> ToolResults:
         results = ToolResults()

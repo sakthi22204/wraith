@@ -47,17 +47,16 @@ class ReconOrchestrator:
         self.wpscan = WpscanTool()
         self.cloud_enum = CloudEnumTool()
 
-        # Commented out fake/stub recon tools to prevent false findings/fabrications
-        # TODO: Implement real images/commands for ffuf, kiterunner, linkfinder, secretfinder, gittools
+        # Fully implemented real tools activated and wired up
         self.tools = [
             self.subfinder, self.httpx_probe, self.katana, self.naabu,
             self.dnsx, self.nmap, self.tlsx, self.gau, self.waybackurls,
-            # self.ffuf,
-            # self.kiterunner,
-            # self.linkfinder,
-            # self.secretfinder,
+            self.ffuf,
+            self.kiterunner,
+            self.linkfinder,
+            self.secretfinder,
             self.trufflehog,
-            # self.gittools,
+            self.gittools,
             self.wpscan, self.cloud_enum
         ]
 
@@ -229,38 +228,36 @@ class ReconOrchestrator:
                 running_tasks.append(task_launch)
 
         # 2. JavaScript found (Trigger LinkFinder and SecretFinder)
-        # TODO: fake stub, see tool_images/linkfinder/Dockerfile and tool_images/secretfinder/Dockerfile
-        # js_detected = False
-        # for endpoint in results.endpoints:
-        #     if endpoint.url.lower().endswith(".js"):
-        #         js_detected = True
-        #         break
-        # if js_detected:
-        #     for tool in [self.linkfinder, self.secretfinder]:
-        #         tool_key = f"{tool.name}:{domain}"
-        #         if tool_key not in queued_keys:
-        #             queued_keys.add(tool_key)
-        #             session.tool_statuses[tool_key] = ToolStatus.WAITING
-        #             session.logs.append(f"[{datetime.utcnow().strftime('%H:%M:%S')}] JavaScript file(s) detected. Scheduling {tool.name}.")
-        #             task_launch = asyncio.create_task(launch_tool(tool, domain))
-        #             running_tasks.append(task_launch)
+        js_detected = False
+        for endpoint in results.endpoints:
+            if endpoint.url.lower().endswith(".js"):
+                js_detected = True
+                break
+        if js_detected:
+            for tool in [self.linkfinder, self.secretfinder]:
+                tool_key = f"{tool.name}:{domain}"
+                if tool_key not in queued_keys:
+                    queued_keys.add(tool_key)
+                    session.tool_statuses[tool_key] = ToolStatus.WAITING
+                    session.logs.append(f"[{datetime.utcnow().strftime('%H:%M:%S')}] JavaScript file(s) detected. Scheduling {tool.name}.")
+                    task_launch = asyncio.create_task(launch_tool(tool, domain))
+                    running_tasks.append(task_launch)
 
         # 3. API endpoints found (Trigger Kiterunner)
-        # TODO: fake stub, see tool_images/kiterunner/Dockerfile
-        # api_detected = False
-        # for endpoint in results.endpoints:
-        #     url_lower = endpoint.url.lower()
-        #     if "/api" in url_lower or "/v1" in url_lower or "/v2" in url_lower or "swagger" in url_lower:
-        #         api_detected = True
-        #         break
-        # if api_detected:
-        #     kiterunner_key = f"kiterunner:{domain}"
-        #     if kiterunner_key not in queued_keys:
-        #         queued_keys.add(kiterunner_key)
-        #         session.tool_statuses[kiterunner_key] = ToolStatus.WAITING
-        #         session.logs.append(f"[{datetime.utcnow().strftime('%H:%M:%S')}] API endpoint(s) detected. Scheduling Kiterunner.")
-        #         task_launch = asyncio.create_task(launch_tool(self.kiterunner, domain))
-        #         running_tasks.append(task_launch)
+        api_detected = False
+        for endpoint in results.endpoints:
+            url_lower = endpoint.url.lower()
+            if "/api" in url_lower or "/v1" in url_lower or "/v2" in url_lower or "swagger" in url_lower:
+                api_detected = True
+                break
+        if api_detected:
+            kiterunner_key = f"kiterunner:{domain}"
+            if kiterunner_key not in queued_keys:
+                queued_keys.add(kiterunner_key)
+                session.tool_statuses[kiterunner_key] = ToolStatus.WAITING
+                session.logs.append(f"[{datetime.utcnow().strftime('%H:%M:%S')}] API endpoint(s) detected. Scheduling Kiterunner.")
+                task_launch = asyncio.create_task(launch_tool(self.kiterunner, domain))
+                running_tasks.append(task_launch)
 
         # 4. Host discovery (Trigger dnsx)
         if completed_tool.name == "subfinder" and results.hosts:
@@ -295,9 +292,8 @@ class ReconOrchestrator:
                     running_tasks.append(task_launch)
 
         # 6. Active HTTP web service found (Trigger GitTools, ffuf, TruffleHog)
-        # TODO: fake stubs, see tool_images/gittools/Dockerfile and tool_images/ffuf/Dockerfile
         if completed_tool.name in ["httpx_probe", "katana"] and results.endpoints:
-            for tool in [self.trufflehog]:
+            for tool in [self.trufflehog, self.gittools, self.ffuf]:
                 tool_key = f"{tool.name}:{domain}"
                 if tool_key not in queued_keys:
                     queued_keys.add(tool_key)

@@ -1,4 +1,6 @@
 FROM python:3.11-slim
-WORKDIR /app
-RUN echo '#!/usr/bin/env python3\nimport sys\nprint("/api/v1/users")\nprint("/admin/config")\n' > /usr/local/bin/linkfinder && chmod +x /usr/local/bin/linkfinder
-ENTRYPOINT ["linkfinder"]
+RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
+RUN git clone https://github.com/GerbenJavado/LinkFinder.git /opt/linkfinder
+WORKDIR /opt/linkfinder
+RUN pip install --no-cache-dir -r requirements.txt && python3 setup.py install
+ENTRYPOINT ["python3", "linkfinder.py"]

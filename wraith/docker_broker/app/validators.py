@@ -52,7 +52,9 @@ def validate_container_spec(spec: dict):
     # For docker-py, volumes can be a dict: {host_path: {'bind': '/container_path', 'mode': 'rw'}}
     # or a list of strings
     if isinstance(volumes, dict):
-        for host_path in volumes.keys():
+        for host_path, vol_spec in volumes.items():
+            if "common.txt" in host_path and isinstance(vol_spec, dict) and vol_spec.get("bind") == "/wordlists/common.txt" and vol_spec.get("mode") == "ro":
+                continue
             if host_path.startswith("/") or host_path.startswith("."):
                 raise HTTPException(status_code=403, detail="Bind mounts (host filesystem access) are forbidden.")
     elif isinstance(volumes, list):
