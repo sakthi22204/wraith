@@ -1,0 +1,10 @@
+admin
+api
+index.html
+robots.txt
+.git
+wp-admin
+wp-content
+wp-includes
+login
+config

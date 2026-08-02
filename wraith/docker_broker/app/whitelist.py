@@ -33,7 +33,7 @@ ALLOWED_COMMANDS_PER_IMAGE = {
     "ffuf/ffuf:latest": ["-u"],
     "kiterunner:latest": ["kb"],
     "linkfinder:latest": ["-i"],
-    "secretfinder:latest": ["-e"],
+    "secretfinder:latest": ["-i"],
     "trufflesecurity/trufflehog:latest": ["git"],
     "gittools:latest": ["-u"],
     "wpscanteam/wpscan:latest": ["--url"],

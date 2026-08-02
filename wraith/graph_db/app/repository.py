@@ -122,11 +122,12 @@ class Neo4jRepository:
         name = investigation.name.strip() if investigation.name else f"Investigation of {investigation.target}"
         query = """
         MERGE (i:Investigation {id: $id})
-        ON CREATE SET i.name = $name, i.target = $target, i.scope_domains = $scope_domains, i.created_at = $created_at
+        ON CREATE SET i.name = $name, i.target = $target, i.scope_domains = $scope_domains, i.created_at = $created_at, i.platform = $platform
         RETURN i
         """
         result = await self.session.run(query, id=i_id, name=name, target=investigation.target,
-                                      scope_domains=[investigation.target], created_at=now)
+                                      scope_domains=[investigation.target], created_at=now,
+                                      platform=investigation.platform or "automatic")
         record = await result.single()
         return Investigation(**record["i"])
 
@@ -151,22 +152,22 @@ class Neo4jRepository:
     # Legacy Program support
     async def create_program(self, program: ProgramCreate) -> Program:
         target = program.scope_domains[0] if program.scope_domains else "unknown"
-        investigation_create = InvestigationCreate(name=program.name, target=target)
+        investigation_create = InvestigationCreate(name=program.name, target=target, platform=program.platform)
         inv = await self.create_investigation(investigation_create)
         # Use APOC or MERGE to keep them in-sync as a fallback
-        return Program(id=inv.id, name=inv.name, platform="automatic", scope_domains=inv.scope_domains, created_at=inv.created_at)
+        return Program(id=inv.id, name=inv.name, platform=inv.platform, scope_domains=inv.scope_domains, created_at=inv.created_at)
 
     @retry_on_transient_error()
     async def get_program(self, program_id: str) -> Optional[Program]:
         inv = await self.get_investigation(program_id)
         if not inv:
             return None
-        return Program(id=inv.id, name=inv.name, platform="automatic", scope_domains=inv.scope_domains, created_at=inv.created_at)
+        return Program(id=inv.id, name=inv.name, platform=inv.platform, scope_domains=inv.scope_domains, created_at=inv.created_at)
 
     @retry_on_transient_error()
     async def list_programs(self) -> List[Program]:
         invs = await self.list_investigations()
-        return [Program(id=i.id, name=i.name, platform="automatic", scope_domains=i.scope_domains, created_at=i.created_at) for i in invs]
+        return [Program(id=i.id, name=i.name, platform=i.platform, scope_domains=i.scope_domains, created_at=i.created_at) for i in invs]
 
     async def upsert_host(self, host: HostCreate, investigation_id: str) -> Host:
         h_id = generate_id(host.value)

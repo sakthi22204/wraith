@@ -8,7 +8,7 @@ class SecretfinderTool(ReconTool):
         super().__init__(name="secretfinder", image="secretfinder:latest")
 
     def get_command(self, domain: str) -> List[str]:
-        return ["-e", f"http://{domain}", "-o", "cli"]
+        return ["-i", f"http://{domain}", "-e", "-o", "cli"]
 
     def parse_output(self, output: str) -> ToolResults:
         results = ToolResults()

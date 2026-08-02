@@ -41,6 +41,7 @@ class Program(ProgramBase):
 class InvestigationBase(BaseModel):
     name: str
     target: str
+    platform: Optional[str] = "automatic"
 
 class InvestigationCreate(InvestigationBase):
     pass
@@ -54,11 +55,6 @@ class Investigation(InvestigationBase):
     @property
     def program_id(self) -> str:
         return self.id
-
-    @computed_field
-    @property
-    def platform(self) -> str:
-        return "automatic"
 
 class HostBase(BaseModel):
     value: str

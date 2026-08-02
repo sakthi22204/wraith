@@ -11,6 +11,11 @@ class GittoolsTool(ReconTool):
 
     def parse_output(self, output: str) -> ToolResults:
         results = ToolResults()
-        if "found" in output.lower() or "exposed" in output.lower() or "git" in output.lower():
+        out_lower = output.lower()
+        if "no exposed" in out_lower or "not found" in out_lower or "no git" in out_lower:
+            return results
+        if "found" in out_lower or "exposed" in out_lower or "git" in out_lower:
+            if "usage:" in out_lower or "error" in out_lower:
+                return results
             results.endpoints.append(EndpointResult(host="unknown", url="/.git/", method="GET", source_tool=self.name))
         return results
