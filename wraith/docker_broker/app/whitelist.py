@@ -8,7 +8,9 @@ ALLOWED_IMAGES = [
     "instrumentisto/nmap:latest",
     "projectdiscovery/tlsx:latest",
     "lc/gau:latest",
+    "gau:latest",
     "tomnomnom/waybackurls:latest",
+    "waybackurls:latest",
     "ffuf/ffuf:latest",
     "kiterunner:latest",
     "linkfinder:latest",
@@ -16,7 +18,8 @@ ALLOWED_IMAGES = [
     "trufflesecurity/trufflehog:latest",
     "gittools:latest",
     "wpscanteam/wpscan:latest",
-    "initstring/cloud_enum:latest"
+    "initstring/cloud_enum:latest",
+    "cloud_enum:latest"
 ]
 
 ALLOWED_COMMANDS_PER_IMAGE = {
@@ -29,15 +32,18 @@ ALLOWED_COMMANDS_PER_IMAGE = {
     "instrumentisto/nmap:latest": ["-T4"],
     "projectdiscovery/tlsx:latest": ["-u"],
     "lc/gau:latest": None,
+    "gau:latest": None,
     "tomnomnom/waybackurls:latest": None,
+    "waybackurls:latest": None,
     "ffuf/ffuf:latest": ["-u"],
     "kiterunner:latest": ["kb"],
     "linkfinder:latest": ["-i"],
-    "secretfinder:latest": ["-i"],
+    "secretfinder:latest": ["-i", "-e"],
     "trufflesecurity/trufflehog:latest": ["git"],
     "gittools:latest": ["-u"],
     "wpscanteam/wpscan:latest": ["--url"],
-    "initstring/cloud_enum:latest": ["-d"]
+    "initstring/cloud_enum:latest": ["-d"],
+    "cloud_enum:latest": ["-d"]
 }
 
 ALLOWED_OPERATIONS = {

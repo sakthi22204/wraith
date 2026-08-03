@@ -260,6 +260,21 @@ services:
       context: ./recon_orchestrator/tool_images/ffuf
     image: ffuf/ffuf:latest
 
+  gau_image:
+    build:
+      context: ./recon_orchestrator/tool_images/gau
+    image: gau:latest
+
+  waybackurls_image:
+    build:
+      context: ./recon_orchestrator/tool_images/waybackurls
+    image: waybackurls:latest
+
+  cloud_enum_image:
+    build:
+      context: ./recon_orchestrator/tool_images/cloud_enum
+    image: cloud_enum:latest
+
 networks:
   wraith_internal:
     driver: bridge
