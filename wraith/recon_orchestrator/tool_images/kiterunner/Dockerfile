@@ -24,4 +24,4 @@ COPY --from=builder /kiterunner/dist/kr /usr/local/bin/kb
 # Copy pre-downloaded wordlist
 COPY --from=builder /wordlists/routes-small.kite /wordlists/routes-small.kite
 
-ENTRYPOINT []
+CMD ["kb"]
