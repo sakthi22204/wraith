@@ -255,6 +255,11 @@ services:
       context: ./recon_orchestrator/tool_images/gittools
     image: gittools:latest
 
+  ffuf_image:
+    build:
+      context: ./recon_orchestrator/tool_images/ffuf
+    image: ffuf/ffuf:latest
+
 networks:
   wraith_internal:
     driver: bridge

@@ -81,7 +81,7 @@ async def test_ffuf_mock_flow():
 
     # Positive case
     positive_output = '{"url": "http://localhost/api"}\n{"url": "http://localhost/admin"}'
-    with patch("app.tools.ffuf.docker_spawner.spawn_container", new_callable=AsyncMock) as mock_spawn:
+    with patch("app.tools.base.docker_spawner.spawn_container", new_callable=AsyncMock) as mock_spawn:
         mock_spawn.return_value = positive_output
         res = await tool.run("positive-target.com")
         assert len(res.endpoints) == 2
@@ -90,7 +90,7 @@ async def test_ffuf_mock_flow():
 
     # Negative case
     negative_output = ""
-    with patch("app.tools.ffuf.docker_spawner.spawn_container", new_callable=AsyncMock) as mock_spawn:
+    with patch("app.tools.base.docker_spawner.spawn_container", new_callable=AsyncMock) as mock_spawn:
         mock_spawn.return_value = negative_output
         res = await tool.run("negative-target.com")
         assert len(res.endpoints) == 0
@@ -217,12 +217,6 @@ class TestRealDockerIntegration:
         container = client.containers.run(
             image=tool.image,
             command=["-u", f"http://{host_ip}:{port}/FUZZ", "-w", "/wordlists/common.txt", "-json"],
-            volumes={
-                "/app/wraith/recon_orchestrator/wordlists/common.txt": {
-                    "bind": "/wordlists/common.txt",
-                    "mode": "ro"
-                }
-            },
             detach=False,
             remove=True
         )
@@ -238,7 +232,7 @@ class TestRealDockerIntegration:
 
         container = client.containers.run(
             image=tool.image,
-            command=["kb", "scan", f"http://{host_ip}:{port}/api", "-w", "/wordlists/routes.kite", "-o", "json"],
+            command=["kb", "scan", f"http://{host_ip}:{port}/api", "-w", "/wordlists/routes-small.kite", "-o", "json"],
             detach=False,
             remove=True
         )
