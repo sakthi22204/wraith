@@ -1,0 +1,25 @@
+# Curated subset of SecLists' Discovery/Web-Content/common.txt (MIT License, Daniel Miessler)
+admin
+api
+index.html
+robots.txt
+.git
+wp-admin
+wp-content
+wp-includes
+login
+config
+css
+images
+js
+assets
+static
+v1
+v2
+swagger
+health
+test
+dev
+prod
+backup
+db
