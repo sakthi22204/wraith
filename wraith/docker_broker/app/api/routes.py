@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Query, Depends
+from fastapi import APIRouter, HTTPException, Depends
 from typing import Optional, Dict
 from ..proxy import docker_proxy
 from ..whitelist import ALLOWED_IMAGES
@@ -21,38 +21,36 @@ def verify_ownership(container_id: str, caller_id: str):
 
 @router.post("/containers")
 async def create_container(spec: dict, caller_id: str = Depends(require_broker_token)):
-    # We use caller_id from token or spec.caller if we want more granularity
-    identity = spec.get("caller") or caller_id
+    # Ownership must be derived solely from the verified bearer token.
+    # Never trust a client-supplied "caller" field for authorization/audit
+    # purposes -- accepting it here previously allowed one broker client
+    # to register ownership under a different client's identity.
+    identity = caller_id
     spec.pop("caller", None)
     container_id = await docker_proxy.create_container(spec)
     container_ownership[container_id] = identity
     return {"container_id": container_id}
 
 @router.post("/containers/{container_id}/wait")
-async def wait_container(container_id: str, caller: Optional[str] = Query(None), timeout: Optional[int] = None, caller_id: str = Depends(require_broker_token)):
-    identity = caller or caller_id
-    verify_ownership(container_id, identity)
+async def wait_container(container_id: str, timeout: Optional[int] = None, caller_id: str = Depends(require_broker_token)):
+    verify_ownership(container_id, caller_id)
     return await docker_proxy.wait_container(container_id, timeout)
 
 @router.get("/containers/{container_id}/logs")
-async def get_logs(container_id: str, caller: Optional[str] = Query(None), caller_id: str = Depends(require_broker_token)):
-    identity = caller or caller_id
-    verify_ownership(container_id, identity)
+async def get_logs(container_id: str, caller_id: str = Depends(require_broker_token)):
+    verify_ownership(container_id, caller_id)
     return {"logs": await docker_proxy.get_logs(container_id)}
 
 @router.post("/containers/{container_id}/stop")
-async def stop_container(container_id: str, caller: Optional[str] = Query(None), caller_id: str = Depends(require_broker_token)):
-    identity = caller or caller_id
-    verify_ownership(container_id, identity)
+async def stop_container(container_id: str, caller_id: str = Depends(require_broker_token)):
+    verify_ownership(container_id, caller_id)
     await docker_proxy.stop_container(container_id)
     return {"status": "stopped"}
 
 @router.delete("/containers/{container_id}")
-async def remove_container(container_id: str, caller: Optional[str] = Query(None), caller_id: str = Depends(require_broker_token)):
-    identity = caller or caller_id
-    verify_ownership(container_id, identity)
+async def remove_container(container_id: str, caller_id: str = Depends(require_broker_token)):
+    verify_ownership(container_id, caller_id)
     await docker_proxy.remove_container(container_id)
-    # Cleanup ownership
     if container_id in container_ownership:
         del container_ownership[container_id]
     return {"status": "removed"}

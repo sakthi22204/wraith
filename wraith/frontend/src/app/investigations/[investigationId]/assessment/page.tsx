@@ -42,13 +42,11 @@ export default function AssessmentPage() {
   const handleGlobalApprove = async () => {
     setIsApproving(true);
     try {
-      const adminToken = 'dev-token-change-me'; // default token
-      const url = `${config.exploitRunnerUrl}/api/v1/exploit/investigations/${investigationId}/approve`;
+      const url = `/api/exploit/investigations/${investigationId}/approve`;
       const resp = await fetch(url, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${adminToken}`
+          'Content-Type': 'application/json'
         }
       });
       const data = await resp.json();

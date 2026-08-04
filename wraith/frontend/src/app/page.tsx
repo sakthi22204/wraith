@@ -46,8 +46,12 @@ export default function HomePage() {
   const handleDelete = async () => {
     if (!investigationToDelete) return;
     try {
-      await deleteInvestigation(investigationToDelete.id);
-      toast.success('Investigation deleted successfully');
+      const result = await deleteInvestigation(investigationToDelete.id);
+      if (result?.warning) {
+        toast.warning(`Investigation deleted, but: ${result.warning}`);
+      } else {
+        toast.success('Investigation deleted successfully');
+      }
       setIsDeleteModalOpen(false);
       setInvestigationToDelete(null);
       loadInvestigations();
