@@ -7,7 +7,7 @@ class AuditClient:
 
     async def get_audit_entries(self, investigation_id: str, target: str = None):
         async with httpx.AsyncClient() as client:
-            response = await client.get(f"{self.base_url}/api/v1/audit/{investigation_id}")
+            response = await client.get(f"{self.base_url}/audit/{investigation_id}")
             response.raise_for_status()
             entries = response.json()
             if target:

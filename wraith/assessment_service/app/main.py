@@ -32,6 +32,8 @@ async def perform_assessment(investigation_id: str):
             if resp.status_code != 200:
                 raise HTTPException(status_code=resp.status_code, detail=f"Failed to fetch graph from Graph DB: {resp.text}")
             graph_data = resp.json()
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to communicate with Graph DB: {e}")
 
