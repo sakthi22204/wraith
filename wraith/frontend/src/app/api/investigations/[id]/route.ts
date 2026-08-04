@@ -22,7 +22,10 @@ export async function DELETE(
       return NextResponse.json({ error }, { status: response.status });
     }
 
-    return NextResponse.json({ status: 'success' });
+    const data = await response.json();
+    return NextResponse.json(
+      data.warning ? { status: 'success', warning: data.warning } : { status: 'success' }
+    );
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
