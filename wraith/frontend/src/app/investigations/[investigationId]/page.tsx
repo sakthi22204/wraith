@@ -286,8 +286,12 @@ export default function InvestigationDashboard() {
 
   const handleDelete = async () => {
     try {
-      await deleteInvestigation(investigationId as string);
-      toast.success('Investigation deleted');
+      const result = await deleteInvestigation(investigationId as string);
+      if (result?.warning) {
+        toast.warning(`Investigation deleted, but: ${result.warning}`);
+      } else {
+        toast.success('Investigation deleted');
+      }
       router.push('/');
     } catch (e) {
       toast.error('Failed to delete investigation');
