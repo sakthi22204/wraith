@@ -5,10 +5,11 @@ from ..schemas import ToolResults, HostResult
 
 class CloudEnumTool(ReconTool):
     def __init__(self):
-        super().__init__(name="cloud_enum", image="initstring/cloud_enum:latest")
+        super().__init__(name="cloud_enum", image="cloud_enum:latest")
 
     def get_command(self, domain: str) -> List[str]:
-        return ["-d", domain]
+        keyword = domain.split(".")[0]
+        return ["-k", keyword]
 
     def parse_output(self, output: str) -> ToolResults:
         results = ToolResults()

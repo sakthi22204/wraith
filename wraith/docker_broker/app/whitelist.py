@@ -18,7 +18,6 @@ ALLOWED_IMAGES = [
     "trufflesecurity/trufflehog:latest",
     "gittools:latest",
     "wpscanteam/wpscan:latest",
-    "initstring/cloud_enum:latest",
     "cloud_enum:latest"
 ]
 
@@ -42,8 +41,7 @@ ALLOWED_COMMANDS_PER_IMAGE = {
     "trufflesecurity/trufflehog:latest": ["git"],
     "gittools:latest": ["-u"],
     "wpscanteam/wpscan:latest": ["--url"],
-    "initstring/cloud_enum:latest": ["-d"],
-    "cloud_enum:latest": ["-d"]
+    "cloud_enum:latest": ["-k"]
 }
 
 ALLOWED_OPERATIONS = {

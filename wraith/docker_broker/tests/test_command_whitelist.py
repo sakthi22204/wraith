@@ -91,8 +91,8 @@ def test_new_recon_tool_commands_whitelisted():
     })
     # cloud_enum
     validate_container_spec({
-        "image": "initstring/cloud_enum:latest",
-        "command": ["-d", "example.com"]
+        "image": "cloud_enum:latest",
+        "command": ["-k", "example"]
     })
 
 def test_bare_domain_tools_validation():
