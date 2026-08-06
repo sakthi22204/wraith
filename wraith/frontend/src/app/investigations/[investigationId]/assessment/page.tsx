@@ -11,9 +11,7 @@ export default function AssessmentPage() {
   const { investigationId } = useParams();
   const router = useRouter();
   const [assessment, setAssessment] = useState<any>(null);
-  const [approvalStatus, setApprovalStatus] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [isApproving, setIsApproving] = useState(false);
 
   const loadData = async () => {
     try {
@@ -22,12 +20,6 @@ export default function AssessmentPage() {
       const assessResp = await fetch(assessUrl);
       const assessData = await assessResp.json();
       setAssessment(assessData);
-
-      // 2. Fetch global approval status
-      const approveUrl = `${config.exploitRunnerUrl}/api/v1/exploit/investigations/${investigationId}/approval-status`;
-      const approveResp = await fetch(approveUrl);
-      const approveData = await approveResp.json();
-      setApprovalStatus(approveData);
     } catch (e) {
       console.error('Failed to load assessment data:', e);
     } finally {
@@ -38,30 +30,6 @@ export default function AssessmentPage() {
   useEffect(() => {
     loadData();
   }, [investigationId]);
-
-  const handleGlobalApprove = async () => {
-    setIsApproving(true);
-    try {
-      const url = `/api/exploit/investigations/${investigationId}/approve`;
-      const resp = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        }
-      });
-      const data = await resp.json();
-      if (resp.ok) {
-        toast.success('Investigation globally approved! Automated exploit pipeline unlocked.');
-        setApprovalStatus({ approved: true, approved_by: 'Global Approval' });
-      } else {
-        toast.error(`Approval failed: ${data.detail || 'Unknown error'}`);
-      }
-    } catch (e) {
-      toast.error('Network error during global approval.');
-    } finally {
-      setIsApproving(false);
-    }
-  };
 
   if (isLoading) {
     return (
@@ -86,33 +54,6 @@ export default function AssessmentPage() {
         <Link href={`/investigations/${investigationId}`} className="text-indigo-400 text-sm font-bold hover:underline mb-2 inline-block font-sans">← Back to Dashboard</Link>
         <h1 className="text-4xl font-bold tracking-tight">Investigation Security Assessment</h1>
         <p className="text-slate-400 text-sm mt-1">Automatic vulnerability assessment, CVE mapping, target prioritization, and risk scores.</p>
-      </div>
-
-      {/* Global Approval Banner */}
-      <div className={`p-6 rounded-2xl border ${
-        approvalStatus?.approved
-          ? 'bg-emerald-950/20 border-emerald-500/30'
-          : 'bg-amber-950/20 border-amber-500/30 animate-pulse'
-      } flex flex-col md:flex-row justify-between items-center gap-4`}>
-        <div className="space-y-1">
-          <h2 className={`font-bold text-lg ${approvalStatus?.approved ? 'text-emerald-400' : 'text-amber-400'}`}>
-            {approvalStatus?.approved ? '✓ Investigation Globally Approved' : '⚠️ Exploit Investigation Approval Required'}
-          </h2>
-          <p className="text-xs text-slate-400 max-w-xl">
-            {approvalStatus?.approved
-              ? `Globally approved by ${approvalStatus.approved_by || 'Administrator'}. The AI agent can automatically execute live validations and modules without individual prompts.`
-              : 'Approve the exploit validation phase for this investigation. This single approval applies globally; the agent will run validation plans automatically.'}
-          </p>
-        </div>
-        {!approvalStatus?.approved && (
-          <button
-            onClick={handleGlobalApprove}
-            disabled={isApproving}
-            className="bg-amber-500 hover:bg-amber-400 text-black px-6 py-3 rounded-xl font-bold transition-all whitespace-nowrap active:scale-95 shadow-lg shadow-amber-500/10"
-          >
-            {isApproving ? 'Approving...' : 'Approve Exploit Investigation'}
-          </button>
-        )}
       </div>
 
       {/* Metrics Row */}
