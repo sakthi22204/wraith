@@ -7,6 +7,7 @@ class ToolStatus(str, Enum):
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
+    SKIPPED = "skipped"
     TIMED_OUT = "timed_out"
     FAILED = "failed"
     RETRYING = "retrying"

@@ -8,6 +8,13 @@ from app.tools.nmap import NmapTool
 from app.tools.ffuf import FfufTool
 from app.tools.kiterunner import KiterunnerTool
 from app.tools.wpscan import WpscanTool
+from app.tools.httpx_probe import HttpxProbeTool
+from app.tools.katana import KatanaTool
+
+
+def test_web_tools_add_http_scheme_for_host_port_targets():
+    assert HttpxProbeTool().get_command("juice_shop:3000")[1] == "http://juice_shop:3000"
+    assert KatanaTool().get_command("juice_shop:3000")[1] == "http://juice_shop:3000"
 from app.tools.linkfinder import LinkfinderTool
 from app.tools.secretfinder import SecretfinderTool
 from app.tools.trufflehog import TrufflehogTool

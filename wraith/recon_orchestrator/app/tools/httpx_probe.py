@@ -1,6 +1,6 @@
 import json
 from typing import List
-from .base import ReconTool
+from .base import ReconTool, target_url
 from ..schemas import ToolResults, EndpointResult
 
 class HttpxProbeTool(ReconTool):
@@ -10,7 +10,7 @@ class HttpxProbeTool(ReconTool):
 
     def get_command(self, domain: str) -> List[str]:
         # -u domain, -json output, -silent
-        return ["-u", domain, "-json", "-silent"]
+        return ["-u", target_url(domain), "-json", "-silent"]
 
     def parse_output(self, output: str) -> ToolResults:
         results = ToolResults()
@@ -24,7 +24,7 @@ class HttpxProbeTool(ReconTool):
                 method = data.get("method", "GET")
                 if url:
                     results.endpoints.append(EndpointResult(
-                        host=host or domain, # Fallback if host missing
+                        host=host or url,
                         url=url,
                         method=method,
                         source_tool=self.name

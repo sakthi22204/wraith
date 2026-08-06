@@ -5,6 +5,7 @@ class Settings(BaseSettings):
     DOCKER_BROKER_URL: str = "http://localhost:8005/api/v1"
     RECON_BROKER_TOKEN: str = "dev-recon-token"
     ADMIN_API_TOKEN: str = "dev-token-change-me"
+    RECON_DOCKER_NETWORK: str = "wraith_wraith_internal"
     TOOL_TIMEOUT: int = 300
 
     # Resource limits for tool containers

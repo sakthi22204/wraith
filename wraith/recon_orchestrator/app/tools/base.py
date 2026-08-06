@@ -3,6 +3,11 @@ from typing import List
 from ..schemas import ToolResults, HostResult, PortResult, EndpointResult
 from ..docker_spawner import docker_spawner
 
+
+def target_url(target: str) -> str:
+    """Convert a normalized host or host:port target into an HTTP URL."""
+    return target if "://" in target else f"http://{target}"
+
 class ReconTool(ABC):
     def __init__(self, name: str, image: str):
         self.name = name

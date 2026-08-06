@@ -5,6 +5,7 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
     RECON_BROKER_TOKEN: str = "dev-recon-token"
     EXPLOIT_RUNNER_BROKER_TOKEN: str = "dev-exploit-token"
+    RECON_DOCKER_NETWORK: str = "wraith_wraith_internal"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

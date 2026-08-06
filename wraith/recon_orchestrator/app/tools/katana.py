@@ -1,6 +1,6 @@
 import json
 from typing import List
-from .base import ReconTool
+from .base import ReconTool, target_url
 from ..schemas import ToolResults, EndpointResult
 
 class KatanaTool(ReconTool):
@@ -9,7 +9,7 @@ class KatanaTool(ReconTool):
 
     def get_command(self, domain: str) -> List[str]:
         # -u domain, -json output
-        return ["-u", domain, "-json", "-silent"]
+        return ["-u", target_url(domain), "-json", "-silent"]
 
     def parse_output(self, output: str) -> ToolResults:
         results = ToolResults()

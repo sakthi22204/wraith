@@ -1,4 +1,5 @@
 import asyncio
+import ipaddress
 import uuid
 from datetime import datetime
 from typing import Dict, List
@@ -63,6 +64,16 @@ class ReconOrchestrator:
         self.semaphore = asyncio.Semaphore(10)  # Concurrency limit
         self.running_tasks: Dict[str, List[asyncio.Task]] = {}
 
+    @staticmethod
+    def _is_local_target(domain: str) -> bool:
+        host = domain.rsplit(":", 1)[0]
+        if host == "localhost" or "_" in host or host.endswith(".local"):
+            return True
+        try:
+            return ipaddress.ip_address(host).is_private
+        except ValueError:
+            return False
+
     async def run_session(self, session_id: str, investigation_id: str, domains: List[str]):
         session = self.sessions[session_id]
         session.status = "running"
@@ -101,15 +112,30 @@ class ReconOrchestrator:
                 tool_key = f"{tool.name}:{domain}"
                 session.tool_statuses[tool_key] = ToolStatus.WAITING
 
-        # Mark base tools as queued
+        # Archive and cloud-asset tools cannot produce meaningful data for a
+        # Docker-local service and can wait on external providers.
         for domain in domains:
-            for tool in base_tools:
+            domain_base_tools = base_tools
+            if self._is_local_target(domain):
+                skipped_tools = {self.gau, self.waybackurls, self.cloud_enum}
+                domain_base_tools = [tool for tool in base_tools if tool not in skipped_tools]
+                for tool in skipped_tools:
+                    tool_key = f"{tool.name}:{domain}"
+                    session.tool_statuses[tool_key] = ToolStatus.SKIPPED
+                    session.logs.append(
+                        f"[{datetime.utcnow().strftime('%H:%M:%S')}] Skipping {tool.name} for Docker-local target {domain}."
+                    )
+            for tool in domain_base_tools:
                 tool_key = f"{tool.name}:{domain}"
                 queued_keys.add(tool_key)
 
         # Launch base tools and track wrapper tasks
         for domain in domains:
-            for tool in base_tools:
+            domain_base_tools = [
+                tool for tool in base_tools
+                if session.tool_statuses[f"{tool.name}:{domain}"] != ToolStatus.SKIPPED
+            ]
+            for tool in domain_base_tools:
                 t = asyncio.create_task(self._run_tool(session_id, investigation_id, domain, tool))
 
                 async def wait_and_trigger(task, t_tool, d_domain):
@@ -360,7 +386,7 @@ class ReconOrchestrator:
 
             # Update overall progress
             completed = sum(1 for s in session.tool_statuses.values()
-                           if s in [ToolStatus.COMPLETED, ToolStatus.TIMED_OUT, ToolStatus.FAILED])
+                           if s in [ToolStatus.COMPLETED, ToolStatus.SKIPPED, ToolStatus.TIMED_OUT, ToolStatus.FAILED])
             session.progress = (completed / len(session.tool_statuses)) * 100.0
 
             return success

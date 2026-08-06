@@ -1,5 +1,19 @@
 from fastapi import HTTPException
 from .whitelist import ALLOWED_IMAGES, ALLOWED_COMMANDS_PER_IMAGE
+from .config import settings
+
+
+
+def _is_safe_host_or_host_port(value: str) -> bool:
+    """Allow a DNS name or Docker service name with an optional TCP port."""
+    import re
+
+    host, separator, port = value.partition(":")
+    if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9._-]*", host):
+        return False
+    if not separator:
+        return True
+    return port.isdigit() and 1 <= int(port) <= 65535
 
 def validate_container_spec(spec: dict):
     image = spec.get("image")
@@ -18,8 +32,7 @@ def validate_container_spec(spec: dict):
                 raise HTTPException(status_code=403, detail="Multiple arguments are forbidden for this tool.")
             if base_cmd.startswith("-"):
                 raise HTTPException(status_code=403, detail="Flags/options are forbidden for this tool.")
-            import re
-            if not re.match(r'^[a-zA-Z0-9.-]+$', base_cmd):
+            if not _is_safe_host_or_host_port(base_cmd):
                 raise HTTPException(status_code=403, detail=f"Invalid positional argument/domain: {base_cmd}")
         else:
             if base_cmd not in allowed_cmds:
@@ -31,6 +44,10 @@ def validate_container_spec(spec: dict):
 
     if spec.get("network_mode") == "host":
         raise HTTPException(status_code=403, detail="Host network mode is forbidden.")
+
+    network = spec.get("network")
+    if network and network != settings.RECON_DOCKER_NETWORK:
+        raise HTTPException(status_code=403, detail="Only the internal recon network is allowed.")
 
     if spec.get("pid_mode") == "host":
         raise HTTPException(status_code=403, detail="Host PID mode is forbidden.")

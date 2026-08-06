@@ -127,6 +127,14 @@ def test_bare_domain_tools_validation():
             })
         assert exc.value.status_code == 403
 
+
+def test_bare_domain_tools_allow_safe_docker_service_with_port():
+    for img in ["lc/gau:latest", "tomnomnom/waybackurls:latest"]:
+        validate_container_spec({
+            "image": img,
+            "command": ["juice_shop:3000"]
+        })
+
 def test_invalid_command_rejected():
     spec_invalid = {
         "image": "projectdiscovery/httpx:latest",
@@ -134,4 +142,20 @@ def test_invalid_command_rejected():
     }
     with pytest.raises(HTTPException) as exc:
         validate_container_spec(spec_invalid)
+    assert exc.value.status_code == 403
+
+
+def test_only_internal_recon_network_is_allowed():
+    validate_container_spec({
+        "image": "projectdiscovery/httpx:latest",
+        "command": ["-u", "http://juice_shop:3000"],
+        "network": "wraith_wraith_internal",
+    })
+
+    with pytest.raises(HTTPException) as exc:
+        validate_container_spec({
+            "image": "projectdiscovery/httpx:latest",
+            "command": ["-u", "http://juice_shop:3000"],
+            "network": "other_network",
+        })
     assert exc.value.status_code == 403

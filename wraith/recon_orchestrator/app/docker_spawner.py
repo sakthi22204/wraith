@@ -18,6 +18,7 @@ class DockerSpawner:
                 "command": cmd,
                 "mem_limit": settings.MEM_LIMIT,
                 "cpu_quota": settings.CPU_QUOTA,
+                "network": settings.RECON_DOCKER_NETWORK,
                 "detach": True,
                 "remove": False
                 # "caller" removed as it is now derived from the bearer token

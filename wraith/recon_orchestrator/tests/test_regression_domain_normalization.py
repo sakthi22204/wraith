@@ -40,3 +40,29 @@ async def test_regression_domain_normalization():
         # Check all are completed (i.e., transitioned from PENDING -> RUNNING -> COMPLETED)
         for key, status in session.tool_statuses.items():
             assert status == ToolStatus.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_local_target_skips_external_archive_tools():
+    orchestrator = ReconOrchestrator()
+    mock_graph = AsyncMock()
+    mock_graph.get_program_scope.return_value = ["juice_shop:3000"]
+    mock_graph.create_scan_session.return_value = {"id": "scan-1"}
+    mock_graph.list_recon_sessions.return_value = []
+    mock_graph.update_recon_session.return_value = None
+
+    for tool in orchestrator.tools:
+        tool.run = AsyncMock(return_value=ToolResults())
+
+    with patch("app.orchestrator.graph_client", mock_graph):
+        result = await orchestrator.start_session(
+            ReconRequest(program_id="local", domains=["juice_shop:3000"])
+        )
+        session_id = result["session_id"]
+        while orchestrator.sessions[session_id].status in ["accepted", "running"]:
+            await asyncio.sleep(0.05)
+
+    statuses = orchestrator.sessions[session_id].tool_statuses
+    assert statuses["gau:juice_shop:3000"] == ToolStatus.SKIPPED
+    assert statuses["waybackurls:juice_shop:3000"] == ToolStatus.SKIPPED
+    assert statuses["cloud_enum:juice_shop:3000"] == ToolStatus.SKIPPED
