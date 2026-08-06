@@ -31,7 +31,6 @@ export default function InvestigationDashboard() {
 
   // Assessment & Approvals States
   const [riskScore, setRiskScore] = useState<number | null>(null);
-  const [approvalStatus, setApprovalStatus] = useState<any>(null);
 
   // Recon Session Real-time States
   const [activeReconId, setActiveReconId] = useState<string | null>(null);
@@ -147,18 +146,7 @@ export default function InvestigationDashboard() {
         console.error('Failed to poll assessment score', e);
       }
 
-      // 4. Fetch Global Exploit Approval status
-      try {
-        const approveResp = await fetch(`${config.exploitRunnerUrl}/api/v1/exploit/investigations/${investigation_id}/approval-status`);
-        if (approveResp.ok) {
-          const approveData = await approveResp.json();
-          setApprovalStatus(approveData);
-        }
-      } catch (e) {
-        console.error('Failed to poll approval status', e);
-      }
-
-      // 5. Poll active Recon Session details
+      // 4. Poll active Recon Session details
       try {
         const sessions = await listReconSessions(investigation_id);
         const activeRecon = sessions.find(s => s.status === 'running' || s.status === 'accepted');
@@ -360,9 +348,9 @@ export default function InvestigationDashboard() {
             <div className="text-lg font-bold text-rose-500">{riskScore ? `${riskScore.toFixed(1)} / 10` : 'N/A'}</div>
          </div>
          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-1">
-            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block">Exploit Approval Status</span>
-            <div className={`text-lg font-bold ${approvalStatus?.approved ? 'text-emerald-400' : 'text-amber-500'}`}>
-               {approvalStatus?.approved ? '✓ Approved' : '⚠️ Pending'}
+            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block">Exploitation Status</span>
+            <div className="text-lg font-bold text-emerald-400">
+               ✓ Active
             </div>
          </div>
          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-1">
