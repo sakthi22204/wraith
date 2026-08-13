@@ -16,8 +16,16 @@ from .schema import (
     ReconSession, AgentSession, Investigation, InvestigationCreate
 )
 
-def generate_id(*args) -> str:
-    seed = ":".join(str(arg) for arg in args)
+def generate_id(*args, investigation_id: str = None) -> str:
+    """
+    Generate deterministic ID from arguments.
+    If investigation_id is provided, it's prepended to ensure cross-investigation isolation.
+    """
+    parts = []
+    if investigation_id:
+        parts.append(investigation_id)
+    parts.extend(str(arg) for arg in args)
+    seed = ":".join(parts)
     return hashlib.sha256(seed.encode()).hexdigest()
 
 def retry_on_transient_error(max_retries=3, initial_delay=0.05):
@@ -170,7 +178,7 @@ class Neo4jRepository:
         return [Program(id=i.id, name=i.name, platform=i.platform, scope_domains=i.scope_domains, created_at=i.created_at) for i in invs]
 
     async def upsert_host(self, host: HostCreate, investigation_id: str) -> Host:
-        h_id = generate_id(host.value)
+        h_id = generate_id(host.value, investigation_id=investigation_id)
         now = datetime.utcnow().isoformat()
         query = """
         MATCH (i:Investigation {id: $investigation_id})
@@ -190,12 +198,12 @@ class Neo4jRepository:
         query = """
         MATCH (h:Host {id: $host_id})
         MERGE (p:Port {id: $p_id})
-        SET p.number = $number, p.protocol = $protocol, p.state = $state
+        SET p.number = $number, p.protocol = $protocol, p.state = $state, p.source_tool = $source_tool
         MERGE (h)-[:HAS_PORT]->(p)
         RETURN p
         """
         result = await self.session.run(query, host_id=host_id, p_id=p_id, number=port.number,
-                                      protocol=port.protocol, state=port.state)
+                                      protocol=port.protocol, state=port.state, source_tool=port.source_tool)
         record = await result.single()
         return Port(**record["p"])
 
@@ -219,12 +227,13 @@ class Neo4jRepository:
         query = """
         MATCH (h:Host {id: $host_id})
         MERGE (e:Endpoint {id: $e_id})
-        ON CREATE SET e.url = $url, e.method = $method, e.first_seen = $now
+        ON CREATE SET e.url = $url, e.method = $method, e.first_seen = $now, e.source_tool = $source_tool
+        ON MATCH SET e.source_tool = $source_tool
         MERGE (h)-[:HAS_ENDPOINT]->(e)
         RETURN e
         """
         result = await self.session.run(query, host_id=host_id, e_id=e_id, url=endpoint.url,
-                                      method=endpoint.method, now=now)
+                                      method=endpoint.method, now=now, source_tool=endpoint.source_tool)
         record = await result.single()
         return Endpoint(**record["e"])
 

@@ -318,7 +318,7 @@ class ReconOrchestrator:
                     running_tasks.append(task_launch)
 
         # 6. Active HTTP web service found (Trigger GitTools, ffuf, TruffleHog)
-        if completed_tool.name in ["httpx_probe", "katana"] and results.endpoints:
+        if completed_tool.name in ["httpx", "katana"] and results.endpoints:
             for tool in [self.trufflehog, self.gittools, self.ffuf]:
                 tool_key = f"{tool.name}:{domain}"
                 if tool_key not in queued_keys:

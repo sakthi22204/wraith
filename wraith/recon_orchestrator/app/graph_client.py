@@ -87,7 +87,8 @@ class GraphClient:
             json={
                 "number": port.number,
                 "protocol": port.protocol,
-                "state": port.state
+                "state": port.state,
+                "source_tool": port.source_tool
             }
         )
         response.raise_for_status()
@@ -98,7 +99,8 @@ class GraphClient:
             f"/hosts/{host_id}/endpoints",
             json={
                 "url": endpoint.url,
-                "method": endpoint.method
+                "method": endpoint.method,
+                "source_tool": endpoint.source_tool
             }
         )
         response.raise_for_status()

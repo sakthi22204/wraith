@@ -8,8 +8,8 @@ class KatanaTool(ReconTool):
         super().__init__(name="katana", image="projectdiscovery/katana:latest")
 
     def get_command(self, domain: str) -> List[str]:
-        # -u domain, -json output
-        return ["-u", target_url(domain), "-json", "-silent"]
+        # -u domain, -j for JSON output (katana uses -j not -json)
+        return ["-u", target_url(domain), "-j", "-silent"]
 
     def parse_output(self, output: str) -> ToolResults:
         results = ToolResults()
@@ -19,7 +19,8 @@ class KatanaTool(ReconTool):
             try:
                 data = json.loads(line)
                 request = data.get("request", {})
-                url = request.get("url")
+                # katana outputs "endpoint" not "url"
+                url = request.get("endpoint") or request.get("url")
                 method = request.get("method", "GET")
                 # host can be extracted from URL if needed
                 if url:

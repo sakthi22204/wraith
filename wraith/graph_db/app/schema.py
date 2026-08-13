@@ -71,6 +71,7 @@ class PortBase(BaseModel):
     number: int
     protocol: str # tcp/udp
     state: str
+    source_tool: Optional[str] = None
 
 class PortCreate(PortBase):
     pass
@@ -92,6 +93,7 @@ class Service(ServiceBase):
 class EndpointBase(BaseModel):
     url: str
     method: str
+    source_tool: Optional[str] = None
 
 class EndpointCreate(EndpointBase):
     pass
