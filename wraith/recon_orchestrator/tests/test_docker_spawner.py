@@ -81,5 +81,35 @@ async def test_spawn_container_cleanup_logging_on_http_error():
             output = await spawner.spawn_container("test-image", ["cmd"])
 
             assert output == "test-output" # should still return output (best effort cleanup)
-            mock_warn.assert_called_once()
-            assert "Failed to cleanup container" in mock_warn.call_args[0][0]
+            # Cleanup is retried 3 times, then a final warning reports the orphan.
+            assert mock_warn.call_count == 4
+            assert any("Failed to cleanup container" in args[0][0] for args in mock_warn.call_args_list)
+            assert mock_warn.call_args_list[-1][0][0] == "Container 'test-id' was NOT cleaned up after 3 attempts."
+
+
+@pytest.mark.asyncio
+async def test_spawn_container_cleanup_retries_then_succeeds():
+    from app.docker_spawner import DockerSpawner
+    import httpx
+
+    spawner = DockerSpawner(broker_url="http://broker")
+    dummy_request = Request("POST", "http://broker")
+
+    with patch("httpx.AsyncClient") as mock_client:
+        mock_ac = mock_client.return_value.__aenter__.return_value
+
+        mock_ac.post.side_effect = [
+            Response(200, json={"container_id": "test-id"}, request=dummy_request),
+            Response(200, json={"StatusCode": 0}, request=dummy_request)
+        ]
+        mock_ac.get.return_value = Response(200, json={"logs": "test-output"}, request=dummy_request)
+
+        # Cleanup fails twice then succeeds
+        mock_ac.delete.side_effect = [httpx.HTTPError("first"), httpx.HTTPError("second"), Response(200, request=dummy_request)]
+
+        with patch("app.docker_spawner.logger.warning") as mock_warn:
+            output = await spawner.spawn_container("test-image", ["cmd"])
+
+            assert output == "test-output"
+            assert mock_ac.delete.call_count == 3
+            assert mock_warn.call_count == 2

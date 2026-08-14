@@ -53,3 +53,45 @@ def test_allowed_spec():
     }
     # Should not raise
     validate_container_spec(spec)
+
+def test_extra_hosts_allowed():
+    spec = {
+        "image": "projectdiscovery/naabu:latest",
+        "command": ["-host", "juice_shop:3000", "-json", "-silent"],
+        "extra_hosts": {"juice_shop": "172.18.0.3"}
+    }
+    # Should not raise
+    validate_container_spec(spec)
+
+def test_extra_hosts_rejects_bad_hostname():
+    spec = {
+        "image": "projectdiscovery/naabu:latest",
+        "command": ["-host", "juice_shop:3000"],
+        "extra_hosts": {"juice_shop;rm -rf /": "172.18.0.3"}
+    }
+    with pytest.raises(HTTPException) as exc:
+        validate_container_spec(spec)
+    assert exc.value.status_code == 403
+    assert "extra_hosts" in exc.value.detail
+
+def test_extra_hosts_rejects_bad_ip():
+    spec = {
+        "image": "projectdiscovery/naabu:latest",
+        "command": ["-host", "juice_shop:3000"],
+        "extra_hosts": {"juice_shop": "localhost"}
+    }
+    with pytest.raises(HTTPException) as exc:
+        validate_container_spec(spec)
+    assert exc.value.status_code == 403
+    assert "Invalid IP" in exc.value.detail
+
+def test_extra_hosts_rejects_non_dict():
+    spec = {
+        "image": "projectdiscovery/naabu:latest",
+        "command": ["-host", "juice_shop:3000"],
+        "extra_hosts": ["juice_shop=172.18.0.3"]
+    }
+    with pytest.raises(HTTPException) as exc:
+        validate_container_spec(spec)
+    assert exc.value.status_code == 403
+    assert "extra_hosts" in exc.value.detail

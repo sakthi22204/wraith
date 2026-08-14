@@ -17,7 +17,7 @@ services:
     healthcheck:
       test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "password", "RETURN 1"]
       interval: 10s
-      timeout: 5s
+      timeout: 20s
       retries: 5
 
   graph_api:

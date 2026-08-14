@@ -1,3 +1,5 @@
+import re
+import ipaddress
 from fastapi import HTTPException
 from .whitelist import ALLOWED_IMAGES, ALLOWED_COMMANDS_PER_IMAGE
 from .config import settings
@@ -6,8 +8,6 @@ from .config import settings
 
 def _is_safe_host_or_host_port(value: str) -> bool:
     """Allow a DNS name or Docker service name with an optional TCP port."""
-    import re
-
     host, separator, port = value.partition(":")
     if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9._-]*", host):
         return False
@@ -78,3 +78,20 @@ def validate_container_spec(spec: dict):
         for volume in volumes:
             if ":" in volume and (volume.startswith("/") or volume.startswith(".")):
                  raise HTTPException(status_code=403, detail="Bind mounts are forbidden.")
+
+    # extra_hosts: mapping of hostname -> IP injected into the tool container's /etc/hosts.
+    # Allows Go-based tools (e.g. naabu) to resolve Docker-internal single-label service
+    # names that the embedded DNS resolver does not answer for pure-Go lookups.
+    extra_hosts = spec.get("extra_hosts")
+    if extra_hosts:
+        if not isinstance(extra_hosts, dict):
+            raise HTTPException(status_code=403, detail="extra_hosts must be a mapping of hostname to IP.")
+        for host, ip in extra_hosts.items():
+            if not isinstance(host, str) or not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9._-]*", host):
+                raise HTTPException(status_code=403, detail=f"Invalid hostname in extra_hosts: {host}")
+            if not isinstance(ip, str):
+                raise HTTPException(status_code=403, detail=f"Invalid IP in extra_hosts for {host}: {ip}")
+            try:
+                ipaddress.ip_address(ip)
+            except ValueError:
+                raise HTTPException(status_code=403, detail=f"Invalid IP in extra_hosts for {host}: {ip}")

@@ -10,7 +10,7 @@ class DockerSpawner:
     def __init__(self, broker_url: str = settings.DOCKER_BROKER_URL):
         self.broker_url = broker_url
 
-    async def spawn_container(self, image: str, cmd: List[str], timeout: int = settings.TOOL_TIMEOUT, volumes: Optional[dict] = None) -> str:
+    async def spawn_container(self, image: str, cmd: List[str], timeout: int = settings.TOOL_TIMEOUT, volumes: Optional[dict] = None, extra_hosts: Optional[dict] = None) -> str:
         headers = {"Authorization": f"Bearer {settings.RECON_BROKER_TOKEN}"}
         async with httpx.AsyncClient(timeout=timeout + 30, headers=headers) as client:
             spec = {
@@ -25,6 +25,8 @@ class DockerSpawner:
             }
             if volumes:
                 spec["volumes"] = volumes
+            if extra_hosts:
+                spec["extra_hosts"] = extra_hosts
 
             # 1. Create and run
             create_res = await client.post(f"{self.broker_url}/containers", json=spec)
@@ -46,12 +48,20 @@ class DockerSpawner:
                 log_res.raise_for_status()
                 return log_res.json()["logs"]
             finally:
-                # 4. Cleanup
-                try:
-                    await client.delete(
-                        f"{self.broker_url}/containers/{container_id}"
-                    )
-                except httpx.HTTPError as e:
-                    logger.warning(f"Failed to cleanup container '{container_id}' on broker: {e}")
+                # 4. Cleanup (retry transient failures so a timed-out tool never leaves an orphan container)
+                last_error = None
+                for attempt in range(1, 4):
+                    try:
+                        await client.delete(
+                            f"{self.broker_url}/containers/{container_id}"
+                        )
+                        last_error = None
+                        break
+                    except httpx.HTTPError as e:
+                        last_error = e
+                        logger.warning(f"Failed to cleanup container '{container_id}' on broker (attempt {attempt}/3): {e}")
+                        await asyncio.sleep(1)
+                if last_error:
+                    logger.warning(f"Container '{container_id}' was NOT cleaned up after 3 attempts.")
 
 docker_spawner = DockerSpawner()
