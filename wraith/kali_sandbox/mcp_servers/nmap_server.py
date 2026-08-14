@@ -22,7 +22,7 @@ class NmapServer(BaseSecurityServer):
             self.verify_caller("run_nmap_scan", caller)
             self.validate_target(target)
 
-            cmd = ["nmap", scan_type.value, "-p", ports, target]
+            cmd = ["nmap", scan_type.value if hasattr(scan_type, "value") else scan_type, "-p", ports, target]
             res = await self.run_tool(cmd)
 
             if not res["success"]:
