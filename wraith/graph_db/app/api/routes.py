@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 import os
+import json
 from typing import List, Optional
 from pydantic import BaseModel
 from ..schema import (
@@ -218,16 +219,36 @@ async def get_recon_session(session_id: str, repo: Neo4jRepository = Depends(get
     return session
 
 # Agent Session Management
+def _parse_list_param(value: Optional[str]) -> Optional[List[str]]:
+    """Parse a JSON-encoded list query param (sent by the exploit agent client).
+
+    FastAPI 0.141+ no longer collects repeated scalar query params into List[str]
+    (e.g. ?reasoning_log=a&reasoning_log=b arrives as None). The client therefore
+    sends the list JSON-encoded in a single param. Fall back to comma-separated or
+    single-value for robustness.
+    """
+    if value is None:
+        return None
+    try:
+        parsed = json.loads(value)
+        if isinstance(parsed, list):
+            return [str(item) for item in parsed]
+    except (ValueError, TypeError):
+        pass
+    if "," in value:
+        return [item.strip() for item in value.split(",") if item.strip()]
+    return [value]
+
 @router.post("/agent-sessions", response_model=AgentSession)
-async def create_agent_session(session_id: str, status: str, investigation_id: Optional[str] = None, program_id: Optional[str] = None, iteration_count: int = 0, tools_used: List[str] = [], reasoning_log: List[str] = [], repo: Neo4jRepository = Depends(get_repo)):
+async def create_agent_session(session_id: str, status: str, investigation_id: Optional[str] = None, program_id: Optional[str] = None, iteration_count: int = 0, tools_used: Optional[str] = None, reasoning_log: Optional[str] = None, repo: Neo4jRepository = Depends(get_repo)):
     inv_id = investigation_id or program_id
     if not inv_id:
         raise HTTPException(status_code=400, detail="investigation_id or program_id is required")
-    return await repo.create_agent_session(session_id, inv_id, status, iteration_count, tools_used, reasoning_log)
+    return await repo.create_agent_session(session_id, inv_id, status, iteration_count, _parse_list_param(tools_used) or [], _parse_list_param(reasoning_log) or [])
 
 @router.patch("/agent-sessions/{session_id}", response_model=AgentSession)
-async def update_agent_session(session_id: str, status: str, iteration_count: Optional[int] = None, tools_used: Optional[List[str]] = None, final_report: Optional[str] = None, reasoning_log: Optional[List[str]] = None, repo: Neo4jRepository = Depends(get_repo)):
-    return await repo.update_agent_session_status(session_id, status, iteration_count, tools_used, final_report, reasoning_log)
+async def update_agent_session(session_id: str, status: str, iteration_count: Optional[int] = None, tools_used: Optional[str] = None, final_report: Optional[str] = None, reasoning_log: Optional[str] = None, repo: Neo4jRepository = Depends(get_repo)):
+    return await repo.update_agent_session_status(session_id, status, iteration_count, _parse_list_param(tools_used), final_report, _parse_list_param(reasoning_log))
 
 @router.get("/agent-sessions", response_model=List[AgentSession])
 async def list_agent_sessions(investigation_id: Optional[str] = None, program_id: Optional[str] = None, repo: Neo4jRepository = Depends(get_repo)):

@@ -26,7 +26,9 @@ class NucleiServer(BaseSecurityServer):
             # Use -json-export to get structured output
             cmd = ["nuclei", "-u", target, "-jsonl", "-silent"]
             if category != NucleiTemplateCategory.DEFAULT:
-                cmd.extend(["-t", category.value])
+                # Nuclei v3+ templates are organized under protocol dirs (e.g. http/cves).
+                category = category.value if hasattr(category, "value") else category
+                cmd.extend(["-t", f"http/{category}"])
 
             res = await self.run_tool(cmd, timeout=600)
 
