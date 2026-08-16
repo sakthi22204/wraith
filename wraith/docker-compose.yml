@@ -235,6 +235,10 @@ services:
     image: bkimminich/juice-shop
     networks:
       - wraith_internal
+    environment:
+      - NODE_OPTIONS=--max-old-space-size=5120
+    mem_limit: 6g
+    restart: on-failure
 
   # Local Custom Recon Tool Images
   kiterunner_image:

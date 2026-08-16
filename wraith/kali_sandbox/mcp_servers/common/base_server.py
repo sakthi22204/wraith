@@ -18,6 +18,10 @@ class BaseSecurityServer:
         if not self.target_regex.fullmatch(target):
             raise ValueError(f"Invalid target: {target}. Potential command injection detected.")
 
+    def split_host_port(self, target: str) -> tuple[str, Optional[str]]:
+        host, sep, port = target.partition(":")
+        return host, (port if sep else None)
+
     def verify_caller(self, tool_name: str, caller: Optional[str]):
         # All tools now require verification to be safe,
         # but only dangerous ones are restricted to a specific list.
