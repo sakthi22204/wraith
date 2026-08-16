@@ -19,6 +19,9 @@ class DockerProxy:
         # Spec can contain: image, command, mem_limit, cpu_quota, detach, remove, etc.
         try:
             validate_container_spec(spec)
+            # Capture the image before run() pops it so the audit entry
+            # always records the actual target (not "unknown").
+            audit_image = spec.get("image")
 
             def run():
                 # Extract image and command to call correctly
@@ -44,10 +47,10 @@ class DockerProxy:
                 return container.id
 
             container_id = await asyncio.to_thread(run)
-            audit_log("CREATE", spec.get("image", "unknown"), True)
+            audit_log("CREATE", audit_image, True)
             return container_id
         except Exception as e:
-            audit_log("CREATE", spec.get("image", "unknown"), False, str(e))
+            audit_log("CREATE", spec.get("image", "unknown"), False, getattr(e, "detail", str(e)))
             raise e
 
     async def wait_container(self, container_id: str, timeout: Optional[int] = None):
