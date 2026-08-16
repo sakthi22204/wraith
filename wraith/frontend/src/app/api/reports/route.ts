@@ -7,15 +7,16 @@ export async function GET(request: Request) {
   const format = searchParams.get('format') || 'markdown';
 
   const adminToken = process.env.ADMIN_API_TOKEN;
-  const reportingUrl = process.env.REPORTING_URL || 'http://reporting:8006';
+  const reportingUrlRaw = process.env.REPORTING_URL || 'http://reporting:8006';
+  const reportingUrl = reportingUrlRaw.endsWith('/api/v1') ? reportingUrlRaw : `${reportingUrlRaw}/api/v1`;
 
   if (!investigationId) {
     return NextResponse.json({ error: 'Missing investigationId' }, { status: 400 });
   }
 
   const url = findingId
-    ? `${reportingUrl}/api/v1/reports/${investigationId}/findings/${findingId}?format=${format}`
-    : `${reportingUrl}/api/v1/reports/${investigationId}?format=${format}`;
+    ? `${reportingUrl}/reports/${investigationId}/findings/${findingId}?format=${format}`
+    : `${reportingUrl}/reports/${investigationId}?format=${format}`;
 
   try {
     const response = await fetch(url, {

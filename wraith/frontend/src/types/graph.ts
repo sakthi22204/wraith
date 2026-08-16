@@ -81,3 +81,36 @@ export interface AgentSession {
   id: string;
   status: string;
 }
+
+export interface ScopeRule {
+  id: number;
+  investigation_id: string;
+  pattern: string;
+  rule_type: 'allow' | 'deny';
+}
+
+export interface ExploitProposalHistory {
+  id: number;
+  investigation_id: string;
+  target: string;
+  action: string;
+  params: Record<string, any>;
+  actor: string;
+  actor_note?: string | null;
+  status: 'pending' | 'approved' | 'rejected' | 'executed';
+  created_at: string;
+  result?: Record<string, any> | null;
+}
+
+export interface AuditEntry {
+  id: number;
+  timestamp: string;
+  investigation_id: string;
+  target: string;
+  action: string;
+  actor: string;
+  actor_note?: string | null;
+  result?: Record<string, any> | null;
+  blocked: boolean;
+  block_reason?: string | null;
+}

@@ -3,6 +3,7 @@ import { Toaster } from "sonner";
 import { Geist, JetBrains_Mono, Space_Grotesk } from "next/font/google";
 import "./globals.css";
 import ReconStatusBannerContainer from "@/components/ReconStatusBannerContainer";
+import KillswitchControl from "@/components/KillswitchControl";
 
 const geist = Geist({
   subsets: ["latin"],
@@ -38,9 +39,9 @@ export default function RootLayout({
               <div className="w-8 h-8 bg-indigo-600 rounded flex items-center justify-center font-bold text-white shadow-lg shadow-indigo-500/20">W</div>
               <span className="text-xl font-black tracking-tight uppercase">Wraith</span>
             </div>
-            <nav className="flex space-x-6 text-sm font-medium text-slate-400">
+            <nav className="flex space-x-6 text-sm font-medium text-slate-400 items-center">
               <a href="/" className="hover:text-white transition-colors">Programs</a>
-              <a href="#" className="hover:text-white transition-colors cursor-not-allowed">Settings</a>
+              <KillswitchControl />
             </nav>
           </div>
         </header>

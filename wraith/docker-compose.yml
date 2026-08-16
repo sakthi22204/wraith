@@ -178,7 +178,7 @@ services:
       - "8006:8006"
     environment:
       - GRAPH_DB_URL=http://graph_api:8001/api/v1
-      - ACTIVE_EXPLOIT_RUNNER_URL=http://active_exploit_runner:8004
+      - ACTIVE_EXPLOIT_RUNNER_URL=http://active_exploit_runner:8004/api/v1
       - ADMIN_API_TOKEN=${ADMIN_API_TOKEN:-dev-token-change-me}
     networks:
       - wraith_internal

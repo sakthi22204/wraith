@@ -11,6 +11,7 @@ import { fetchFindings, fetchReviewQueue, deleteProgram as deleteInvestigation, 
 import { fetchReport } from '@/lib/reportingApi';
 import SeverityBadge from '@/components/SeverityBadge';
 import ActiveExploitApproval from '@/components/ActiveExploitApproval';
+import ScopeRules from '@/components/ScopeRules';
 import { config } from '@/lib/config';
 
 export default function InvestigationDashboard() {
@@ -461,6 +462,10 @@ export default function InvestigationDashboard() {
                <svg className="w-4 h-4 text-violet-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
                <span>Agent History</span>
             </Link>
+            <Link href={`/investigations/${investigationId}/exploitation`} className="bg-slate-900 border border-slate-800 hover:bg-slate-800 px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-2">
+               <svg className="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+               <span>Exploitation</span>
+            </Link>
           </div>
 
           {/* Severity Distribution Chart / Visualization bar */}
@@ -669,10 +674,22 @@ export default function InvestigationDashboard() {
            <section className="bg-gradient-to-br from-slate-900/60 to-slate-950/90 backdrop-blur-md border border-indigo-500/35 rounded-2xl p-6 shadow-lg shadow-indigo-500/12">
               <h3 className="font-bold text-lg mb-2 text-amber-500 flex items-center font-heading">
                 <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" /></svg>
-                Safety Gate
+                Execution Gate
               </h3>
-              <p className="text-slate-400 text-sm mb-4">Pending approvals for active exploitation modules.</p>
+              <p className="text-slate-400 text-sm mb-4">Approved exploit modules available for execution. Every execution is logged to the immutable audit trail.</p>
               <ActiveExploitApproval investigationId={investigationId as string} />
+           </section>
+
+           <section className="bg-gradient-to-br from-slate-900/60 to-slate-950/90 backdrop-blur-md border border-indigo-500/35 rounded-2xl p-6 shadow-lg shadow-indigo-500/12">
+              <h3 className="font-bold text-lg mb-2 text-emerald-500 flex items-center font-heading">
+                <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 6a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2H7z" clipRule="evenodd" /></svg>
+                Rules of Engagement
+              </h3>
+              <p className="text-slate-400 text-sm mb-4">Explicit in-scope and out-of-scope rules for this investigation.</p>
+              <ScopeRules investigationId={investigationId as string} />
+              <Link href={`/investigations/${investigationId}/exploitation`} className="block mt-4 text-center bg-slate-800 hover:bg-slate-700 text-white font-bold py-2 rounded-xl text-xs transition-all border border-slate-700 shadow-lg active:scale-95">
+                View Exploitation & Audit History
+              </Link>
            </section>
 
            <div className="pt-10 border-t border-slate-800 mt-10">
