@@ -55,26 +55,46 @@ class DockerProxy:
 
     async def wait_container(self, container_id: str, timeout: Optional[int] = None):
         def run():
-            container = self.client.containers.get(container_id)
-            return container.wait(timeout=timeout)
+            try:
+                container = self.client.containers.get(container_id)
+                return container.wait(timeout=timeout)
+            except docker.errors.NotFound:
+                return {"StatusCode": 0, "Error": {"Message": "Container already removed"}}
+            except docker.errors.APIError as e:
+                return {"StatusCode": 1, "Error": {"Message": str(e)}}
         return await asyncio.to_thread(run)
 
     async def get_logs(self, container_id: str):
         def run():
-            container = self.client.containers.get(container_id)
-            return container.logs().decode("utf-8")
+            try:
+                container = self.client.containers.get(container_id)
+                return container.logs().decode("utf-8")
+            except docker.errors.NotFound:
+                return ""
+            except docker.errors.APIError as e:
+                return f"Error fetching logs: {e}"
         return await asyncio.to_thread(run)
 
     async def stop_container(self, container_id: str):
         def run():
-            container = self.client.containers.get(container_id)
-            container.stop()
+            try:
+                container = self.client.containers.get(container_id)
+                container.stop()
+            except docker.errors.NotFound:
+                pass
+            except docker.errors.APIError as e:
+                print(f"Error stopping container {container_id}: {e}")
         await asyncio.to_thread(run)
 
     async def remove_container(self, container_id: str):
         def run():
-            container = self.client.containers.get(container_id)
-            container.remove(force=True)
+            try:
+                container = self.client.containers.get(container_id)
+                container.remove(force=True)
+            except docker.errors.NotFound:
+                pass
+            except docker.errors.APIError as e:
+                print(f"Error removing container {container_id}: {e}")
         await asyncio.to_thread(run)
 
 docker_proxy = DockerProxy()

@@ -10,10 +10,15 @@ export const subscribeToAgentStream = (
   sessionId: string,
   onMessage: (data: AgentStep) => void,
   onError: (error: Event) => void,
-  onEnd?: () => void
+  onEnd?: () => void,
+  onOpen?: () => void
 ) => {
   const url = `${config.agentUrl}/api/v1/agent/sessions/${sessionId}/stream`;
   const eventSource = new EventSource(url);
+
+  eventSource.onopen = () => {
+    if (onOpen) onOpen();
+  };
 
   eventSource.onmessage = (event) => {
     try {

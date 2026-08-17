@@ -77,7 +77,6 @@ export default function AgentActivityFeed({ sessionId }: AgentActivityFeedProps)
             sessionId,
             (data) => {
               setSteps((prev) => [...prev, data]);
-              setStatus('connected');
             },
             (error) => {
               console.error('SSE Error:', error);
@@ -85,6 +84,9 @@ export default function AgentActivityFeed({ sessionId }: AgentActivityFeedProps)
             },
             () => {
               setStatus('completed');
+            },
+            () => {
+              setStatus('connected');
             }
           );
         }

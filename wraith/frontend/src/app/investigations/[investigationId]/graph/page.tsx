@@ -70,8 +70,8 @@ export default function GraphPage() {
   }
 
   return (
-    <div className="relative w-full h-[calc(100vh-160px)]">
-      <div className="flex justify-between items-center mb-6">
+    <div className="flex flex-col w-full h-[calc(100vh-160px)]">
+      <div className="flex justify-between items-center mb-6 shrink-0">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Attack Surface Graph</h1>
           <p className="text-slate-400 text-sm">Interactive visualization of discovered assets and findings.</p>
@@ -92,7 +92,7 @@ export default function GraphPage() {
         </div>
       </div>
 
-      <div className="w-full h-full relative">
+      <div className="w-full flex-1 min-h-0 relative">
         {data && (
           <AttackSurfaceGraph
             data={data}

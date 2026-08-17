@@ -17,15 +17,13 @@ export default function ReconSessionsPage() {
 
       const updatedSessions = await Promise.all(
         data.map(async (s) => {
-          if (s.status === 'running' || s.status === 'accepted') {
-            try {
-              const liveStatus = await fetchReconStatus(s.id);
-              return { ...s, ...liveStatus };
-            } catch (e) {
-              console.error(`Failed to fetch live status for session ${s.id}:`, e);
-            }
+          try {
+            const liveStatus = await fetchReconStatus(s.id);
+            return { ...s, ...liveStatus };
+          } catch (e) {
+            console.error(`Failed to fetch live status for session ${s.id}:`, e);
+            return s;
           }
-          return s;
         })
       );
 
