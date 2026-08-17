@@ -103,8 +103,11 @@ export default function AgentActivityFeed({ sessionId }: AgentActivityFeedProps)
   }, [sessionId]);
 
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    const el = scrollRef.current;
+    if (!el) return;
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 100;
+    if (nearBottom) {
+      el.scrollTop = el.scrollHeight;
     }
   }, [steps]);
 

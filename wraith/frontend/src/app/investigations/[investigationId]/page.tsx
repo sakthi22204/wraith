@@ -63,8 +63,9 @@ export default function InvestigationDashboard() {
   const [isCancelReconModalOpen, setIsCancelReconModalOpen] = useState(false);
   const [isStopAgentModalOpen, setIsStopAgentModalOpen] = useState(false);
 
-  // Terminal scroll helper ref
+  // Terminal scroll helper refs
   const terminalEndRef = useRef<HTMLDivElement>(null);
+  const terminalContainerRef = useRef<HTMLDivElement>(null);
 
   // Helper to format duration from ISO timestamp to now
   const computeDurationString = (startedAt: string | null): string => {
@@ -102,9 +103,14 @@ export default function InvestigationDashboard() {
     return () => clearInterval(timer);
   }, [reconStartTime, agentStartTime]);
 
-  // Terminal scroll to bottom on new logs
+  // Terminal scroll to bottom on new logs (only if user is near bottom)
   useEffect(() => {
-    terminalEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const container = terminalContainerRef.current;
+    if (!container) return;
+    const nearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
+    if (nearBottom) {
+      terminalEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
   }, [reconLogs, agentLogs]);
 
   // Real-time Automated Polling Handler (runs every 2s)
@@ -557,7 +563,7 @@ export default function InvestigationDashboard() {
                   </h3>
                   <span className="text-[10px] text-slate-500 font-mono">Stream: {activeReconId ? 'RECON' : 'AGENT'}</span>
                </div>
-               <div className="p-4 h-64 overflow-y-auto font-mono text-xs text-emerald-400 space-y-2 bg-slate-950">
+                <div ref={terminalContainerRef} className="p-4 h-64 overflow-y-auto font-mono text-xs text-emerald-400 space-y-2 bg-slate-950">
                   {activeReconId ? (
                      reconLogs.length === 0 ? (
                        <div className="text-slate-600 italic">Waiting for logs...</div>
