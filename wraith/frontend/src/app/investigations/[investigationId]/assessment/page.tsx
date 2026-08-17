@@ -15,9 +15,12 @@ export default function AssessmentPage() {
 
   const loadData = async () => {
     try {
-      // 1. Fetch assessment report
       const assessUrl = `${config.assessmentUrl}/api/v1/assessments/${investigationId}`;
       const assessResp = await fetch(assessUrl);
+      if (assessResp.status === 404) {
+        setAssessment(null);
+        return;
+      }
       const assessData = await assessResp.json();
       setAssessment(assessData);
     } catch (e) {
@@ -39,6 +42,22 @@ export default function AssessmentPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
           <Skeleton className="h-64 w-full rounded-2xl" />
           <Skeleton className="h-64 w-full rounded-2xl" />
+        </div>
+      </div>
+    );
+  }
+
+  if (!assessment) {
+    return (
+      <div className="space-y-8 max-w-5xl mx-auto py-8 px-4 sm:px-6 lg:px-8">
+        <div>
+          <Link href={`/investigations/${investigationId}`} className="text-indigo-400 text-sm font-bold hover:underline mb-2 inline-block font-sans">← Back to Dashboard</Link>
+          <h1 className="text-4xl font-bold tracking-tight">Investigation Security Assessment</h1>
+          <p className="text-slate-400 text-sm mt-1">Automatic vulnerability assessment, CVE mapping, target prioritization, and risk scores.</p>
+        </div>
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center">
+          <div className="text-slate-500 mb-2 font-medium italic">No assessment data yet.</div>
+          <p className="text-slate-600 text-sm max-w-md mx-auto">Assessment is generated automatically after reconnaissance completes. Run a recon session first.</p>
         </div>
       </div>
     );

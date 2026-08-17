@@ -54,7 +54,7 @@ export const startAgentSession = async (investigationId: string, targetScope: st
   const response = await fetch(`${config.agentUrl}/api/v1/agent/sessions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ investigation_id: investigationId, target_scope: targetScope, max_iterations: maxIterations })
+    body: JSON.stringify({ program_id: investigationId, target_scope: targetScope, max_iterations: maxIterations })
   });
   if (!response.ok) throw new Error('Failed to start session');
   return response.json();

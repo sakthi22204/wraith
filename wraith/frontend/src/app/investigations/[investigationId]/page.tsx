@@ -18,6 +18,8 @@ export default function InvestigationDashboard() {
   const { investigationId } = useParams();
   const router = useRouter();
 
+  const [notFound, setNotFound] = useState(false);
+
   // Graph and Stats States
   const [graphStats, setGraphStats] = useState({
     hosts: 0,
@@ -109,6 +111,21 @@ export default function InvestigationDashboard() {
   const loadData = async () => {
     try {
       const investigation_id = investigationId as string;
+
+      // 0. Check if investigation exists (once, on first load)
+      if (!notFound) {
+        try {
+          const checkResp = await fetch(`${config.graphDbUrl}/api/v1/investigations/${investigation_id}`);
+          if (checkResp.status === 404) {
+            setNotFound(true);
+            return;
+          }
+        } catch {
+          // Network error — keep polling, don't set notFound
+        }
+      } else {
+        return;
+      }
 
       // 1. Fetch Graph & compute stats dynamically
       try {
@@ -304,6 +321,23 @@ export default function InvestigationDashboard() {
     if (findings.length > 0) return 'Reporting';
     return 'Pending';
   };
+
+  if (notFound) {
+    return (
+      <div className="space-y-8 font-sans">
+        <div>
+          <Link href="/" className="text-indigo-400 text-sm font-bold hover:underline mb-2 inline-block">← Back to Investigations</Link>
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center mt-8">
+            <h2 className="text-2xl font-bold text-slate-300 mb-2">Investigation Not Found</h2>
+            <p className="text-slate-500 text-sm mb-6">No investigation exists with ID <span className="font-mono text-slate-400">{investigationId as string}</span>.</p>
+            <Link href="/" className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-lg text-sm font-bold transition-all inline-block">
+              Back to Investigations
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-8 font-sans">
