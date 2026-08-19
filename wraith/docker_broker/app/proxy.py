@@ -1,5 +1,6 @@
 import docker
 import asyncio
+import requests.exceptions
 from typing import List, Optional
 from .config import settings
 from .validators import validate_container_spec
@@ -62,6 +63,10 @@ class DockerProxy:
                 return {"StatusCode": 0, "Error": {"Message": "Container already removed"}}
             except docker.errors.APIError as e:
                 return {"StatusCode": 1, "Error": {"Message": str(e)}}
+            except requests.exceptions.ReadTimeout:
+                return {"StatusCode": -1, "Error": {"Message": f"Docker daemon wait timed out after {timeout}s — container may still be running"}}
+            except requests.exceptions.ConnectionError as e:
+                return {"StatusCode": -1, "Error": {"Message": f"Docker daemon connection lost: {e}"}}
         return await asyncio.to_thread(run)
 
     async def get_logs(self, container_id: str):
@@ -73,6 +78,8 @@ class DockerProxy:
                 return ""
             except docker.errors.APIError as e:
                 return f"Error fetching logs: {e}"
+            except requests.exceptions.ConnectionError:
+                return "Error fetching logs: Docker daemon connection lost"
         return await asyncio.to_thread(run)
 
     async def stop_container(self, container_id: str):
@@ -84,6 +91,8 @@ class DockerProxy:
                 pass
             except docker.errors.APIError as e:
                 print(f"Error stopping container {container_id}: {e}")
+            except requests.exceptions.ConnectionError:
+                print(f"Error stopping container {container_id}: Docker daemon connection lost")
         await asyncio.to_thread(run)
 
     async def remove_container(self, container_id: str):
@@ -95,6 +104,8 @@ class DockerProxy:
                 pass
             except docker.errors.APIError as e:
                 print(f"Error removing container {container_id}: {e}")
+            except requests.exceptions.ConnectionError:
+                print(f"Error removing container {container_id}: Docker daemon connection lost")
         await asyncio.to_thread(run)
 
 docker_proxy = DockerProxy()

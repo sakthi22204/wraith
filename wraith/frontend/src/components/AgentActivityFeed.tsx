@@ -12,6 +12,7 @@ interface AgentActivityFeedProps {
 export default function AgentActivityFeed({ sessionId }: AgentActivityFeedProps) {
   const [steps, setSteps] = useState<AgentStep[]>([]);
   const [status, setStatus] = useState<'connecting' | 'connected' | 'reconnecting' | 'completed' | 'error'>('connecting');
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -24,7 +25,8 @@ export default function AgentActivityFeed({ sessionId }: AgentActivityFeedProps)
         const statusData = await fetchSessionStatus(sessionId);
         if (!isMounted) return;
 
-        const isCompleted = ['completed', 'stopped', 'failed'].includes(statusData.status);
+        const isCompleted = ['completed', 'stopped'].includes(statusData.status);
+        const isFailed = statusData.status === 'failed';
 
         // Reconstruct steps from reasoning_log if available
         if (statusData.reasoning_log && statusData.reasoning_log.length > 0) {
@@ -70,12 +72,19 @@ export default function AgentActivityFeed({ sessionId }: AgentActivityFeedProps)
 
         if (isCompleted) {
           setStatus('completed');
+        } else if (isFailed) {
+          setStatus('error');
         } else {
           // Attach to SSE stream for live updates going forward
           setStatus('connecting');
           unsubscribe = subscribeToAgentStream(
             sessionId,
             (data) => {
+              if (data && data.type === 'error') {
+                setErrorMessage(data.message || 'Unknown error');
+                setStatus('error');
+                return;
+              }
               setSteps((prev) => [...prev, data]);
             },
             (error) => {
@@ -83,7 +92,7 @@ export default function AgentActivityFeed({ sessionId }: AgentActivityFeedProps)
               setStatus('reconnecting');
             },
             () => {
-              setStatus('completed');
+              setStatus((prev) => (prev === 'error' ? 'error' : 'completed'));
             },
             () => {
               setStatus('connected');
@@ -130,7 +139,7 @@ export default function AgentActivityFeed({ sessionId }: AgentActivityFeedProps)
           {status === 'connected' && <span className="text-emerald-400">Live</span>}
           {status === 'reconnecting' && <span className="text-amber-400 animate-pulse">Reconnecting...</span>}
           {status === 'completed' && <span className="text-slate-400">Session Completed</span>}
-          {status === 'error' && <span className="text-red-400">Connection Failed</span>}
+          {status === 'error' && <span className="text-red-400">Session Failed</span>}
         </div>
       </div>
 
@@ -138,7 +147,7 @@ export default function AgentActivityFeed({ sessionId }: AgentActivityFeedProps)
         ref={scrollRef}
         className="flex-1 overflow-y-auto p-4 space-y-2 scroll-smooth"
       >
-        {steps.length === 0 && status !== 'completed' && (
+        {steps.length === 0 && status !== 'completed' && status !== 'error' && (
           <div className="h-full flex items-center justify-center text-slate-500 italic">
             Waiting for agent reasoning steps...
           </div>
@@ -152,6 +161,15 @@ export default function AgentActivityFeed({ sessionId }: AgentActivityFeedProps)
             <div className="text-center py-8 border-t border-slate-800 mt-8">
                 <div className="text-slate-500 text-sm font-bold uppercase tracking-widest mb-1">End of Session</div>
                 <div className="text-slate-600 text-xs italic">The autonomous agent has finished its task.</div>
+            </div>
+        )}
+
+        {status === 'error' && (
+            <div className="text-center py-8 border-t border-red-900 mt-8">
+                <div className="text-red-400 text-sm font-bold uppercase tracking-widest mb-1">Session Failed</div>
+                <div className="text-red-300/70 text-xs mt-2 px-4 bg-red-950/30 rounded border border-red-900/50 p-3 max-w-lg mx-auto">
+                  {errorMessage || 'An unexpected error terminated the agent session.'}
+                </div>
             </div>
         )}
       </div>
