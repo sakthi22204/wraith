@@ -644,6 +644,14 @@ class Neo4jRepository:
         """
         result = await self.session.run(query, id=session_id, investigation_id=investigation_id, status=status, now=now, iteration_count=iteration_count, tools_used=tools_used, reasoning_log=reasoning_log)
         record = await result.single()
+        if record is None:
+            fallback_query = """
+            MERGE (s:AgentSession {id: $id})
+            ON CREATE SET s.investigation_id = $investigation_id, s.status = $status, s.started_at = $now, s.iteration_count = $iteration_count, s.tools_used = $tools_used, s.reasoning_log = $reasoning_log
+            RETURN s
+            """
+            result = await self.session.run(fallback_query, id=session_id, investigation_id=investigation_id, status=status, now=now, iteration_count=iteration_count, tools_used=tools_used, reasoning_log=reasoning_log)
+            record = await result.single()
         return AgentSession(**record["s"])
 
     async def update_agent_session_status(self, session_id: str, status: str, iteration_count: Optional[int] = None, tools_used: Optional[List[str]] = None, final_report: Optional[str] = None, reasoning_log: Optional[List[str]] = None) -> AgentSession:
