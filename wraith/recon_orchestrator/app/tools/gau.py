@@ -4,7 +4,7 @@ from ..schemas import ToolResults, EndpointResult
 
 class GauTool(ReconTool):
     def __init__(self):
-        super().__init__(name="gau", image="lc/gau:latest")
+        super().__init__(name="gau", image="gau:latest")
 
     def get_command(self, domain: str) -> List[str]:
         return [domain]

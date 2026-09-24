@@ -4,7 +4,7 @@ from ..schemas import ToolResults, EndpointResult
 
 class WaybackurlsTool(ReconTool):
     def __init__(self):
-        super().__init__(name="waybackurls", image="tomnomnom/waybackurls:latest")
+        super().__init__(name="waybackurls", image="waybackurls:latest")
 
     def get_command(self, domain: str) -> List[str]:
         return [domain]

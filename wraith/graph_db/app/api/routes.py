@@ -36,6 +36,13 @@ class FPCheckRequest(BaseModel):
     endpoint: str
     parameter: Optional[str] = None
 
+class AgentSessionUpdate(BaseModel):
+    status: str
+    iteration_count: Optional[int] = None
+    tools_used: Optional[List[str]] = None
+    final_report: Optional[str] = None
+    reasoning_log: Optional[List[str]] = None
+
 # Investigation Endpoints (New Primary workflow)
 @router.post("/investigations", response_model=Investigation)
 async def create_investigation(request: InvestigationCreate, repo: Neo4jRepository = Depends(get_repo)):
@@ -247,8 +254,15 @@ async def create_agent_session(session_id: str, status: str, investigation_id: O
     return await repo.create_agent_session(session_id, inv_id, status, iteration_count, _parse_list_param(tools_used) or [], _parse_list_param(reasoning_log) or [])
 
 @router.patch("/agent-sessions/{session_id}", response_model=AgentSession)
-async def update_agent_session(session_id: str, status: str, iteration_count: Optional[int] = None, tools_used: Optional[str] = None, final_report: Optional[str] = None, reasoning_log: Optional[str] = None, repo: Neo4jRepository = Depends(get_repo)):
-    return await repo.update_agent_session_status(session_id, status, iteration_count, _parse_list_param(tools_used), final_report, _parse_list_param(reasoning_log))
+async def update_agent_session(session_id: str, request: AgentSessionUpdate, repo: Neo4jRepository = Depends(get_repo)):
+    return await repo.update_agent_session_status(
+        session_id,
+        request.status,
+        request.iteration_count,
+        request.tools_used,
+        request.final_report,
+        request.reasoning_log,
+    )
 
 @router.get("/agent-sessions", response_model=List[AgentSession])
 async def list_agent_sessions(investigation_id: Optional[str] = None, program_id: Optional[str] = None, repo: Neo4jRepository = Depends(get_repo)):

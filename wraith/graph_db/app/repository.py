@@ -344,7 +344,7 @@ class Neo4jRepository:
             url_query = """
             MATCH (f:Finding {id: $finding_id})<-[:HAS_FINDING]-(target)
             OPTIONAL MATCH (target)-[:HAS_PARAMETER]-(e:Endpoint)
-            WITH coalesce(e, target) as endpoint, f
+            WITH coalesce(e, target) as endpoint, f, target
             MATCH (endpoint)<-[:HAS_ENDPOINT]-(h:Host)<-[:IN_SCOPE]-(i:Investigation)
             RETURN endpoint.url as url, target.name as param_name, i.id as investigation_id
             """
@@ -352,7 +352,7 @@ class Neo4jRepository:
             url_rec = await url_res.single()
             if url_rec:
                 url = url_rec["url"]
-                param_name = url_rec["param_name"] if "name" in url_rec else None
+                param_name = url_rec.get("param_name")
                 investigation_id = url_rec["investigation_id"]
 
                 pattern = self._derive_endpoint_pattern(url)

@@ -50,3 +50,20 @@ async def test_nuclei_category_enum_still_supported():
 
         cmd = mock_run.call_args[0][0]
         assert cmd == ["nuclei", "-u", "http://juice_shop:3000", "-jsonl", "-silent", "-t", "http/cves"]
+
+@pytest.mark.asyncio
+async def test_nuclei_category_invalid_is_graceful():
+    """Invalid categories (e.g. LLM-invented 'wordpress') must not crash and
+    must not shell out to nuclei with a bogus template path."""
+    server = NucleiServer()
+
+    with patch.object(server, "run_tool", new=AsyncMock(return_value=SUCCESS)) as mock_run:
+        result = await server.mcp.call_tool(
+            "run_nuclei_scan",
+            {"target": "http://juice_shop:3000", "category": "wordpress", "caller": "exploit_agent"},
+        )
+
+        mock_run.assert_not_awaited()
+        text = str(result)
+        assert "Invalid category" in text
+        assert "wordpress" in text

@@ -10,7 +10,7 @@ class DockerSpawner:
     def __init__(self, broker_url: str = settings.DOCKER_BROKER_URL):
         self.broker_url = broker_url
 
-    async def spawn_container(self, image: str, cmd: List[str], timeout: int = settings.TOOL_TIMEOUT, volumes: Optional[dict] = None, extra_hosts: Optional[dict] = None) -> str:
+    async def spawn_container(self, image: str, cmd: List[str], timeout: int = settings.TOOL_TIMEOUT, volumes: Optional[dict] = None, extra_hosts: Optional[dict] = None, environment: Optional[dict] = None) -> str:
         headers = {"Authorization": f"Bearer {settings.RECON_BROKER_TOKEN}"}
         async with httpx.AsyncClient(timeout=timeout + 30, headers=headers) as client:
             spec = {
@@ -27,6 +27,8 @@ class DockerSpawner:
                 spec["volumes"] = volumes
             if extra_hosts:
                 spec["extra_hosts"] = extra_hosts
+            if environment:
+                spec["environment"] = environment
 
             # 1. Create and run
             create_res = await client.post(f"{self.broker_url}/containers", json=spec)

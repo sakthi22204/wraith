@@ -1,6 +1,7 @@
 import json
 from typing import List
 from .base import ReconTool, target_url
+from .proxy import add_proxy_flags
 from ..schemas import ToolResults, EndpointResult
 
 class KatanaTool(ReconTool):
@@ -9,7 +10,9 @@ class KatanaTool(ReconTool):
 
     def get_command(self, domain: str) -> List[str]:
         # -u domain, -j for JSON output (katana uses -j not -json)
-        return ["-u", target_url(domain), "-j", "-silent"]
+        # -proxy routes egress through the intercepting sidecar when enabled
+        # (Go tools resolve the single-label 'mitmproxy' via extra_hosts).
+        return add_proxy_flags(["-u", target_url(domain), "-j", "-silent"], "-proxy")
 
     def parse_output(self, output: str) -> ToolResults:
         results = ToolResults()

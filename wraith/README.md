@@ -68,3 +68,34 @@ curl http://localhost:8001/api/v1/programs/{program_id}/graph
 ```bash
 curl http://localhost:8001/health
 ```
+
+## Optional Egress Interception (recon tools)
+
+By default every recon tool container runs **egress-direct**: no proxy, no
+sidecar, no extra volumes. A plain `docker compose up` starts nothing new and
+tool command/environment/volumes are byte-identical to the pre-feature build.
+
+When you want decrypted request/response evidence from the interceptable
+tools (katana, httpx/httpx-probe), you can OPT IN with two knobs:
+
+1. **Compose profile** — start the interception sidecar:
+   ```bash
+   docker compose --profile recon-proxy up -d
+   ```
+   The `mitmproxy_sidecar` service (mitmproxy/mitmproxy) and its
+   `mitmproxy_ca` / `mitmproxy_flows` named volumes are only materialized
+   under that profile, so a plain `docker compose up` never starts it.
+
+2. **`RECON_PROXY_URL`** on the orchestrator — point tool containers at it:
+   ```bash
+   # .env on the orchestrator
+   RECON_PROXY_URL=http://mitmproxy:8080
+   ```
+   When set, supported tools route HTTP(S) through the sidecar and trust its
+   CA (mounted read-only from the named volume), so decrypted evidence lands
+   in the streamed flow file — while keeping every tool command/volumes
+   byte-identical by default when the variable is empty.
+
+The broker requires **zero changes** (it already forwards
+`environment`/`volumes`/`extra_hosts` unchanged, and named volumes pass its
+validator). All gating lives in `recon_orchestrator/app/tools/proxy.py`.

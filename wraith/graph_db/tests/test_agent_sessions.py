@@ -37,17 +37,15 @@ def override_repo():
 
 @pytest.mark.asyncio
 async def test_update_agent_session_parses_json_list_params(override_repo):
-    """Regression: FastAPI 0.141+ no longer collects repeated scalar query params
-    into List[str]. The route must parse JSON-encoded list params sent by the
-    exploit agent client so reasoning_log/tools_used actually persist."""
+    """PATCH takes a JSON body so large reasoning_log payloads never overflow the URL."""
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as ac:
         response = await ac.patch(
             "/api/v1/agent-sessions/s1",
-            params={
+            json={
                 "status": "completed",
                 "iteration_count": 1,
-                "tools_used": json.dumps(["run_nuclei_scan"]),
-                "reasoning_log": json.dumps(["line1", "line2"]),
+                "tools_used": ["run_nuclei_scan"],
+                "reasoning_log": ["line1", "line2"],
             },
         )
     assert response.status_code == 200
@@ -61,7 +59,7 @@ async def test_update_agent_session_no_lists(override_repo):
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as ac:
         response = await ac.patch(
             "/api/v1/agent-sessions/s1",
-            params={"status": "completed"},
+            json={"status": "completed"},
         )
     assert response.status_code == 200
     call = override_repo.update_agent_session_status.call_args
@@ -69,19 +67,18 @@ async def test_update_agent_session_no_lists(override_repo):
     assert call.args[5] is None
 
 @pytest.mark.asyncio
-async def test_update_agent_session_comma_fallback(override_repo):
-    """Comma-separated values are parsed as a fallback for robustness."""
+async def test_update_agent_session_large_reasoning_log(override_repo):
+    """Long reasoning logs must persist without URL length errors (regression for
+    'InvalidURL: URL component query too long' that left sessions stuck 'running')."""
+    big_log = [f"line_{i} " * 200 for i in range(50)]  # ~110KB
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as ac:
         response = await ac.patch(
             "/api/v1/agent-sessions/s1",
-            params={
-                "status": "completed",
-                "reasoning_log": "line1,line2",
-            },
+            json={"status": "completed", "reasoning_log": big_log},
         )
     assert response.status_code == 200
     call = override_repo.update_agent_session_status.call_args
-    assert call.args[5] == ["line1", "line2"]
+    assert call.args[5] == big_log
 
 @pytest.mark.asyncio
 async def test_create_agent_session_parses_json_list_params(override_repo):

@@ -3,6 +3,7 @@ import json
 from contextvars import ContextVar
 from typing import Optional
 from mcp.server.fastmcp import FastMCP
+from pydantic import BaseModel
 from fastapi import HTTPException
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
@@ -40,6 +41,18 @@ def get_caller() -> Optional[str]:
         pass
     return caller_context.get()
 
+def unwrap_inner(result):
+    """The per-tool servers' call_tool returns a (content_blocks, structured)
+    tuple. Returning that tuple from an outer @mcp.tool() makes FastMCP encode
+    it twice, so the agent sees duplicated JSON. Return just the structured
+    payload so it is serialized exactly once (JSON blocks), never the tuple."""
+    if isinstance(result, tuple) and len(result) == 2:
+        structured = result[1]
+        if isinstance(structured, (dict, list, BaseModel)):
+            return structured
+        return result[0]
+    return result
+
 # Initialize tool providers
 nmap = NmapServer()
 nuclei = NucleiServer()
@@ -51,34 +64,34 @@ metasploit = MetasploitServer()
 @mcp.tool()
 async def run_nmap_scan(target: str, ports: str = "1-1000", scan_type: str = "-sV"):
     caller = get_caller()
-    return await nmap.mcp.call_tool("run_nmap_scan", {"target": target, "ports": ports, "scan_type": scan_type, "caller": caller})
+    return unwrap_inner(await nmap.mcp.call_tool("run_nmap_scan", {"target": target, "ports": ports, "scan_type": scan_type, "caller": caller}))
 
 @mcp.tool()
 async def run_nuclei_scan(target: str, category: str = "default"):
     caller = get_caller()
-    return await nuclei.mcp.call_tool("run_nuclei_scan", {"target": target, "category": category, "caller": caller})
+    return unwrap_inner(await nuclei.mcp.call_tool("run_nuclei_scan", {"target": target, "category": category, "caller": caller}))
 
 @mcp.tool()
 async def run_sqlmap(url: str, param: str = None, method: str = "GET", data: str = None):
     caller = get_caller()
-    return await sqlmap.mcp.call_tool("run_sqlmap", {"url": url, "param": param, "method": method, "data": data, "caller": caller})
+    return unwrap_inner(await sqlmap.mcp.call_tool("run_sqlmap", {"url": url, "param": param, "method": method, "data": data, "caller": caller}))
 
 @mcp.tool()
 async def run_hydra(target: str, service: str, user: str, pass_list: str):
     caller = get_caller()
     verify_caller("run_hydra", caller)
-    return await hydra.mcp.call_tool("run_hydra", {"target": target, "service": service, "user": user, "pass_list": pass_list, "caller": caller})
+    return unwrap_inner(await hydra.mcp.call_tool("run_hydra", {"target": target, "service": service, "user": user, "pass_list": pass_list, "caller": caller}))
 
 @mcp.tool()
 async def list_msf_modules(search: str):
     caller = get_caller()
-    return await metasploit.mcp.call_tool("list_modules", {"search": search, "caller": caller})
+    return unwrap_inner(await metasploit.mcp.call_tool("list_modules", {"search": search, "caller": caller}))
 
 @mcp.tool()
 async def run_msf_module(module: str, target: str, options: dict):
     caller = get_caller()
     verify_caller("run_msf_module", caller)
-    return await metasploit.mcp.call_tool("run_module", {"module": module, "target": target, "options": options, "caller": caller})
+    return unwrap_inner(await metasploit.mcp.call_tool("run_module", {"module": module, "target": target, "options": options, "caller": caller}))
 
 # Add internal REST bridge for Phase 5 executor
 @mcp.custom_route("/tools/{tool_name}/call", methods=["POST"])

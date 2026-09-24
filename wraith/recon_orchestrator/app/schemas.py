@@ -15,6 +15,7 @@ class ToolStatus(str, Enum):
 class ReconRequest(BaseModel):
     investigation_id: str = Field(..., validation_alias=AliasChoices("investigation_id", "program_id"))
     domains: List[str]
+    tools: Optional[List[str]] = None
 
 class HostResult(BaseModel):
     value: str

@@ -419,6 +419,48 @@ class ReconOrchestrator:
             d = d.split("://")[1]
         return d.split("/")[0]
 
+    # Multi-part public suffixes (registrable domain = last two labels without
+    # these). Keep the common ones so apex-vs-subdomain scope matching is safe.
+    MULTI_PART_SUFFIXES = {
+        "co.uk", "org.uk", "ac.uk", "gov.uk", "net.uk", "me.uk", "ltd.uk", "plc.uk",
+        "com.au", "net.au", "org.au", "edu.au", "gov.au", "co.nz", "co.jp",
+        "co.in", "net.in", "org.in", "com.br", "co.za", "com.cn", "com.hk",
+        "com.tr", "com.my", "com.sg", "com.ph", "co.kr", "com.tw", "com.eg",
+        "com.sa", "com.pk", "com.ng", "com.gh", "co.ke", "com.ar", "com.co",
+    }
+
+    def registrable_domain(self, domain: str) -> str:
+        """Return the registrable (apex) domain, e.g. a.b.example.com -> example.com,
+        and www.example.co.uk -> example.co.uk."""
+        labels = self.normalize_domain(domain).split(".")
+        if len(labels) <= 2:
+            return ".".join(labels)
+        tail2 = ".".join(labels[-2:])
+        tail3 = ".".join(labels[-3:])
+        if tail2 in self.MULTI_PART_SUFFIXES:
+            return tail3
+        return tail2
+
+    def _scope_matches_any(self, norm_domain: str, normalized_scope: List[str]) -> bool:
+        """Determine whether a requested domain is within an allowed scope.
+
+        A domain is in scope if it exactly equals an allowed scope entry, is a
+        subdomain of one (api.example.com vs example.com), or shares the same
+        registrable domain as an allowed entry (luminadatamatics.com vs
+        www.luminadatamatics.com). Ancestor matching is restricted to the
+        registrable domain so requesting 'com' can never satisfy a host scope.
+        """
+        for allowed in normalized_scope:
+            if not allowed:
+                continue
+            if norm_domain == allowed:
+                return True
+            if norm_domain.endswith(f".{allowed}"):
+                return True
+            if self.registrable_domain(norm_domain) == self.registrable_domain(allowed):
+                return True
+        return False
+
     async def start_session(self, request: ReconRequest) -> dict:
         # Validate scope before accepting
         try:
@@ -437,11 +479,7 @@ class ReconOrchestrator:
             seen.add(norm_domain)
             normalized_requested.append(norm_domain)
 
-            is_in_scope = False
-            for allowed in normalized_scope:
-                if norm_domain == allowed or norm_domain.endswith(f".{allowed}"):
-                    is_in_scope = True
-                    break
+            is_in_scope = self._scope_matches_any(norm_domain, normalized_scope)
             if not is_in_scope:
                 out_of_scope.append(domain)
 

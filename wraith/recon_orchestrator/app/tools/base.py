@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from typing import List, Optional
 from ..schemas import ToolResults, HostResult, PortResult, EndpointResult
 from ..docker_spawner import docker_spawner
+from .proxy import proxy_env, proxy_volumes, proxy_extra_hosts
 
 
 def target_url(target: str) -> str:
@@ -50,5 +51,15 @@ class ReconTool(ABC):
 
     async def run(self, domain: str) -> ToolResults:
         cmd = self.get_command(domain)
-        raw_output = await docker_spawner.spawn_container(self.image, cmd, extra_hosts=resolve_extra_hosts(domain))
+        merged_hosts = {}
+        eh = resolve_extra_hosts(domain)
+        if eh:
+            merged_hosts.update(eh)
+        merged_hosts.update(proxy_extra_hosts())
+        raw_output = await docker_spawner.spawn_container(
+            self.image, cmd,
+            extra_hosts=merged_hosts or None,
+            environment=proxy_environment(),
+            volumes=proxy_volume_mount(),
+        )
         return self.parse_output(raw_output)

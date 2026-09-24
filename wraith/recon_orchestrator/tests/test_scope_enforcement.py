@@ -41,6 +41,33 @@ async def test_start_session_scope_enforcement():
         assert "notexample.com" in exc.value.detail
 
 @pytest.mark.asyncio
+async def test_parent_domain_of_in_scope_subdomain_is_allowed():
+    """Requesting the parent zone of an in-scope subdomain (e.g. luminadatamatics.com
+    when scope is www.luminadatamatics.com) must be accepted so apex recon that
+    subsumes the in-scope host can run."""
+    orchestrator = ReconOrchestrator()
+    with patch("app.orchestrator.graph_client.get_program_scope", new_callable=AsyncMock) as mock_get_scope:
+        mock_get_scope.return_value = ["https://www.luminadatamatics.com/"]
+
+        request = ReconRequest(program_id="p1", domains=["luminadatamatics.com", "www.luminadatamatics.com", "api.luminadatamatics.com"])
+        res = await orchestrator.start_session(request)
+        assert res["session_id"] in orchestrator.sessions
+        assert orchestrator.sessions[res["session_id"]].status == "accepted"
+
+@pytest.mark.asyncio
+async def test_grandparent_domain_out_of_scope_after_subdomain():
+    """Covering an in-scope subdomain must not grant access to an unrelated or
+    root-level domain (e.g. scope www.example.com must not open up 'example' zones)."""
+    orchestrator = ReconOrchestrator()
+    with patch("app.orchestrator.graph_client.get_program_scope", new_callable=AsyncMock) as mock_get_scope:
+        mock_get_scope.return_value = ["www.luminadatamatics.com"]
+
+        request = ReconRequest(program_id="p1", domains=["com"])
+        with pytest.raises(HTTPException) as exc:
+            await orchestrator.start_session(request)
+        assert exc.value.status_code == 400
+
+@pytest.mark.asyncio
 async def test_start_session_graph_db_down():
     orchestrator = ReconOrchestrator()
     with patch("app.orchestrator.graph_client.get_program_scope", new_callable=AsyncMock) as mock_get_scope:

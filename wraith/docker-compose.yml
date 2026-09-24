@@ -56,6 +56,11 @@ services:
       - RECON_BROKER_TOKEN=${RECON_BROKER_TOKEN:-dev-recon-token}
       - ADMIN_API_TOKEN=${ADMIN_API_TOKEN:-dev-token-change-me}
       - RECON_DOCKER_NETWORK=${RECON_DOCKER_NETWORK:-wraith_wraith_internal}
+      # Optional egress interception. Leave empty (default) to run all recon
+      # tools unproxied — behaviour is byte-identical. When set to the proxy
+      # service URL, supported tools (katana/httpx) route HTTP(S) through it
+      # and trust its CA so the orchestrator persists decrypted evidence.
+      - RECON_PROXY_URL=${RECON_PROXY_URL:-}
     depends_on:
       graph_api:
         condition: service_healthy
@@ -75,8 +80,12 @@ services:
       - LLM_PROVIDER=${LLM_PROVIDER:-anthropic}
       - LLM_MODEL=${LLM_MODEL:-claude-3-5-sonnet-20240620}
       - LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.0}
+      - LLM_TIMEOUT_SECONDS=${LLM_TIMEOUT_SECONDS:-300}
+      - INTERPRET_LLM_PROVIDER=${INTERPRET_LLM_PROVIDER:-}
+      - INTERPRET_LLM_MODEL=${INTERPRET_LLM_MODEL:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - GROQ_API_KEY=${GROQ_API_KEY}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://ollama:11434}
       - MCP_SERVER_URLS=["http://kali_sandbox:8000/sse"]
       - ADMIN_API_TOKEN=${ADMIN_API_TOKEN:-dev-token-change-me}
@@ -163,9 +172,14 @@ services:
 
   # OPTIONAL LOCAL LLM
   ollama:
-    image: ollama/ollama
+    build:
+      context: ./ollama
     profiles:
       - local-llm
+    cpuset: ${OLLAMA_CPUSET:-0-4}
+    environment:
+      - OLLAMA_KEEP_ALIVE=30m
+      - OLLAMA_CONTEXT_LENGTH=8192
     networks:
       - wraith_internal
     volumes:
@@ -282,6 +296,24 @@ services:
       context: ./recon_orchestrator/tool_images/cloud_enum
     image: cloud_enum:latest
 
+  # Intercepting egress sidecar. OPT-IN via compose profile
+  #   docker compose --profile recon-proxy up -d
+  # so a plain `docker compose up` never starts it — byte-identical footprint.
+  # RECON_PROXY_URL on the orchestrator points tool containers at this sidecar
+  # (http://mitmproxy:8080); its CA named-volume is mounted read-only into
+  # tool containers so decrypted request/response evidence lands in the flow
+  # file while keeping every tool's command/volumes byte-identical by default.
+  mitmproxy_sidecar:
+    image: mitmproxy/mitmproxy:latest
+    profiles: ["recon-proxy"]
+    networks:
+      - wraith_internal
+    command: mitmdump --listen-host 0.0.0.0 --listen-port 8080 --set ssl_insecure --save-stream-file /flows/flows.mitm
+    volumes:
+      - mitmproxy_ca:/home/mitmproxy/.mitmproxy
+      - mitmproxy_flows:/flows
+    # No published ports on purpose: only the internal network reaches it.
+
 networks:
   wraith_internal:
     driver: bridge
@@ -290,3 +322,5 @@ volumes:
   neo4j_data:
   postgres_audit_data:
   ollama_data:
+  mitmproxy_ca:
+  mitmproxy_flows:
