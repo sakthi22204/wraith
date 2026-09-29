@@ -123,6 +123,32 @@ CWE_MAPPING = {
         "cwe_id": "CWE-287",
         "owasp_category": "A07:2021-Identification and Authentication Failures",
         "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N"
+    },
+    # The deterministic hypothesis rules (Phase 1.5) emit these types.
+    "mass assignment": {
+        "cwe_id": "CWE-915",
+        "owasp_category": "A04:2021-Insecure Design",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:H/A:N"
+    },
+    "business logic flaw": {
+        "cwe_id": "CWE-840",
+        "owasp_category": "A04:2021-Insecure Design",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:H/A:N"
+    },
+    "unrestricted file upload": {
+        "cwe_id": "CWE-434",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:H/A:N"
+    },
+    "graphql introspection": {
+        "cwe_id": "CWE-200",
+        "owasp_category": "A05:2021-Security Misconfiguration",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N"
+    },
+    "graphql alias over-fetch": {
+        "cwe_id": "CWE-400",
+        "owasp_category": "A04:2021-Insecure Design",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:L"
     }
 }
 
