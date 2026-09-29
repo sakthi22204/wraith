@@ -347,35 +347,79 @@
                 </div>
             </div>
 
-            <h3>A. Description</h3>
+            <h3>A. Summary</h3>
             <p>{{ f.description }}</p>
 
-            <h3>B. Affected Asset</h3>
+            <h3>B. Weakness</h3>
+            <p>{{ f.vulnerability_type }}</p>
+
+            <h3>C. Severity &amp; CVSS Rationale</h3>
+            <p><strong>Vector:</strong> <code>{{ f.cvss_vector or 'N/A' }}</code></p>
+            {% if f.risk_rating and f.risk_rating.cvss_rationale %}
+            <table>
+                <thead>
+                    <tr>
+                        <th>Metric</th>
+                        <th>Value</th>
+                        <th>Reasoning</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for m in f.risk_rating.cvss_rationale %}
+                    <tr>
+                        <td style="font-weight: 600;">{{ m.metric }}</td>
+                        <td><span class="badge">{{ m.value }}</span></td>
+                        <td>{{ m.meaning }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <p style="color: #64748b; font-size: 0.95rem;">No CVSS vector recorded, so no metric-by-metric rationale is available.</p>
+            {% endif %}
+
+            <h3>D. Affected Asset</h3>
             <div style="font-family: monospace; background: #f1f5f9; padding: 10px; border-radius: 4px; font-size: 0.9rem;">
                 {{ f.affected_asset }}
             </div>
 
-            {% if f.attack_graph %}
-            <h3>C. Isolated Attack Path</h3>
-            <div class="attack-graph-container">
-                <span class="graph-node">{{ f.attack_graph.path_ascii }}</span>
-            </div>
+            <h3>E. Steps to Reproduce</h3>
+            {% if f.poc_request %}
+            <ol>
+                <li>Target the asset below.</li>
+                <li>Send the request exactly as shown (method, path, headers, body).</li>
+                <li>Compare the response against the Expected / Actual behaviour.</li>
+            </ol>
+            <h4>Request</h4>
+            <div class="evidence-box">{{ f.poc_request }}</div>
+            {% else %}
+            <div class="evidence-box">{{ f.steps_to_reproduce }}</div>
             {% endif %}
 
-            <h3>D. Validation & Steps to Reproduce</h3>
-            <p>{{ f.steps_to_reproduce }}</p>
+            <h3>F. Expected vs. Actual</h3>
+            {% if f.expected_result %}
+            <p><strong>Expected:</strong> {{ f.expected_result }}</p>
+            <p><strong>Actual:</strong> {{ f.actual_result }}</p>
+            {% else %}
+            <p style="color: #64748b; font-size: 0.95rem;">Not yet validated by an executed request — this finding remains a scanner hypothesis.</p>
+            {% endif %}
 
-            <h3>E. Exploit Proof of Concept (PoC)</h3>
-            <p>{{ f.exploit_poc }}</p>
+            {% if f.poc_response %}
+            <h3>G. Proof of Concept — Observed Response</h3>
+            {% if f.validation_stage %}
+            <p><em>Validation stage reached: {{ f.validation_stage }}</em></p>
+            {% endif %}
+            <div class="evidence-box">{{ f.poc_response }}</div>
+            {% endif %}
 
-            <h3>F. Capture Evidence & Raw Output</h3>
-            <div class="evidence-box">{{ f.evidence }}</div>
-
-            <h3>G. Business Impact Assessment</h3>
+            <h3>H. Impact</h3>
             <p>{{ f.business_impact }}</p>
 
-            <h3>H. Remediation & Suggested Recommendations</h3>
-            <p><strong>Remediation Strategy:</strong> {{ f.suggested_remediation }}</p>
+            <h3>I. Remediation</h3>
+            <p><strong>Recommended action:</strong> {{ f.suggested_remediation }}</p>
+
+            <h3>J. Evidence &amp; Raw Output</h3>
+            <div class="evidence-box">{{ f.evidence }}</div>
 
             <div style="margin-top: 25px; font-size: 0.8rem; color: #64748b; border-top: 1px solid #f1f5f9; padding-top: 10px;">
                 <strong>Discovery Metadata:</strong> Discovered by {{ f.discovery_metadata.tool }} | Program: {{ f.discovery_metadata.program }} | Timestamp: {{ f.discovery_metadata.timestamp }}

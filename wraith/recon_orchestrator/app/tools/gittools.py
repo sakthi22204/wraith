@@ -3,6 +3,8 @@ from .base import ReconTool
 from ..schemas import ToolResults, EndpointResult
 
 class GittoolsTool(ReconTool):
+    # Slow fan-out tool: needs more than the global TOOL_TIMEOUT budget.
+    timeout = 600
     def __init__(self):
         super().__init__(name="gittools", image="gittools:latest")
 

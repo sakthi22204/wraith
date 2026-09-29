@@ -17,40 +17,44 @@
 {% for f in findings %}
 # Finding: {{ f.title }}
 
-### 1. Title / Summary
-{{ f.title }}
-
-### 2. Vulnerability Type
-{{ f.vulnerability_type }}
-
-### 3. Severity + CVSS Score
-**Severity:** {{ f.severity }} | **CVSS:** {{ f.cvss_score }} | **AI Confidence:** {{ f.ai_confidence }}
-- **CVSS Vector:** {{ f.cvss_vector or 'N/A' }}
-
-### 4. Affected Asset
-{{ f.affected_asset }}
-
-### 5. Detailed Description
+### Summary
 {{ f.description }}
 
-### 6. Steps to Reproduce
+### Weakness
+{{ f.vulnerability_type }}
+
+### Severity & CVSS
+**Severity:** {{ f.severity }} | **CVSS:** {{ f.cvss_score }} | **AI Confidence:** {{ f.ai_confidence }}
+- **CVSS Vector:** `{{ f.cvss_vector or 'N/A' }}`
+{% if f.risk_rating and f.risk_rating.cvss_rationale %}
+- **Metric rationale:**
+{% for m in f.risk_rating.cvss_rationale %}
+  - **{{ m.metric }}={{ m.value }}:** {{ m.meaning }}
+{% endfor %}
+{% endif %}
+
+### Affected Asset
+{{ f.affected_asset }}
+
+### Steps to Reproduce
 {{ f.steps_to_reproduce }}
 
-### 7. Exploit / PoC Used
-{{ f.exploit_poc }}
+### Expected vs. Actual
+- **Expected:** {{ f.expected_result or 'Not yet validated by an executed request.' }}
+- **Actual:** {{ f.actual_result or 'Not yet validated by an executed request.' }}
 
-### 8. Evidence
+### Impact
+{{ f.business_impact }}
+
+### Remediation
+{{ f.suggested_remediation }}
+
+### Evidence
 ```
 {{ f.evidence }}
 ```
 
-### 9. Business Impact
-{{ f.business_impact }}
-
-### 10. Suggested Remediation
-{{ f.suggested_remediation }}
-
-### 11. Discovery Metadata
+### Discovery Metadata
 - **Timestamp:** {{ f.discovery_metadata.timestamp }}
 - **Discovering Tool:** {{ f.discovery_metadata.tool }}
 - **Program:** {{ f.discovery_metadata.program }}

@@ -1,6 +1,7 @@
 import json
 from typing import List
 from .base import ReconTool, target_url
+from .proxy import add_proxy_flags
 from ..schemas import ToolResults, EndpointResult
 
 class HttpxProbeTool(ReconTool):
@@ -10,7 +11,9 @@ class HttpxProbeTool(ReconTool):
 
     def get_command(self, domain: str) -> List[str]:
         # -u domain, -json output, -silent
-        return ["-u", target_url(domain), "-json", "-silent"]
+        return add_proxy_flags(
+            ["-u", target_url(domain), "-json", "-silent"], "-http-proxy"
+        )
 
     def parse_output(self, output: str) -> ToolResults:
         results = ToolResults()

@@ -34,7 +34,12 @@ async def test_generate_finding_report_missing_data(mock_clients):
 
     assert "CVSS score not calculated" in report.cvss_score
     assert "Unknown Asset" in report.affected_asset
-    assert "Reconstructed steps (best effort)" in report.steps_to_reproduce
-    assert "No active exploitation was performed" in report.exploit_poc
+    # With no executed request there is nothing to replay, so the report must
+    # label the finding as an unvalidated hypothesis rather than inventing
+    # "reconstructed" steps that nobody performed.
+    assert "Not yet validated by an executed request" in report.steps_to_reproduce
+    assert "scanner hypothesis" in report.steps_to_reproduce
+    assert "Reconstructed steps (best effort)" not in report.steps_to_reproduce
+    assert "No proof of concept" in report.exploit_poc
     assert "No raw evidence captured" in report.evidence
     assert report.discovery_metadata["tool"] == "automated scan"

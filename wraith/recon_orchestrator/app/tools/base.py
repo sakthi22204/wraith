@@ -3,6 +3,7 @@ import ipaddress
 from abc import ABC, abstractmethod
 from typing import List, Optional
 from ..schemas import ToolResults, HostResult, PortResult, EndpointResult
+from ..config import settings
 from ..docker_spawner import docker_spawner
 from .proxy import proxy_env, proxy_volumes, proxy_extra_hosts
 
@@ -37,6 +38,12 @@ def resolve_extra_hosts(domain: str) -> Optional[dict]:
 
 
 class ReconTool(ABC):
+    # Per-tool wall-clock budget in seconds. None -> settings.TOOL_TIMEOUT.
+    # Tools that fan out across many archive/DNS sources (gau, waybackurls,
+    # dnsx, ...) can exceed the global budget when the broker caps them at
+    # settings.CPU_QUOTA, so they declare a larger one here.
+    timeout: Optional[int] = None
+
     def __init__(self, name: str, image: str):
         self.name = name
         self.image = image
@@ -58,8 +65,9 @@ class ReconTool(ABC):
         merged_hosts.update(proxy_extra_hosts())
         raw_output = await docker_spawner.spawn_container(
             self.image, cmd,
+            timeout=self.timeout or settings.TOOL_TIMEOUT,
             extra_hosts=merged_hosts or None,
-            environment=proxy_environment(),
-            volumes=proxy_volume_mount(),
+            environment=proxy_env(),
+            volumes=proxy_volumes(),
         )
         return self.parse_output(raw_output)

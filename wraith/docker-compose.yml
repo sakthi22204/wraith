@@ -64,6 +64,9 @@ services:
     depends_on:
       graph_api:
         condition: service_healthy
+      docker_broker:
+        condition: service_healthy
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health')"]
       interval: 10s
@@ -96,6 +99,15 @@ services:
         condition: service_healthy
       kali_sandbox:
         condition: service_healthy
+      # The agent's killswitch check hits active_exploit_runner, and
+      # run_passive_recon posts to recon_orchestrator. If either is missing the
+      # agent fails closed with an opaque "Name or service not known", so gate
+      # startup on both being healthy.
+      active_exploit_runner:
+        condition: service_healthy
+      recon_orchestrator:
+        condition: service_healthy
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/health')"]
       interval: 10s
@@ -111,17 +123,34 @@ services:
       - DATABASE_URL=postgresql://wraith:password@postgres:5432/wraith_audit
       - REDIS_URL=redis://redis:6379/0
       - KALI_SANDBOX_URL=http://kali_sandbox:8000
+      - GRAPH_DB_URL=http://graph_api:8001
       - ADMIN_API_TOKEN=${ADMIN_API_TOKEN:-dev-token-change-me}
       - EXPLOIT_RUNNER_BROKER_TOKEN=${EXPLOIT_RUNNER_BROKER_TOKEN:-dev-exploit-token}
+      # Shared with kali_sandbox. The runner signs each approved request with
+      # it; the sandbox refuses anything without a valid signature.
+      - WRAITH_GATE_SECRET=${WRAITH_GATE_SECRET:-wraith-dev-gate-secret}
     networks:
       - wraith_internal
     depends_on:
-      - postgres
-      - redis
-      - kali_sandbox
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kali_sandbox:
+        condition: service_healthy
+      graph_api:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8004/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
 
   postgres:
     image: postgres:15-alpine
+    restart: unless-stopped
     environment:
       - POSTGRES_USER=wraith
       - POSTGRES_PASSWORD=password
@@ -130,11 +159,24 @@ services:
       - wraith_internal
     volumes:
       - postgres_audit_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wraith -d wraith_audit"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
 
   redis:
     image: redis:alpine
+    restart: unless-stopped
     networks:
       - wraith_internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
 
   docker_broker:
     build:
@@ -149,6 +191,7 @@ services:
       - RECON_BROKER_TOKEN=${RECON_BROKER_TOKEN:-dev-recon-token}
       - EXPLOIT_RUNNER_BROKER_TOKEN=${EXPLOIT_RUNNER_BROKER_TOKEN:-dev-exploit-token}
       - RECON_DOCKER_NETWORK=${RECON_DOCKER_NETWORK:-wraith_wraith_internal}
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8005/health"]
       interval: 10s
@@ -161,8 +204,18 @@ services:
       context: ./kali_sandbox
     environment:
       - MSF_DATABASE_CONFIG=/opt/msf/config/database.yml
+      # The sandbox verifies the runner's grant signature, and independently
+      # re-reads the killswitch and scope rules before it sends anything.
+      - WRAITH_GATE_SECRET=${WRAITH_GATE_SECRET:-wraith-dev-gate-secret}
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgresql://wraith:password@postgres:5432/wraith_audit
     networks:
       - wraith_internal
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "curl -sf -m 2 http://localhost:8000/health"]
       interval: 10s
@@ -184,6 +237,13 @@ services:
       - wraith_internal
     volumes:
       - ollama_data:/root/.ollama
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
 
   # PHASE 9 — REPORTING SERVICE
   reporting:
@@ -296,18 +356,67 @@ services:
       context: ./recon_orchestrator/tool_images/cloud_enum
     image: cloud_enum:latest
 
+  # Upstream ProjectDiscovery images used by the passive recon path.
+  # recon_orchestrator/app/tools/{subfinder,naabu}.py declare these images
+  # directly, so the broker runs them as-is. Declaring them here pre-pulls on
+  # `docker compose up` — otherwise the first scan pays the pull inside the
+  # tool timeout, which is how these tools ended up reported as failures.
+  # These pull-and-exit like the other *_image services above.
+  subfinder_image:
+    image: projectdiscovery/subfinder:latest
+    pull_policy: missing
+    networks:
+      - wraith_internal
+    command: ["-h"]
+
+  naabu_image:
+    image: projectdiscovery/naabu:latest
+    pull_policy: missing
+    networks:
+      - wraith_internal
+    command: ["-h"]
+
   # Intercepting egress sidecar. OPT-IN via compose profile
   #   docker compose --profile recon-proxy up -d
   # so a plain `docker compose up` never starts it — byte-identical footprint.
   # RECON_PROXY_URL on the orchestrator points tool containers at this sidecar
-  # (http://mitmproxy:8080); its CA named-volume is mounted read-only into
+  # (http://mitmproxy_sidecar:8080); its CA named-volume is mounted read-only into
   # tool containers so decrypted request/response evidence lands in the flow
   # file while keeping every tool's command/volumes byte-identical by default.
+  # One-shot root init for the sidecar's named volumes.
+  # mitmproxy's entrypoint drops privileges to uid 1000 ('mitmproxy'), but Docker
+  # creates fresh named volumes owned by root:root 0755, so on a first
+  # `up` mitmdump cannot write its CA or its --save-stream-file target and dies
+  # with "Errno 13 Permission denied: /flows/flows.mitm" (and generates no CA,
+  # leaving tool containers with nothing to trust). Chown both volumes to the
+  # runtime uid before the sidecar starts. Idempotent, so it is safe to re-run
+  # on every up; the sidecar itself still runs unprivileged.
+  mitmproxy_volumes_init:
+    image: busybox:latest
+    profiles: ["recon-proxy"]
+    networks:
+      - wraith_internal
+    user: "0:0"
+    entrypoint:
+      - sh
+      - -c
+      - |
+        chown -R 1000:1000 /ca /flows
+        chmod -R u+rwX /ca /flows
+        echo 'mitmproxy volumes ready'
+    volumes:
+      - mitmproxy_ca:/ca
+      - mitmproxy_flows:/flows
+    restart: "no"
+
   mitmproxy_sidecar:
     image: mitmproxy/mitmproxy:latest
     profiles: ["recon-proxy"]
     networks:
       - wraith_internal
+    depends_on:
+      mitmproxy_volumes_init:
+        condition: service_completed_successfully
     command: mitmdump --listen-host 0.0.0.0 --listen-port 8080 --set ssl_insecure --save-stream-file /flows/flows.mitm
     volumes:
       - mitmproxy_ca:/home/mitmproxy/.mitmproxy

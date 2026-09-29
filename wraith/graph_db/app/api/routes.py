@@ -6,11 +6,13 @@ from pydantic import BaseModel
 from ..schema import (
     Program, ProgramCreate, Host, HostCreate, Port, PortCreate,
     Service, ServiceCreate, Endpoint, EndpointCreate, Parameter, ParameterCreate,
-    Finding, FindingCreate, CVECreate, GraphResponse, FalsePositivePattern,
-    ReconSession, AgentSession, Investigation, InvestigationCreate
+    Finding, FindingCreate, FindingUpdate, CVECreate, GraphResponse, FalsePositivePattern,
+    ReconSession, AgentSession, Investigation, InvestigationCreate,
+    ValidationAttempt, ValidationAttemptCreate
 )
 from ..client import neo4j_client
-from ..repository import Neo4jRepository
+from ..auth import require_admin_token
+from ..repository import Neo4jRepository, ParentNotFoundError
 from ..auth import require_admin_token
 import httpx
 from ..config import settings as graph_settings
@@ -309,19 +311,31 @@ async def upsert_host_alias(program_id: str, host: HostCreate, repo: Neo4jReposi
 
 @router.post("/hosts/{host_id}/ports", response_model=Port)
 async def upsert_port(host_id: str, port: PortCreate, repo: Neo4jRepository = Depends(get_repo)):
-    return await repo.upsert_port(port, host_id)
+    try:
+        return await repo.upsert_port(port, host_id)
+    except ParentNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 @router.post("/ports/{port_id}/service", response_model=Service)
 async def upsert_service(port_id: str, service: ServiceCreate, repo: Neo4jRepository = Depends(get_repo)):
-    return await repo.upsert_service(service, port_id)
+    try:
+        return await repo.upsert_service(service, port_id)
+    except ParentNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 @router.post("/hosts/{host_id}/endpoints", response_model=Endpoint)
 async def upsert_endpoint(host_id: str, endpoint: EndpointCreate, repo: Neo4jRepository = Depends(get_repo)):
-    return await repo.upsert_endpoint(endpoint, host_id)
+    try:
+        return await repo.upsert_endpoint(endpoint, host_id)
+    except ParentNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 @router.post("/endpoints/{endpoint_id}/parameters", response_model=Parameter)
 async def upsert_parameter(endpoint_id: str, param: ParameterCreate, repo: Neo4jRepository = Depends(get_repo)):
-    return await repo.upsert_parameter(param, endpoint_id)
+    try:
+        return await repo.upsert_parameter(param, endpoint_id)
+    except ParentNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 @router.post("/findings", response_model=Finding)
 async def create_finding(finding: FindingCreate, repo: Neo4jRepository = Depends(get_repo)):
@@ -331,6 +345,32 @@ async def create_finding(finding: FindingCreate, repo: Neo4jRepository = Depends
         return await repo.create_finding(finding)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+@router.post("/findings/{finding_id}/validations", response_model=ValidationAttempt,
+             dependencies=[Depends(require_admin_token)])
+async def record_validation(finding_id: str, attempt: ValidationAttemptCreate,
+                            repo: Neo4jRepository = Depends(get_repo)):
+    """Record one executed validation exchange against a finding."""
+    attempt.finding_id = finding_id
+    return await repo.record_validation_attempt(attempt)
+
+
+@router.patch("/findings/{finding_id}", response_model=Finding,
+              dependencies=[Depends(require_admin_token)])
+async def update_finding(finding_id: str, payload: FindingUpdate,
+                         repo: Neo4jRepository = Depends(get_repo)):
+    """Attach validation evidence to a finding.
+
+    The evidence gate runs here too, so a caller cannot PATCH a finding
+    straight to AI_VALIDATED and skip the executed-proof requirement.
+    """
+    try:
+        return await repo.update_finding(finding_id, payload)
+    except ParentNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
 
 @router.get("/hosts/{host_id}/attack-paths")
 async def get_attack_paths(host_id: str, repo: Neo4jRepository = Depends(get_repo)):

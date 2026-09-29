@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field, AliasChoices, computed_field
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from enum import Enum
 
 class FindingStatus(str, Enum):
@@ -13,8 +13,7 @@ class FindingStatus(str, Enum):
 
     @classmethod
     def _missing_(cls, value: object):
-        if not isinstance(value, str):
-            return None
+        if not isinstance(value, str):            return None
         # Handle legacy "confirmed" or "unconfirmed" lowercase values
         val_upper = value.upper()
         if val_upper == "CONFIRMED":
@@ -114,6 +113,10 @@ class Parameter(ParameterBase):
     id: str
 
 class FindingBase(BaseModel):
+    # A human-readable headline. Reports previously had to synthesise one by
+    # slicing the description, which produced titles like "INFO DISCLOSURE in
+    # Scanner reported a /metrics endpoint ex..." in every finding.
+    title: Optional[str] = None
     vuln_type: str
     severity: str
     confidence: str
@@ -125,14 +128,123 @@ class FindingBase(BaseModel):
     cvss_vector: Optional[str] = None
     evidence: Optional[str] = None
 
+    # --- Validation evidence -------------------------------------------
+    # Populated only by an executed validation. ai_confidence alone must never
+    # be sufficient to populate these; see require_validation_evidence().
+    poc_request: Optional[str] = None
+    poc_response: Optional[str] = None
+    expected_result: Optional[str] = None
+    actual_result: Optional[str] = None
+    steps_to_reproduce: Optional[str] = None
+    root_cause: Optional[str] = None
+    impact: Optional[str] = None
+    remediation: Optional[str] = None
+    validation_stage: str = "NOT_VALIDATED"
+
+
+class ValidationAttemptBase(BaseModel):
+    """One executed validation exchange, stored verbatim as evidence."""
+    request: Dict[str, Any] = Field(default_factory=dict)
+    response: Dict[str, Any] = Field(default_factory=dict)
+    expected_result: str = ""
+    actual_result: str = ""
+    outcome: str = "INCONCLUSIVE"
+    stage_achieved: str = "NOT_VALIDATED"
+    scope_decision: str = ""
+    rate_limit_decision: str = ""
+    killswitch_decision: str = ""
+    elapsed_ms: Optional[float] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ValidationAttemptCreate(ValidationAttemptBase):
+    finding_id: Optional[str] = None
+
+
+class ValidationAttempt(ValidationAttemptBase):
+    id: str
+
+
+#: Fields that must all be present before a finding may claim a validated
+#: status. Deliberately excludes ai_confidence: a model being sure of itself is
+#: not evidence.
+REQUIRED_VALIDATION_FIELDS = (
+    "poc_request",
+    "poc_response",
+    "expected_result",
+    "actual_result",
+    "validation_stage",
+)
+
+#: Statuses that assert the finding is real. Reaching one of these without the
+#: evidence above is rejected.
+VALIDATED_STATUSES = frozenset({
+    FindingStatus.AI_VALIDATED.value,
+    FindingStatus.CORROBORATED.value,
+    FindingStatus.HUMAN_CONFIRMED.value,
+})
+
+
+def require_validation_evidence(data: dict) -> Optional[str]:
+    """Return an error message if `data` claims validation without evidence.
+
+    This is the enforcement point for "AI confidence must never validate".
+    It lives in the schema so every write path inherits it: a direct API call,
+    the agent's graph client, and any future caller all get the same answer.
+    """
+    status = data.get("status")
+    if not isinstance(status, str):
+        status = getattr(status, "value", None)
+    if status not in VALIDATED_STATUSES:
+        return None
+
+    missing = [f for f in REQUIRED_VALIDATION_FIELDS if not str(data.get(f) or "").strip()]
+    if missing:
+        return (
+            f"status '{status}' requires executed validation evidence; missing: "
+            f"{', '.join(missing)}. AI confidence alone cannot validate a finding."
+        )
+    return None
+
+
 class FindingCreate(FindingBase):
     discovered_at: datetime = Field(default_factory=datetime.utcnow)
     target_id: str
     target_type: str
 
+
 class Finding(FindingBase):
     id: str
     discovered_at: datetime
+    # Denormalized link back to the affected asset. Stored on the node by
+    # create_finding; without it here pydantic drops it and the reporting
+    # service cannot resolve which endpoint/parameter a finding belongs to.
+    target_id: Optional[str] = None
+    target_type: Optional[str] = None
+
+
+class FindingUpdate(BaseModel):
+    """Partial update used to attach executed evidence to a finding.
+
+    Every field is optional, but ``status`` is still subject to
+    ``require_validation_evidence``: the gate is applied against the merged
+    result of the existing node and this patch, so a partial write cannot
+    launder a finding into a validated state.
+    """
+    title: Optional[str] = None
+    status: Optional[str] = None
+    severity: Optional[str] = None
+    confidence: Optional[float] = None
+    evidence: Optional[str] = None
+    poc_request: Optional[str] = None
+    poc_response: Optional[str] = None
+    expected_result: Optional[str] = None
+    actual_result: Optional[str] = None
+    validation_stage: Optional[str] = None
+    steps_to_reproduce: Optional[str] = None
+    root_cause: Optional[str] = None
+    impact: Optional[str] = None
+    remediation: Optional[str] = None
 
 class FalsePositivePatternBase(BaseModel):
     vuln_type: str

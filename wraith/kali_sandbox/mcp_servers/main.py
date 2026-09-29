@@ -1,7 +1,7 @@
 import os
 import json
 from contextvars import ContextVar
-from typing import Optional
+from typing import Optional, List
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel
 from fastapi import HTTPException
@@ -12,6 +12,8 @@ from .nuclei_server import NucleiServer
 from .sqlmap_server import SQLMapServer
 from .hydra_server import HydraServer
 from .metasploit_server import MetasploitServer
+from .http_probe_server import HttpProbeServer
+from .gate import GateError, enforce
 
 # Create a single MCP server instance
 mcp = FastMCP("Wraith Security Tools", host="0.0.0.0", port=8000)
@@ -19,6 +21,12 @@ mcp = FastMCP("Wraith Security Tools", host="0.0.0.0", port=8000)
 caller_context: ContextVar[Optional[str]] = ContextVar("caller_context", default=None)
 
 DANGEROUS_TOOLS = {"run_hydra", "run_msf_module"}
+
+# Tools that send traffic to a caller-supplied destination. Each is gated on
+# killswitch + signed grant + re-read scope, not merely on who the caller says
+# it is: the request body chooses the destination, so a caller name proves
+# nothing about where the packet is going.
+GATED_NETWORK_TOOLS = {"http_probe", "http_probe_diff"}
 AUTHORIZED_DANGEROUS_CALLERS = set(os.getenv("AUTHORIZED_DANGEROUS_CALLERS", "active_exploit_runner").split(","))
 
 def verify_caller(tool_name: str, caller: Optional[str]):
@@ -27,6 +35,27 @@ def verify_caller(tool_name: str, caller: Optional[str]):
 
     if caller not in AUTHORIZED_DANGEROUS_CALLERS:
         raise HTTPException(status_code=403, detail=f"Caller {caller} is not authorized to use {tool_name}")
+
+grant_context: ContextVar[Optional[str]] = ContextVar("grant_context", default=None)
+
+
+def gate_request(tool_name: str, body: dict, request=None):
+    """Enforce killswitch, grant and scope before a gated tool sends anything."""
+    if tool_name not in GATED_NETWORK_TOOLS:
+        return
+    from .config import settings
+    caller = (request.headers.get("X-Wraith-Caller") if request is not None else None) or get_caller()
+    grant_token = (request.headers.get("X-Wraith-Grant") if request is not None else None) or grant_context.get()
+    targets = [str(body.get("url") or "")]
+    for variant in body.get("variants") or []:
+        if isinstance(variant, dict) and variant.get("url"):
+            targets.append(str(variant["url"]))
+    try:
+        enforce(caller=caller, grant_token=grant_token,
+                targets=[t for t in targets if t], settings=settings)
+    except GateError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail)
+
 
 def get_caller() -> Optional[str]:
     try:
@@ -59,6 +88,7 @@ nuclei = NucleiServer()
 sqlmap = SQLMapServer()
 hydra = HydraServer()
 metasploit = MetasploitServer()
+http_probe_server = HttpProbeServer()
 
 # Register tools from each provider to the main mcp instance
 @mcp.tool()
@@ -93,6 +123,63 @@ async def run_msf_module(module: str, target: str, options: dict):
     verify_caller("run_msf_module", caller)
     return unwrap_inner(await metasploit.mcp.call_tool("run_module", {"module": module, "target": target, "options": options, "caller": caller}))
 
+@mcp.tool()
+async def http_probe(
+    url: str,
+    method: str = "GET",
+    headers: Optional[dict] = None,
+    body=None,
+    timeout: float = 20.0,
+    follow_redirects: bool = False,
+):
+    """Send one agent-authored HTTP request and capture the full raw response.
+
+    This is the validation primitive: craft the exact request a hypothesis
+    predicts, execute it, and inspect what actually came back. Safety gates
+    (scope, killswitch, rate limit) are enforced by the caller in
+    active_exploit_runner before this tool is ever reached.
+    """
+    caller = get_caller()
+    return unwrap_inner(await http_probe_server.mcp.call_tool("http_probe", {
+        "url": url, "method": method, "headers": headers, "body": body,
+        "timeout": timeout, "follow_redirects": follow_redirects, "caller": caller,
+    }))
+
+@mcp.tool()
+async def http_probe_diff(
+    url: str,
+    variants: List[dict],
+    method: str = "GET",
+    headers: Optional[dict] = None,
+    body=None,
+    timeout: float = 20.0,
+    follow_redirects: bool = False,
+    identities: Optional[List[dict]] = None,
+    baseline_identity: Optional[str] = None,
+):
+    """Send a request, re-send it with deliberate changes, and diff the responses.
+
+    This is how bugs that only exist as a *difference* get evidence: broken
+    object-level authorization, input handling, error-based disclosure. Each
+    variant must target the same host/port/scheme as the baseline, and a
+    difference is only material if it survives normalization of expected
+    volatile fields.
+
+    Pass test accounts as named `identities` and reference them by label from a
+    variant to compare what two principals can see. Credential values are used
+    to send the request and then withheld from the returned evidence. Use only
+    accounts you own or are authorized to test with. Safety gates (scope,
+    killswitch, rate limit) are enforced by active_exploit_runner before this
+    tool is reached.
+    """
+    caller = get_caller()
+    return unwrap_inner(await http_probe_server.mcp.call_tool("http_probe_diff", {
+        "url": url, "variants": variants, "method": method, "headers": headers,
+        "body": body, "timeout": timeout, "follow_redirects": follow_redirects,
+        "identities": identities, "baseline_identity": baseline_identity,
+        "caller": caller,
+    }))
+
 # Add internal REST bridge for Phase 5 executor
 @mcp.custom_route("/tools/{tool_name}/call", methods=["POST"])
 async def call_tool_internal(request):
@@ -104,7 +191,14 @@ async def call_tool_internal(request):
     verify_caller(tool_name, caller)
 
     # Set context for the duration of this call so @mcp.tool() wrappers can see it
+    try:
+        gate_request(tool_name, body, request=request)
+    except HTTPException as exc:
+        return JSONResponse(content={"error": exc.detail, "success": False},
+                            status_code=exc.status_code)
+
     token = caller_context.set(caller)
+    grant_token = grant_context.set(request.headers.get("X-Wraith-Grant"))
 
     # FastMCP stores tool handlers in a dictionary
     # For simplicity, we just use call_tool which is an internal method
@@ -116,6 +210,7 @@ async def call_tool_internal(request):
         return JSONResponse(content={"error": str(e), "success": False}, status_code=500)
     finally:
         caller_context.reset(token)
+        grant_context.reset(grant_token)
 
     # Since call_tool returns a list of Content objects, we need to serialize them
     return JSONResponse(content=jsonable_encoder(result))

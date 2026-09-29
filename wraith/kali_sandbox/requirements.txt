@@ -5,3 +5,11 @@ fastapi>=0.100.0
 uvicorn>=0.23.0
 pytest>=7.0.0
 pytest-asyncio>=0.21.0
+# The sandbox enforces its own gate, so it needs to read the killswitch (Redis)
+# and the investigation's scope rules (Postgres) directly. Both paths fail
+# closed if these are missing.
+redis>=5.0.0
+sqlalchemy>=2.0.0
+# SQLAlchemy 2.x loads the v3 driver by default; without it create_engine fails
+# at import time and the scope check would silently degrade to refusing.
+psycopg[binary]>=3.1.0

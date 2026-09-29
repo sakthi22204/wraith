@@ -11,10 +11,26 @@ import neo4j.exceptions
 from .schema import (
     Program, ProgramCreate, Host, HostCreate, Port, PortCreate,
     Service, ServiceCreate, Endpoint, EndpointCreate, Parameter, ParameterCreate,
-    Finding, FindingCreate, CVE, CVECreate, Node, Link, GraphResponse,
+    Finding, FindingCreate, FindingUpdate, CVE, CVECreate, Node, Link, GraphResponse,
+    ValidationAttempt, ValidationAttemptCreate, require_validation_evidence,
     FindingStatus, FalsePositivePattern, FalsePositivePatternCreate,
     ReconSession, AgentSession, Investigation, InvestigationCreate
 )
+
+class ParentNotFoundError(ValueError):
+    """Raised when an upsert's MATCH target (host/port/endpoint) does not exist.
+
+    Without this, a missing parent makes the Cypher RETURN yield zero rows, so
+    result.single() is None and indexing it raises TypeError -> HTTP 500. The
+    caller passed a bad id; that is a client error, not a server fault.
+    """
+
+
+def _require_parent(record, kind: str, parent_id: str):
+    if record is None:
+        raise ParentNotFoundError(f"{kind} {parent_id} not found")
+    return record
+
 
 def generate_id(*args, investigation_id: str = None) -> str:
     """
@@ -204,7 +220,7 @@ class Neo4jRepository:
         """
         result = await self.session.run(query, host_id=host_id, p_id=p_id, number=port.number,
                                       protocol=port.protocol, state=port.state, source_tool=port.source_tool)
-        record = await result.single()
+        record = _require_parent(await result.single(), "Host", host_id)
         return Port(**record["p"])
 
     async def upsert_service(self, service: ServiceCreate, port_id: str) -> Service:
@@ -218,7 +234,7 @@ class Neo4jRepository:
         """
         result = await self.session.run(query, port_id=port_id, s_id=s_id, name=service.name,
                                       version=service.version, banner=service.banner)
-        record = await result.single()
+        record = _require_parent(await result.single(), "Port", port_id)
         return Service(**record["s"])
 
     async def upsert_endpoint(self, endpoint: EndpointCreate, host_id: str) -> Endpoint:
@@ -234,7 +250,7 @@ class Neo4jRepository:
         """
         result = await self.session.run(query, host_id=host_id, e_id=e_id, url=endpoint.url,
                                       method=endpoint.method, now=now, source_tool=endpoint.source_tool)
-        record = await result.single()
+        record = _require_parent(await result.single(), "Host", host_id)
         return Endpoint(**record["e"])
 
     async def upsert_parameter(self, param: ParameterCreate, endpoint_id: str) -> Parameter:
@@ -248,10 +264,103 @@ class Neo4jRepository:
         """
         result = await self.session.run(query, endpoint_id=endpoint_id, p_id=p_id, name=param.name,
                                       location=param.location, param_type=param.param_type)
-        record = await result.single()
+        record = _require_parent(await result.single(), "Endpoint", endpoint_id)
         return Parameter(**record["p"])
 
+    async def record_validation_attempt(self, attempt: ValidationAttemptCreate) -> ValidationAttempt:
+        """Persist one validation exchange verbatim, linked to its finding.
+
+        Attempts that were refused by a safety gate are stored too. A blocked
+        validation is the audit trail showing the gate held, and discarding it
+        would make the trail look silent rather than protected.
+        """
+        import json as _json
+        v_id = generate_id("validation", _json.dumps(attempt.request, sort_keys=True)[:200],
+                           str(attempt.created_at))
+        query = """
+        MERGE (v:ValidationAttempt {id: $v_id})
+        SET v.request = $request, v.response = $response,
+            v.expected_result = $expected_result, v.actual_result = $actual_result,
+            v.outcome = $outcome, v.stage_achieved = $stage_achieved,
+            v.scope_decision = $scope_decision, v.rate_limit_decision = $rate_limit_decision,
+            v.killswitch_decision = $killswitch_decision, v.elapsed_ms = $elapsed_ms,
+            v.created_at = $created_at
+        WITH v
+        OPTIONAL MATCH (f:Finding {id: $finding_id})
+        FOREACH (_ IN CASE WHEN f IS NULL THEN [] ELSE [1] END | MERGE (f)-[:VALIDATED_BY]->(v))
+        RETURN v
+        """
+        result = await self.session.run(
+            query, v_id=v_id,
+            request=_json.dumps(attempt.request), response=_json.dumps(attempt.response),
+            expected_result=attempt.expected_result, actual_result=attempt.actual_result,
+            outcome=attempt.outcome, stage_achieved=attempt.stage_achieved,
+            scope_decision=attempt.scope_decision, rate_limit_decision=attempt.rate_limit_decision,
+            killswitch_decision=attempt.killswitch_decision, elapsed_ms=attempt.elapsed_ms,
+            created_at=attempt.created_at.isoformat() + "Z",
+            finding_id=attempt.finding_id,
+        )
+        record = _require_parent(await result.single(), "session", "validation")
+        node = record["v"]
+        payload = dict(node)
+        for key in ("request", "response"):
+            if isinstance(payload.get(key), str):
+                try:
+                    payload[key] = _json.loads(payload[key])
+                except (ValueError, TypeError):
+                    pass
+        return ValidationAttempt(**payload)
+
+    async def get_finding(self, finding_id: str) -> Finding:
+        result = await self.session.run(
+            "MATCH (f:Finding {id: $finding_id}) RETURN f", finding_id=finding_id,
+        )
+        record = await result.single()
+        if record is None:
+            raise ParentNotFoundError(f"finding {finding_id} not found")
+        return Finding(**dict(record["f"]))
+
+    async def update_finding(self, finding_id: str, update: "FindingUpdate") -> Finding:
+        """Merge a partial update into a finding, re-running the evidence gate.
+
+        The gate is evaluated against the *merged* node state, not just the
+        patch. Without that, a caller could satisfy the requirement by writing
+        the evidence fields in one call and the validated status in another
+        without ever having proved anything, or conversely could be blocked from
+        correcting a status it should be allowed to fix.
+        """
+        fields = {k: v for k, v in update.model_dump().items() if v is not None}
+        if not fields:
+            return await self.get_finding(finding_id)
+
+        current = await self.get_finding(finding_id)
+        merged = {**current.model_dump(), **fields}
+
+        error = require_validation_evidence(merged)
+        if error:
+            raise ValueError(error)
+
+        assignments = ", ".join(f"f.{k} = ${k}" for k in fields)
+        query = f"""
+        MATCH (f:Finding {{id: $finding_id}})
+        SET {assignments}
+        RETURN f
+        """
+        result = await self.session.run(query, finding_id=finding_id, **fields)
+        record = await result.single()
+        if record is None:
+            raise ParentNotFoundError(f"finding {finding_id} not found")
+        return Finding(**dict(record["f"]))
+
     async def create_finding(self, finding: FindingCreate) -> Finding:
+        # A finding may only claim a validated status if it carries an executed
+        # validation. This is checked here, at the single write path, so no
+        # caller (agent, script, future service) can bypass it by setting a
+        # status directly.
+        violation = require_validation_evidence(finding.model_dump())
+        if violation:
+            raise ValueError(violation)
+
         f_id = generate_id(finding.vuln_type, finding.target_id)
         now_utc = finding.discovered_at.isoformat() + "Z"
 
@@ -259,11 +368,17 @@ class Neo4jRepository:
             query = """
             MATCH (t:Endpoint {id: $target_id})
             MERGE (f:Finding {id: $f_id})
-            SET f.vuln_type = $vuln_type, f.severity = $severity, f.confidence = $confidence,
+            SET f.title = $title, f.vuln_type = $vuln_type, f.severity = $severity, f.confidence = $confidence,
                 f.status = $status, f.description = $description, f.discovered_at = $discovered_at,
                 f.ai_confidence = $ai_confidence, f.ai_reasoning = $ai_reasoning,
                 f.corroborating_sources = $corroborating_sources,
-                f.cvss_vector = $cvss_vector, f.evidence = $evidence
+                f.cvss_vector = $cvss_vector, f.evidence = $evidence,
+                f.target_id = $target_id, f.target_type = 'endpoint',
+                f.poc_request = $poc_request, f.poc_response = $poc_response,
+                f.expected_result = $expected_result, f.actual_result = $actual_result,
+                f.steps_to_reproduce = $steps_to_reproduce, f.root_cause = $root_cause,
+                f.impact = $impact, f.remediation = $remediation,
+                f.validation_stage = $validation_stage
             MERGE (t)-[:HAS_FINDING]->(f)
             RETURN f
             """
@@ -271,26 +386,43 @@ class Neo4jRepository:
             query = """
             MATCH (t:Parameter {id: $target_id})
             MERGE (f:Finding {id: $f_id})
-            SET f.vuln_type = $vuln_type, f.severity = $severity, f.confidence = $confidence,
+            SET f.title = $title, f.vuln_type = $vuln_type, f.severity = $severity, f.confidence = $confidence,
                 f.status = $status, f.description = $description, f.discovered_at = $discovered_at,
                 f.ai_confidence = $ai_confidence, f.ai_reasoning = $ai_reasoning,
                 f.corroborating_sources = $corroborating_sources,
-                f.cvss_vector = $cvss_vector, f.evidence = $evidence
+                f.cvss_vector = $cvss_vector, f.evidence = $evidence,
+                f.target_id = $target_id, f.target_type = 'parameter',
+                f.poc_request = $poc_request, f.poc_response = $poc_response,
+                f.expected_result = $expected_result, f.actual_result = $actual_result,
+                f.steps_to_reproduce = $steps_to_reproduce, f.root_cause = $root_cause,
+                f.impact = $impact, f.remediation = $remediation,
+                f.validation_stage = $validation_stage
             MERGE (t)-[:HAS_FINDING]->(f)
             RETURN f
             """
         else:
             raise ValueError(f"Invalid target_type: {finding.target_type}")
 
-        result = await self.session.run(query, target_id=finding.target_id, f_id=f_id, vuln_type=finding.vuln_type,
+        result = await self.session.run(query, target_id=finding.target_id, f_id=f_id, title=finding.title, vuln_type=finding.vuln_type,
                                       severity=finding.severity, confidence=finding.confidence,
                                       status=finding.status.value, description=finding.description,
                                       discovered_at=now_utc, ai_confidence=finding.ai_confidence,
                                       ai_reasoning=finding.ai_reasoning,
                                       corroborating_sources=finding.corroborating_sources,
                                       cvss_vector=finding.cvss_vector,
-                                      evidence=finding.evidence)
-        record = await result.single()
+                                      evidence=finding.evidence,
+                                      poc_request=finding.poc_request,
+                                      poc_response=finding.poc_response,
+                                      expected_result=finding.expected_result,
+                                      actual_result=finding.actual_result,
+                                      steps_to_reproduce=finding.steps_to_reproduce,
+                                      root_cause=finding.root_cause,
+                                      impact=finding.impact,
+                                      remediation=finding.remediation,
+                                      validation_stage=finding.validation_stage)
+        record = _require_parent(await result.single(),
+                                 "Endpoint" if finding.target_type.lower() == "endpoint" else "Parameter",
+                                 finding.target_id)
         return Finding(**record["f"])
 
     async def add_corroboration(self, finding_id: str, source_name: str) -> Finding:

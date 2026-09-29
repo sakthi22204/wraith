@@ -73,7 +73,9 @@ class DockerProxy:
         def run():
             try:
                 container = self.client.containers.get(container_id)
-                return container.logs().decode("utf-8")
+                # tail-bounded: default logs() is tail="all" and buffers the whole
+                # stream in memory, which OOM-killed this broker on verbose tools.
+                return container.logs(tail=settings.LOG_TAIL_LINES).decode("utf-8", errors="replace")
             except docker.errors.NotFound:
                 return ""
             except docker.errors.APIError as e:

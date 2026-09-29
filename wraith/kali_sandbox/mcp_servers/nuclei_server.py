@@ -29,7 +29,11 @@ class NucleiServer(BaseSecurityServer):
             self.validate_target(target)
 
             # Use -json-export to get structured output
-            cmd = ["nuclei", "-u", target, "-jsonl", "-silent", "-c", "15", "-timeout", "5"]
+            # -dc (disable clustering) is mandatory here: nuclei's request clustering
+            # collapsed 4371 http templates into 278 clusters / 237 requests and lost
+            # every match, reporting 0 findings on a known-vulnerable target. The same
+            # scan with -dc returns its findings. Do not remove without re-verifying.
+            cmd = ["nuclei", "-u", target, "-jsonl", "-silent", "-dc", "-c", "15", "-timeout", "5"]
             if category != NucleiTemplateCategory.DEFAULT:
                 # Nuclei v3+ templates are organized under protocol dirs (e.g. http/cves).
                 category = category.value if hasattr(category, "value") else category

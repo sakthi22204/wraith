@@ -4,6 +4,8 @@ from .base import ReconTool
 from ..schemas import ToolResults, PortResult
 
 class NmapTool(ReconTool):
+    # Slow fan-out tool: needs more than the global TOOL_TIMEOUT budget.
+    timeout = 600
     def __init__(self):
         super().__init__(name="nmap", image="instrumentisto/nmap:latest")
 

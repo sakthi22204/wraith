@@ -19,7 +19,7 @@ async def test_nuclei_category_string_is_accepted():
         )
 
         cmd = mock_run.call_args[0][0]
-        assert cmd == ["nuclei", "-u", "http://juice_shop:3000", "-jsonl", "-silent", "-t", "http/vulnerabilities"]
+        assert cmd == ["nuclei", "-u", "http://juice_shop:3000", "-jsonl", "-silent", "-dc", "-c", "15", "-timeout", "5", "-t", "http/vulnerabilities"]
 
 
 @pytest.mark.asyncio
@@ -34,7 +34,7 @@ async def test_nuclei_category_default_string():
         )
 
         cmd = mock_run.call_args[0][0]
-        assert cmd == ["nuclei", "-u", "http://juice_shop:3000", "-jsonl", "-silent"]
+        assert cmd == ["nuclei", "-u", "http://juice_shop:3000", "-jsonl", "-silent", "-dc", "-c", "15", "-timeout", "5"]
 
 
 @pytest.mark.asyncio
@@ -49,7 +49,7 @@ async def test_nuclei_category_enum_still_supported():
         )
 
         cmd = mock_run.call_args[0][0]
-        assert cmd == ["nuclei", "-u", "http://juice_shop:3000", "-jsonl", "-silent", "-t", "http/cves"]
+        assert cmd == ["nuclei", "-u", "http://juice_shop:3000", "-jsonl", "-silent", "-dc", "-c", "15", "-timeout", "5", "-t", "http/cves"]
 
 @pytest.mark.asyncio
 async def test_nuclei_category_invalid_is_graceful():

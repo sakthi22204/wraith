@@ -3,6 +3,8 @@ from .base import ReconTool
 from ..schemas import ToolResults, EndpointResult
 
 class GauTool(ReconTool):
+    # Slow fan-out tool: needs more than the global TOOL_TIMEOUT budget.
+    timeout = 900
     def __init__(self):
         super().__init__(name="gau", image="gau:latest")
 

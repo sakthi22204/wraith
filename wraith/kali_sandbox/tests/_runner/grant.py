@@ -1,0 +1,83 @@
+"""Signed capability grants: proof that a request already passed the gates.
+
+The sandbox is a separate service, and a caller header alone cannot carry that
+proof -- ``X-Wraith-Caller`` is just a string anyone on the network can set. So
+the runner mints a short-lived HMAC grant after its own killswitch, scope and
+rate-limit gates pass, and the sandbox verifies the signature before it sends
+anything. The grant names the investigation and the exact host it was issued
+for, so it cannot be replayed against a different destination.
+
+``kali_sandbox/mcp_servers/gate.py`` verifies these. Both sides are pinned to
+one test vector in ``tests/test_grant.py`` so the two encodings cannot drift.
+"""
+import base64
+import hashlib
+import hmac
+import json
+import secrets
+import time
+from typing import Any, Dict
+
+GRANT_VERSION = 1
+DEFAULT_TTL_SECONDS = 120
+
+
+def _b64e(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+
+def _b64d(value: str) -> bytes:
+    return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+
+
+def mint_grant(
+    secret: str,
+    *,
+    caller: str,
+    investigation_id: str,
+    host: str,
+    cost: int = 1,
+    ttl_seconds: int = DEFAULT_TTL_SECONDS,
+) -> str:
+    """Issue a grant binding one caller to one host for a short window."""
+    if not secret:
+        raise ValueError("gate secret is not configured; refusing to mint a grant")
+    payload: Dict[str, Any] = {
+        "v": GRANT_VERSION,
+        "caller": caller,
+        "inv": investigation_id,
+        "host": (host or "").lower(),
+        "cost": int(cost),
+        "exp": int(time.time()) + int(ttl_seconds),
+        "nonce": secrets.token_hex(8),
+    }
+    body = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return f"{_b64e(body)}.{_b64e(hmac.new(secret.encode(), body, hashlib.sha256).digest())}"
+
+
+def verify_grant(token: str, secret: str, *, now: float | None = None) -> Dict[str, Any]:
+    """Return the grant payload, or raise ValueError. Fails closed."""
+    if not secret:
+        raise ValueError("gate secret is not configured; refusing to trust any grant")
+    if not token or not isinstance(token, str) or token.count(".") != 1:
+        raise ValueError("malformed grant")
+    body_b64, sig_b64 = token.split(".")
+    try:
+        body = _b64d(body_b64)
+        signature = _b64d(sig_b64)
+    except Exception as exc:  # noqa: BLE001 - any decode failure is a bad token
+        raise ValueError("malformed grant encoding") from exc
+
+    expected = hmac.new(secret.encode(), body, hashlib.sha256).digest()
+    if not hmac.compare_digest(signature, expected):
+        raise ValueError("grant signature is not valid for this gate secret")
+
+    try:
+        payload = json.loads(body)
+    except Exception as exc:  # noqa: BLE001
+        raise ValueError("grant payload is not readable") from exc
+    if not isinstance(payload, dict) or payload.get("v") != GRANT_VERSION:
+        raise ValueError("unsupported grant version")
+    if int(payload.get("exp", 0)) < int(now if now is not None else time.time()):
+        raise ValueError("grant has expired")
+    return payload

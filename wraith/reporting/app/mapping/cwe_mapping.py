@@ -43,6 +43,86 @@ CWE_MAPPING = {
         "cwe_id": "CWE-77",
         "owasp_category": "A03:2021-Injection",
         "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+    },
+    # Categories the Kali toolchain actually emits. Without these, a metrics or
+    # header finding rendered as "Unknown - Unknown" in the report.
+    "info disclosure": {
+        "cwe_id": "CWE-200",
+        "owasp_category": "A01:2021-Broken Access Control",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N"
+    },
+    "information disclosure": {
+        "cwe_id": "CWE-200",
+        "owasp_category": "A01:2021-Broken Access Control",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N"
+    },
+    "api exposure": {
+        "cwe_id": "CWE-200",
+        "owasp_category": "A05:2021-Security Misconfiguration",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N"
+    },
+    "missing security header": {
+        "cwe_id": "CWE-693",
+        "owasp_category": "A05:2021-Security Misconfiguration",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:N"
+    },
+    "security misconfiguration": {
+        "cwe_id": "CWE-16",
+        "owasp_category": "A05:2021-Security Misconfiguration",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N"
+    },
+    "exposed debug endpoint": {
+        "cwe_id": "CWE-489",
+        "owasp_category": "A05:2021-Security Misconfiguration",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N"
+    },
+    # The deterministic hypothesis rules (Phase 1) emit these long-form types.
+    # Map them so generated findings render real CWE/OWASP labels rather than
+    # "Unknown - Unknown".
+    "sql injection": {
+        "cwe_id": "CWE-89",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+    },
+    "cors misconfiguration": {
+        "cwe_id": "CWE-942",
+        "owasp_category": "A05:2021-Security Misconfiguration",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N"
+    },
+    "cors": {
+        "cwe_id": "CWE-942",
+        "owasp_category": "A05:2021-Security Misconfiguration",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N"
+    },
+    "missing security headers": {
+        "cwe_id": "CWE-693",
+        "owasp_category": "A05:2021-Security Misconfiguration",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:N"
+    },
+    "host header injection": {
+        "cwe_id": "CWE-644",
+        "owasp_category": "A05:2021-Security Misconfiguration",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:N"
+    },
+    "open redirect": {
+        "cwe_id": "CWE-601",
+        "owasp_category": "A01:2021-Broken Access Control",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:N/I:L/A:N"
+    },
+    "account enumeration": {
+        "cwe_id": "CWE-204",
+        "owasp_category": "A07:2021-Identification and Authentication Failures",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N"
+    },
+    "cross-site request forgery": {
+        "cwe_id": "CWE-352",
+        "owasp_category": "A01:2021-Broken Access Control",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:N/I:L/A:N"
+    },
+    "weak jwt handling": {
+        "cwe_id": "CWE-287",
+        "owasp_category": "A07:2021-Identification and Authentication Failures",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N"
     }
 }
 

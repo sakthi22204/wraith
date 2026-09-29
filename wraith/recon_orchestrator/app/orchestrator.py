@@ -25,6 +25,18 @@ from .tools.cloud_enum import CloudEnumTool
 from .graph_client import graph_client
 
 class ReconOrchestrator:
+    # Tools that send high-rate / brute-force traffic or aggressive scans
+    # (port scans, fuzzing, crawlers, CMS scanners). A program's rules of
+    # engagement typically cap request rate and forbid aggressive scanning, so
+    # these are never run against real-world (non-local) targets.
+    AGGRESSIVE_TOOLS = {"naabu", "katana", "nmap", "ffuf", "kiterunner", "wpscan", "gittools"}
+
+    # Passive / light-touch tools that are safe against remote targets.
+    PASSIVE_REMOTE_TOOLS = {
+        "subfinder", "httpx", "gau", "waybackurls", "cloud_enum",
+        "dnsx", "tlsx", "linkfinder", "secretfinder", "trufflehog",
+    }
+
     def __init__(self):
         self.sessions: Dict[str, ReconSessionStatus] = {}
         self.results: Dict[str, ToolResults] = {}
@@ -125,6 +137,19 @@ class ReconOrchestrator:
                     session.logs.append(
                         f"[{datetime.utcnow().strftime('%H:%M:%S')}] Skipping {tool.name} for Docker-local target {domain}."
                     )
+            else:
+                # Real-world target: honor the program's rules of engagement.
+                # Only passive / light-touch tools are scheduled; aggressive
+                # scanners are marked SKIPPED so conditional triggers can never
+                # resurrect them later in the session.
+                domain_base_tools = [tool for tool in base_tools if tool.name in self.PASSIVE_REMOTE_TOOLS]
+                for tool in base_tools:
+                    if tool.name in self.AGGRESSIVE_TOOLS or tool.name not in self.PASSIVE_REMOTE_TOOLS:
+                        tool_key = f"{tool.name}:{domain}"
+                        session.tool_statuses[tool_key] = ToolStatus.SKIPPED
+                        session.logs.append(
+                            f"[{datetime.utcnow().strftime('%H:%M:%S')}] Skipping {tool.name} for remote target {domain} (ROE: aggressive scanning / brute-force traffic not permitted)."
+                        )
             for tool in domain_base_tools:
                 tool_key = f"{tool.name}:{domain}"
                 queued_keys.add(tool_key)
@@ -224,6 +249,7 @@ class ReconOrchestrator:
     async def _evaluate_conditional_triggers(self, session_id: str, investigation_id: str, domain: str, completed_tool, queued_keys: set, running_tasks: list):
         session = self.sessions[session_id]
         results = self.results.get(session_id, ToolResults())
+        remote = not self._is_local_target(domain)
 
         async def launch_tool(tool, domain):
             tool_key = f"{tool.name}:{domain}"
@@ -244,7 +270,7 @@ class ReconOrchestrator:
             if "wp-content" in url_lower or "wp-includes" in url_lower or "wp-json" in url_lower:
                 wordpress_detected = True
                 break
-        if wordpress_detected:
+        if wordpress_detected and not remote:
             wpscan_key = f"wpscan:{domain}"
             if wpscan_key not in queued_keys:
                 queued_keys.add(wpscan_key)
@@ -276,7 +302,7 @@ class ReconOrchestrator:
             if "/api" in url_lower or "/v1" in url_lower or "/v2" in url_lower or "swagger" in url_lower:
                 api_detected = True
                 break
-        if api_detected:
+        if api_detected and not remote:
             kiterunner_key = f"kiterunner:{domain}"
             if kiterunner_key not in queued_keys:
                 queued_keys.add(kiterunner_key)
@@ -296,7 +322,7 @@ class ReconOrchestrator:
                 running_tasks.append(task_launch)
 
         # 5. Discovered open ports (Trigger Nmap and tlsx)
-        if completed_tool.name == "naabu" and results.ports:
+        if completed_tool.name == "naabu" and results.ports and not remote:
             # Trigger Nmap
             nmap_key = f"nmap:{domain}"
             if nmap_key not in queued_keys:
@@ -319,7 +345,12 @@ class ReconOrchestrator:
 
         # 6. Active HTTP web service found (Trigger GitTools, ffuf, TruffleHog)
         if completed_tool.name in ["httpx", "katana"] and results.endpoints:
-            for tool in [self.trufflehog, self.gittools, self.ffuf]:
+            triggered_tools = [self.trufflehog, self.gittools, self.ffuf]
+            for tool in triggered_tools:
+                # ffuf (content enumeration) and gittools are active/brute-force
+                # checks; never run them against real-world targets.
+                if remote and tool.name in self.AGGRESSIVE_TOOLS:
+                    continue
                 tool_key = f"{tool.name}:{domain}"
                 if tool_key not in queued_keys:
                     queued_keys.add(tool_key)

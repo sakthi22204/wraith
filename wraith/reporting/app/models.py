@@ -16,6 +16,11 @@ class ReportFinding(BaseModel):
     evidence: str
     business_impact: str
     suggested_remediation: str
+    poc_request: Optional[str] = None
+    poc_response: Optional[str] = None
+    expected_result: Optional[str] = None
+    actual_result: Optional[str] = None
+    validation_stage: Optional[str] = None
     discovery_metadata: dict # tool, timestamp, program
     risk_rating: Optional[dict] = None
     timeline: Optional[list] = []

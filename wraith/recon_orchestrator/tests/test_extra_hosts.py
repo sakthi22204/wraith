@@ -1,6 +1,6 @@
 import socket
 import pytest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import ANY, AsyncMock, patch
 
 from app.tools.base import ReconTool, host_from_domain, resolve_extra_hosts
 from app.schemas import ToolResults
@@ -47,7 +47,11 @@ async def test_run_passes_extra_hosts_to_spawner(monkeypatch):
     with patch("app.tools.base.docker_spawner.spawn_container", new_callable=AsyncMock) as mock_spawn:
         mock_spawn.return_value = ""
         await DummyTool().run("juice_shop:3000")
-    mock_spawn.assert_awaited_once_with("dummy:latest", ["-host", "juice_shop:3000"], extra_hosts={"juice_shop": "172.18.0.3"})
+    mock_spawn.assert_awaited_once_with(
+        "dummy:latest", ["-host", "juice_shop:3000"],
+        timeout=ANY, extra_hosts={"juice_shop": "172.18.0.3"},
+        environment=ANY, volumes=ANY,
+    )
 
 
 @pytest.mark.asyncio
@@ -58,4 +62,9 @@ async def test_run_passes_none_extra_hosts_when_unresolvable(monkeypatch):
     with patch("app.tools.base.docker_spawner.spawn_container", new_callable=AsyncMock) as mock_spawn:
         mock_spawn.return_value = ""
         await DummyTool().run("does-not-resolve.invalid")
-    mock_spawn.assert_awaited_once_with("dummy:latest", ["-host", "does-not-resolve.invalid"], extra_hosts=None)
+    # An unresolvable host yields no extra_hosts, but the call still carries the
+    # tool timeout and the (empty) proxy environment/volume configuration.
+    mock_spawn.assert_awaited_once_with(
+        "dummy:latest", ["-host", "does-not-resolve.invalid"],
+        timeout=ANY, extra_hosts=None, environment=ANY, volumes=ANY,
+    )

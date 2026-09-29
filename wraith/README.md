@@ -86,11 +86,27 @@ tools (katana, httpx/httpx-probe), you can OPT IN with two knobs:
    `mitmproxy_ca` / `mitmproxy_flows` named volumes are only materialized
    under that profile, so a plain `docker compose up` never starts it.
 
-2. **`RECON_PROXY_URL`** on the orchestrator — point tool containers at it:
+   Under the same profile a one-shot init service, `mitmproxy_volumes_init`,
+   chowns both named volumes to uid 1000 before the sidecar starts, and the
+   sidecar waits for it to exit 0. This is required because mitmproxy's
+   entrypoint drops to the unprivileged `mitmproxy` user while Docker creates
+   fresh volumes as `root:root`; without it mitmdump aborts its stream file
+   with `Errno 13 Permission denied: /flows/flows.mitm` and generates no CA.
+   The init is idempotent, and mitmdump itself still runs unprivileged.
+
+2. **`RECON_PROXY_URL`** on the orchestrator — point tool containers at it.
+   Export it for the same invocation rather than committing it to `.env`,
+   because a value in `.env` is also interpolated into a plain
+   `docker compose up` and would leave the default stack pointing at a
+   sidecar that is not running:
    ```bash
-   # .env on the orchestrator
-   RECON_PROXY_URL=http://mitmproxy:8080
+   RECON_PROXY_URL=http://mitmproxy_sidecar:8080 \
+     docker compose --profile recon-proxy up -d
    ```
+   The hostname must match the compose service name
+   `mitmproxy_sidecar` (the sidecar publishes no host ports; only the
+   internal network reaches it).
+
    When set, supported tools route HTTP(S) through the sidecar and trust its
    CA (mounted read-only from the named volume), so decrypted evidence lands
    in the streamed flow file — while keeping every tool command/volumes

@@ -48,6 +48,64 @@ async def test_generate_finding_report_full(mock_clients):
     assert report.ai_confidence == "0.9"
     assert "Host: test.com" in report.affected_asset
     assert "sqlmap" in report.steps_to_reproduce
-    assert "Recorded exploit attempt" in report.exploit_poc
+    # This finding carries no executed evidence, so the report must say the PoC
+    # was never proven rather than dressing a sqlmap discovery run up as an
+    # exploit attempt.
+    assert "No executed proof of concept" in report.exploit_poc
+    assert "Recorded exploit attempt" not in report.exploit_poc
     assert "SELECT" in report.evidence
     assert "Test Program" in report.discovery_metadata["program"]
+
+
+@pytest.mark.asyncio
+async def test_generate_finding_report_renders_executed_evidence(mock_clients):
+    """A validated finding must render the request and response that were seen."""
+    mock_graph, mock_audit = mock_clients
+
+    finding = {
+        "id": "f2",
+        "title": "Unauthenticated Prometheus Metrics Endpoint Exposed",
+        "vuln_type": "Info Disclosure",
+        "severity": "medium",
+        "confidence": "0.9",
+        "status": "AI_VALIDATED",
+        "description": "Scanner reported a /metrics endpoint exposing counters.",
+        "discovered_at": "2023-01-01T12:00:00Z",
+        "target_id": "t1",
+        "validation_stage": "IMPACT_CONFIRMED",
+        "poc_request": "GET http://juice_shop:3000/metrics",
+        "poc_response": "HTTP 200\ncontent-type: text/plain\n\n# HELP juiceshop_metric",
+        "expected_result": "body contains '# HELP'",
+        "actual_result": "body contains '# HELP' (26096 bytes)",
+        "steps_to_reproduce": "GET http://juice_shop:3000/metrics with no credentials.",
+        "root_cause": "The metrics route is not placed behind authentication.",
+        "impact": "Internal telemetry is disclosed to any unauthenticated caller.",
+        "remediation": "Require authentication for the /metrics route.",
+    }
+
+    mock_graph.get_target_details.return_value = {
+        "id": "t1",
+        "labels": ["Endpoint"],
+        "properties": {"url": "http://juice_shop:3000"},
+        "host": "juice_shop",
+    }
+    mock_graph.get_discovering_tool.return_value = {"name": "nuclei"}
+    mock_graph.get_program.return_value = {"name": "JuiceShop"}
+    mock_audit.get_audit_entries.return_value = []
+
+    report = await generator.generate_finding_report("p1", finding)
+
+    # The recorded title is used verbatim.
+    assert report.title == "Unauthenticated Prometheus Metrics Endpoint Exposed"
+    # The real exchange, not a reconstruction.
+    assert "GET http://juice_shop:3000/metrics" in report.steps_to_reproduce
+    assert "GET http://juice_shop:3000/metrics" in report.exploit_poc
+    assert "# HELP juiceshop_metric" in report.exploit_poc
+    assert "IMPACT_CONFIRMED" in report.exploit_poc
+    # Expected vs actual, and the analyst's own impact/remediation rather than a
+    # severity-template guess.
+    assert "body contains '# HELP'" in report.steps_to_reproduce
+    assert "Internal telemetry is disclosed" in report.business_impact
+    assert "Require authentication for the /metrics route." in report.suggested_remediation
+    # The timeline records the validation exchange itself.
+    assert any("IMPACT_CONFIRMED" in e.get("event", "") for e in report.timeline)

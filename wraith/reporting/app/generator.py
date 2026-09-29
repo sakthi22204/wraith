@@ -12,7 +12,11 @@ class ReportGenerator:
         mapping = get_mapping(vuln_type)
 
         # 1. Summary
-        title = f"{vuln_type.upper()} in {finding.get('description', 'Unknown Asset')[:50]}"
+        # Prefer the recorded headline. Falling back to a 50-character slice of
+        # the description produced the same unreadable shape for every scanner
+        # finding ("INFO DISCLOSURE in Scanner reported a /metrics endpo..."),
+        # but legacy findings without a title still render as before.
+        title = finding.get("title") or f"{vuln_type.upper()} in {finding.get('description', 'Unknown Asset')[:50]}"
 
         # 2. Vulnerability Type
         vulnerability_type = f"{mapping['cwe_id']} - {mapping['owasp_category']}"
@@ -30,6 +34,65 @@ class ReportGenerator:
             cvss_display = "CVSS score not calculated"
 
         severity = finding.get("severity", band).capitalize()
+
+        # HackerOne report guidance asks for the CVSS score to be justified
+        # metric-by-metric. Break the vector down into plain-English reasons.
+        cvss_metric_meanings = {
+            "AV": {
+                "N": "Network — exploitable remotely over the network with no local access.",
+                "A": "Adjacent — attacker must be on the adjacent network segment.",
+                "L": "Local — attacker needs local or shell-level access to the host.",
+                "P": "Physical — attacker needs physical access to the device.",
+            },
+            "AC": {
+                "L": "Low — no special conditions beyond sending the request itself.",
+                "H": "High — requires conditions an attacker cannot reliably control.",
+            },
+            "PR": {
+                "N": "None — works unauthenticated or at the lowest privilege level.",
+                "L": "Low — requires a low-privileged (basic user) account.",
+                "H": "High — requires elevated or administrative privileges.",
+            },
+            "UI": {
+                "N": "None — no victim interaction is required.",
+                "R": "Required — the victim must perform an action (e.g. click a link).",
+            },
+            "S": {
+                "U": "Unchanged — impact is confined to the vulnerable component.",
+                "C": "Changed — impact crosses a trust boundary into other components.",
+            },
+            "C": {
+                "H": "High — complete disclosure of confidential data.",
+                "L": "Low — limited or partial disclosure of sensitive data.",
+                "N": "None — no confidentiality impact.",
+            },
+            "I": {
+                "H": "High — attacker can modify all data/functions the component controls.",
+                "L": "Low — limited modification of data possible.",
+                "N": "None — no integrity impact.",
+            },
+            "A": {
+                "H": "High — complete loss of availability of the affected component.",
+                "L": "Low — reduced availability or intermittent degradation.",
+                "N": "None — no availability impact.",
+            },
+        }
+        cvss_rationale = []
+        if cvss_vector:
+            for part in str(cvss_vector).split("/"):
+                if ":" not in part:
+                    continue
+                metric, value = part.split(":", 1)
+                metric, value = metric.strip().upper(), value.strip()
+                if metric == "CVSS" or not value:
+                    continue
+                meaning = (cvss_metric_meanings.get(metric) or {}).get(value)
+                cvss_rationale.append({
+                    "metric": metric,
+                    "value": value,
+                    "meaning": meaning or "Not scored in this vector."
+                })
+
         ai_conf = finding.get("ai_confidence")
         if ai_conf is None:
             try:
@@ -58,19 +121,46 @@ class ReportGenerator:
         # 5. Description
         description = finding.get("description", "No detailed description provided.")
 
-        # 8. Evidence
+        # Validation evidence. When a finding was actually validated these are
+        # the executed request and the observed response, so the section renders
+        # what happened rather than restating the description.
+        poc_request = finding.get("poc_request")
+        poc_response = finding.get("poc_response")
+        expected_result = finding.get("expected_result")
+        actual_result = finding.get("actual_result")
+        validation_stage = finding.get("validation_stage") or "NOT_VALIDATED"
+        is_validated = bool(poc_request) and bool(poc_response)
+        # Credentials and tokens are masked at capture time in the sandbox; the
+        # block below is a second layer so nothing sensitive reaches a rendered
+        # report even if a capture predates the redaction change.
         evidence = finding.get("evidence") or "No raw evidence captured"
 
         # 6. Steps to Reproduce
         tool_info = await graph_db_client.get_discovering_tool(program_id, finding["id"])
         tool_name = tool_info.get("name", "security tool") if tool_info else "automated scan"
 
-        steps = (
-            f"Reconstructed steps (best effort):\n"
-            f"1. Target the affected asset: {affected_asset}\n"
-            f"2. Use {tool_name} to perform a {vuln_type} check.\n"
-            f"3. Observe the following result: {description}"
-        )
+        if is_validated:
+            # The captured request IS the reproduction recipe: replaying it
+            # reproduces the observation, because it is the exact traffic that
+            # produced it.
+            steps = (
+                f"Replay the exact request that produced this evidence.\n\n"
+                f"1. Target: {affected_asset}\n"
+                f"2. Send the request below verbatim (method, path, headers, body).\n"
+                f"3. Compare your response against the Expected/Actual below.\n\n"
+                f"Replayed request:\n```http\n{poc_request}\n```\n\n"
+                f"Expected: {expected_result or 'see observed response'}\n"
+                f"Actual:   {actual_result or 'see observed response'}"
+            )
+        else:
+            steps = (
+                f"Not yet validated by an executed request. This finding is a "
+                f"scanner hypothesis, not a confirmed issue.\n\n"
+                f"Detected by: {tool_name}\n"
+                f"Reasoning:   {description}\n\n"
+                f"To confirm it, send a specific request to "
+                f"{affected_asset} and check the response directly."
+            )
 
         # 7. Exploit / PoC
         audit_entries = await audit_client.get_audit_entries(program_id, target=target_details.get("host") if target_details else None)
@@ -79,11 +169,26 @@ class ReportGenerator:
             if vuln_type.lower() in e["action"].lower() or (tool_name.lower() in e["action"].lower() and e["action"].lower() != "run_nmap_scan")
         ]
 
-        if relevant_audit:
-            poc = f"Recorded exploit attempt via {relevant_audit[0]['action']}:\n"
-            poc += f"Result: {relevant_audit[0].get('result')}"
+        if is_validated:
+            poc = (
+                f"Validation stage reached: {validation_stage}\n\n"
+                f"Proof of concept (request that was actually sent):\n"
+                f"```http\n{poc_request}\n```\n\n"
+                f"Observed response:\n```http\n{poc_response}\n```"
+            )
+        elif relevant_audit:
+            poc = (
+                f"No executed proof of concept. The closest recorded action was "
+                f"{relevant_audit[0]['action']}, which is discovery rather than "
+                f"verification.\n\n"
+                f"Recorded result: {relevant_audit[0].get('result')}"
+            )
         else:
-            poc = f"No active exploitation was performed for this finding — validated via {tool_name} only"
+            poc = (
+                "No proof of concept. This finding has not been validated by an "
+                "executed request, so the reported behaviour has not been "
+                "observed directly."
+            )
 
         # 9. Business Impact
         impact_map = {
@@ -93,7 +198,13 @@ class ReportGenerator:
             "low": "Minimal impact, often requiring specific conditions to be exploitable or affecting non-sensitive data.",
             "info": "Informational finding with no direct security impact but may provide useful context for further attacks."
         }
-        business_impact = impact_map.get(severity.lower(), "Potential security risk to the organization's assets and reputation.")
+        # A specific, observed impact beats a generic severity template: once we
+        # have executed evidence we can say what actually happened rather than
+        # what this severity class usually means.
+        business_impact = (
+            finding.get("impact")
+            or impact_map.get(severity.lower(), "Potential security risk to the organization's assets and reputation.")
+        )
 
         # 10. Suggested Remediation
         remediation_map = {
@@ -106,7 +217,17 @@ class ReportGenerator:
             "xxe": "Disable external entity resolution in XML parsers.",
             "cmdi": "Avoid calling OS commands with user input. Use safe alternatives or sanitize input thoroughly."
         }
-        suggested_remediation = remediation_map.get(vuln_type.lower(), "Follow industry best practices for securing the affected component and addressing the identified vulnerability class.")
+        suggested_remediation = (
+            finding.get("remediation")
+            or remediation_map.get(
+                vuln_type.lower(),
+                "Follow industry best practices for securing the affected component and addressing the identified vulnerability class."
+            )
+        )
+
+        # Root cause is only asserted when the investigation actually recorded
+        # one; a templated guess here would read as analysis that never happened.
+        root_cause = finding.get("root_cause") or ""
 
         # 11. Metadata
         program_data = await graph_db_client.get_program(program_id)
@@ -123,6 +244,7 @@ class ReportGenerator:
             "score": score if score is not None else (10.0 if severity.lower() == "critical" else 8.0 if severity.lower() == "high" else 5.0 if severity.lower() == "medium" else 2.0),
             "band": band if band != "Unknown" else severity,
             "cvss_vector": cvss_vector or "N/A",
+            "cvss_rationale": cvss_rationale,
             "ai_confidence": ai_confidence_display,
             "criticality": severity
         }
@@ -147,15 +269,24 @@ class ReportGenerator:
         # 14. Validation Timeline for finding
         finding_time = finding.get("discovered_at") or datetime.utcnow().isoformat()
         timeline = [
-            {"timestamp": finding_time, "event": f"Vulnerability '{vuln_type.upper()}' first discovered by {tool_name}."}
+            {"timestamp": finding_time, "event": f"Vulnerability '{vuln_type.upper()}' first surfaced by {tool_name}."}
         ]
-        if relevant_audit:
-            for entry in relevant_audit:
-                timestamp = entry.get("timestamp") or finding_time
-                timeline.append({
-                    "timestamp": timestamp,
-                    "event": f"Active validation '{entry['action']}' performed on host {entry.get('target', 'unknown host')}. Action output: {entry.get('result', 'Success')}"
-                })
+        if is_validated:
+            # The validation exchange is the timeline's decisive event: it is
+            # when the hypothesis was actually tested.
+            timeline.append({
+                "timestamp": finding_time,
+                "event": (
+                    f"Validation request executed; stage reached "
+                    f"{validation_stage}. Expected: {expected_result or 'n/a'}. "
+                    f"Observed: {actual_result or 'n/a'}."
+                )
+            })
+        else:
+            timeline.append({
+                "timestamp": finding_time,
+                "event": "No validation request executed; finding remains a scanner hypothesis."
+            })
         timeline.sort(key=lambda x: x["timestamp"])
 
         # 15. Support Contacts
@@ -179,6 +310,11 @@ class ReportGenerator:
             evidence=evidence,
             business_impact=business_impact,
             suggested_remediation=suggested_remediation,
+            poc_request=poc_request,
+            poc_response=poc_response,
+            expected_result=expected_result,
+            actual_result=actual_result,
+            validation_stage=validation_stage,
             discovery_metadata=discovery_metadata,
             risk_rating=risk_rating,
             timeline=timeline,
