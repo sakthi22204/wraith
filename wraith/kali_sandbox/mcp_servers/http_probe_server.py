@@ -48,6 +48,22 @@ MAX_VARIANTS = 8
 # is a check for a missing lock, not a stress tool.
 MAX_RACE_REQUESTS = 6
 
+# A threshold sweep sends the same request repeatedly in quick succession to find
+# where a target starts refusing traffic. Higher than the race cap because the
+# requests are sequential and a budget is typically well above the concurrency
+# needed to break a lock, but still a small fixed number: this measures whether a
+# limiter exists, it is not a way to load a host.
+MAX_THRESHOLD_REQUESTS = 20
+
+# Statuses that mean "you are going too fast", plus the ones targets use when
+# shedding load. A target answering 503 or 402 to a burst is not necessarily
+# rate limiting, so the full observed statuses travel with the verdict.
+THROTTLE_STATUSES = frozenset({429, 503})
+
+# Pause between threshold requests. Long enough to read as sequential traffic
+# rather than a burst, short enough to stay inside a typical one-minute window.
+THRESHOLD_INTERVAL = 0.25
+
 # Header names a caller may not set: they would let a probe authenticate as
 # someone else or smuggle a second request stream.
 BLOCKED_REQUEST_HEADERS = frozenset({
@@ -146,6 +162,36 @@ class ProbeRace(BaseModel):
     captures: List[Dict[str, Any]] = Field(default_factory=list)
     count: int = 0
     total_requests: int = 0
+    identity: str = ""
+    identities_used: List[str] = Field(default_factory=list)
+
+
+class ProbeThreshold(BaseModel):
+    """One request sent ``count`` times in quick succession to observe throttling.
+
+    A missing rate limit is only observable by sending more requests than a
+    well-behaved target would accept and seeing that none were refused. This is
+    the mirror image of a race sweep: the requests are *not* concurrent, because
+    a rate limiter counts request arrivals over a window and concurrency would
+    measure a different property.
+
+    ``throttled_at`` is the 1-based index of the first refused request, or 0 if
+    none was. That is the field to grade against: it is the observed budget, and
+    ``statuses`` is kept in full so the count is reviewable from the evidence
+    rather than taken on trust.
+    """
+
+    requested_url: str = ""
+    method: str = "GET"
+    captures: List[Dict[str, Any]] = Field(default_factory=list)
+    count: int = 0
+    total_requests: int = 0
+    throttled_at: int = 0
+    throttled_count: int = 0
+    throttle_statuses: List[int] = Field(default_factory=list)
+    rate_limited: bool = False
+    identity: str = ""
+    identities_used: List[str] = Field(default_factory=list)
 
 
 class ProbeComparison(BaseModel):
@@ -481,27 +527,15 @@ class HttpProbeServer(BaseSecurityServer):
         if len(variants) > MAX_VARIANTS:
             raise ValueError(f"at most {MAX_VARIANTS} variants per comparison")
 
-        registry: Dict[str, Identity] = {}
-        for identity in identities or []:
-            if identity.label in registry:
-                raise ValueError(f"duplicate identity label {identity.label!r}")
-            if not identity.label or not isinstance(identity.label, str):
-                raise ValueError("identity labels must be non-empty strings")
-            registry[identity.label] = identity
+        registry, baseline_label = self._identity_registry(
+            identities, baseline_identity, role="baseline identity")
 
         total_variants = len(variants)
         if 1 + total_variants > MAX_COMPARISON_REQUESTS * MAX_VARIANTS:
             raise ValueError("comparison exceeds the permitted request budget")
 
         baseline_headers = dict(headers or {})
-        baseline_label = ""
-        if baseline_identity:
-            if baseline_identity not in registry:
-                raise ValueError(
-                    f"unknown baseline identity {baseline_identity!r}; declared: "
-                    f"{sorted(registry) or 'none'}"
-                )
-            baseline_label = baseline_identity
+        if baseline_label:
             baseline_headers.update(registry[baseline_label].headers)
 
         baseline_spec = {
@@ -589,6 +623,37 @@ class HttpProbeServer(BaseSecurityServer):
                 f"at most {MAX_RACE_REQUESTS} concurrent requests per race sweep")
         return count
 
+    def _identity_registry(
+        self,
+        identities: Optional[List[Identity]],
+        baseline_identity: Optional[str],
+        role: str = "identity",
+    ) -> tuple[Dict[str, Identity], str]:
+        """Validate declared identities and resolve which one the run acts as.
+
+        Identities arrive as models through the MCP surface and as plain dicts
+        through the REST bridge, so both are accepted rather than making the
+        caller construct the model by hand.
+        """
+        registry: Dict[str, Identity] = {}
+        for identity in identities or []:
+            if isinstance(identity, dict):
+                identity = Identity(**identity)
+            if identity.label in registry:
+                raise ValueError(f"duplicate identity label {identity.label!r}")
+            if not identity.label or not isinstance(identity.label, str):
+                raise ValueError("identity labels must be non-empty strings")
+            registry[identity.label] = identity
+        label = ""
+        if baseline_identity:
+            if baseline_identity not in registry:
+                raise ValueError(
+                    f"unknown {role} {baseline_identity!r}; declared: "
+                    f"{sorted(registry) or 'none'}"
+                )
+            label = baseline_identity
+        return registry, label
+
     async def race(
         self,
         url: str,
@@ -598,6 +663,8 @@ class HttpProbeServer(BaseSecurityServer):
         timeout: float = 20.0,
         follow_redirects: bool = False,
         count: int = 3,
+        identities: Optional[List[Identity]] = None,
+        identity: Optional[str] = None,
     ) -> ProbeRace:
         """Send one identical request several times at once and return every capture.
 
@@ -605,14 +672,28 @@ class HttpProbeServer(BaseSecurityServer):
         single-use action should honour only the first of several simultaneous
         requests, so a success count above one is the signal. Only a small
         fixed number of concurrent requests is ever sent.
+
+        Every request in the burst is sent as the same ``identity``, which is the
+        point: a coupon that can be redeemed twice concurrently by *one* user is
+        a serialization bug, while two different users redeeming it once each is
+        correct behaviour. Identity headers are applied to every request in the
+        burst and then scrubbed from the captures, so the evidence records which
+        account acted without carrying its session token.
         """
         url = self._validate_url(url)
         method = self._validate_method(method)
         count = self._validate_race_count(count)
 
+        registry, label = self._identity_registry(identities, identity)
+        burst_headers = dict(headers or {})
+        if label:
+            # Applied last, so a caller-supplied header cannot override the
+            # credential the burst is supposed to be acting with.
+            burst_headers.update(registry[label].headers)
+
         captures = await asyncio.gather(*(
             self.probe(
-                url=url, method=method, headers=dict(headers or {}), body=body,
+                url=url, method=method, headers=dict(burst_headers), body=body,
                 timeout=timeout, follow_redirects=follow_redirects,
             )
             for _ in range(count)
@@ -620,9 +701,96 @@ class HttpProbeServer(BaseSecurityServer):
         return ProbeRace(
             requested_url=url,
             method=method,
-            captures=[c.model_dump() for c in captures],
+            captures=[
+                _scrub_identity_headers(c.model_dump(), label) for c in captures
+            ],
             count=count,
             total_requests=len(captures),
+            identity=label,
+            identities_used=[label] if label else [],
+        )
+
+    def _validate_threshold_count(self, count: int) -> int:
+        """A threshold sweep needs enough requests to see a budget, never many.
+
+        One request cannot demonstrate a rate limit: it can only show that a
+        single request was not refused. The lower bound is therefore 2.
+        """
+        if not isinstance(count, int) or isinstance(count, bool):
+            raise ValueError("count must be an integer")
+        if count < 2:
+            raise ValueError("count must be at least 2 for a threshold sweep")
+        if count > MAX_THRESHOLD_REQUESTS:
+            raise ValueError(
+                f"at most {MAX_THRESHOLD_REQUESTS} requests per threshold sweep")
+        return count
+
+    async def threshold(
+        self,
+        url: str,
+        method: str = "GET",
+        headers: Optional[Dict[str, str]] = None,
+        body=None,
+        timeout: float = 20.0,
+        follow_redirects: bool = False,
+        count: int = 10,
+        interval: float = THRESHOLD_INTERVAL,
+        identities: Optional[List[Identity]] = None,
+        identity: Optional[str] = None,
+    ) -> ProbeThreshold:
+        """Send one request ``count`` times in sequence and record where throttling starts.
+
+        Absence of a rate limit is only observable by exceeding one, so this asks
+        a target to refuse some traffic and reports the index of the first
+        refusal. Requests are deliberately *not* concurrent: a rate limiter
+        counts arrivals over a window, and a simultaneous burst measures a
+        different property than the one under test.
+        """
+        url = self._validate_url(url)
+        method = self._validate_method(method)
+        count = self._validate_threshold_count(count)
+        if not isinstance(interval, (int, float)) or isinstance(interval, bool):
+            raise ValueError("interval must be a number")
+        # Bounded so a sweep cannot be used to hold a connection open, and so the
+        # sweep cannot silently take hours.
+        interval = max(0.0, min(float(interval), 5.0))
+
+        registry, label = self._identity_registry(identities, identity)
+        request_headers = dict(headers or {})
+        if label:
+            request_headers.update(registry[label].headers)
+
+        captures: List[Dict[str, Any]] = []
+        statuses: List[int] = []
+        throttled_at = 0
+        for index in range(count):
+            capture = await self.probe(
+                url=url, method=method, headers=dict(request_headers), body=body,
+                timeout=timeout, follow_redirects=follow_redirects,
+            )
+            captures.append(_scrub_identity_headers(capture.model_dump(), label))
+            status = capture.status_code
+            if capture.reached_target:
+                statuses.append(status)
+                if status in THROTTLE_STATUSES and not throttled_at:
+                    throttled_at = index + 1
+            # No pause after the final request.
+            if index + 1 < count and interval:
+                await asyncio.sleep(interval)
+
+        throttled = [s for s in statuses if s in THROTTLE_STATUSES]
+        return ProbeThreshold(
+            requested_url=url,
+            method=method,
+            captures=captures,
+            count=count,
+            total_requests=len(captures),
+            throttled_at=throttled_at,
+            throttled_count=len(throttled),
+            throttle_statuses=throttled,
+            rate_limited=bool(throttled),
+            identity=label,
+            identities_used=[label] if label else [],
         )
 
     def setup_tools(self):
@@ -700,6 +868,8 @@ class HttpProbeServer(BaseSecurityServer):
             timeout: float = 20.0,
             follow_redirects: bool = False,
             count: int = 3,
+            identities: Optional[List[Identity]] = None,
+            identity: Optional[str] = None,
             caller: Optional[str] = None,
         ) -> ProbeRace:
             """Send the same request several times concurrently and return every capture.
@@ -711,6 +881,13 @@ class HttpProbeServer(BaseSecurityServer):
             successes: if more than one succeeds, the action was not serialized
             and a one-shot capability can be replayed.
 
+            Pass ``identities`` plus ``identity`` to run the whole burst as one
+            authenticated user. That is the meaningful test: one account
+            redeeming a coupon twice at once is a serialization bug, while two
+            accounts redeeming it once each is correct. The session token is
+            applied to every request and then withheld from the evidence, which
+            records the identity label instead.
+
             Every capture is returned, so the success count is reviewable rather
             than taken on trust. Only send this against a target you are
             authorized to test; the request is repeated, so keep ``count`` at the
@@ -720,4 +897,43 @@ class HttpProbeServer(BaseSecurityServer):
             return await self.race(
                 url=url, method=method, headers=headers, body=body,
                 timeout=timeout, follow_redirects=follow_redirects, count=count,
+                identities=identities, identity=identity,
+            )
+
+        @self.mcp.tool()
+        async def http_probe_threshold(
+            url: str,
+            method: str = "GET",
+            headers: Optional[Dict[str, str]] = None,
+            body=None,
+            timeout: float = 20.0,
+            follow_redirects: bool = False,
+            count: int = 10,
+            interval: float = THRESHOLD_INTERVAL,
+            identities: Optional[List[Identity]] = None,
+            identity: Optional[str] = None,
+            caller: Optional[str] = None,
+        ) -> ProbeThreshold:
+            """Send one request several times in sequence to find where throttling starts.
+
+            Use this for a missing rate limit on login, password reset, coupon
+            validation, or any expensive endpoint. A rate limit can only be shown
+            to be absent by sending enough traffic to have crossed one, so this
+            repeats the request up to ``count`` times and reports the index of
+            the first refusal. If nothing is refused, the endpoint has no
+            observable throttle within the tested range.
+
+            The requests are sequential on purpose: a rate limiter counts request
+            arrivals over a window, so a simultaneous burst would measure
+            concurrency rather than the budget. Grade against ``throttled_at``
+            being 0 (no throttle observed) rather than against a raw status.
+
+            Only send this against a target you are authorized to test, and keep
+            ``count`` at the smallest value that answers the question.
+            """
+            self.verify_caller("http_probe_threshold", caller)
+            return await self.threshold(
+                url=url, method=method, headers=headers, body=body,
+                timeout=timeout, follow_redirects=follow_redirects, count=count,
+                interval=interval, identities=identities, identity=identity,
             )

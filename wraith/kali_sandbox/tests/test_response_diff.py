@@ -196,19 +196,24 @@ class TestCredentialScrubbing:
 # -- compare() behaviour ---------------------------------------------------
 
 class TestCompare:
+    # These are async tests, so the marker has to be on the test, not the class:
+    # a mark on the class would be applied to the fixture as well.
     @pytest.fixture
     def server(self):
         return HttpProbeServer()
 
+    @pytest.mark.asyncio
     async def test_requires_at_least_one_variant(self, server):
         with pytest.raises(ValueError, match="at least one variant"):
             await server.compare(url="http://x/", variants=[])
 
+    @pytest.mark.asyncio
     async def test_variant_count_is_bounded(self, server):
         many = [ProbeVariant(label=f"v{i}") for i in range(99)]
         with pytest.raises(ValueError, match="at most"):
             await server.compare(url="http://x/", variants=many)
 
+    @pytest.mark.asyncio
     async def test_cross_host_variant_is_refused(self, server):
         """A variant on another host could not be caused by the change."""
         with pytest.raises(ValueError, match="same scheme/host/port"):
@@ -217,6 +222,7 @@ class TestCompare:
                 variants=[ProbeVariant(label="evil", url="http://other.test/")],
             )
 
+    @pytest.mark.asyncio
     async def test_duplicate_identity_labels_rejected(self, server):
         with pytest.raises(ValueError, match="duplicate identity"):
             await server.compare(
@@ -225,6 +231,7 @@ class TestCompare:
                 identities=[Identity(label="u"), Identity(label="u")],
             )
 
+    @pytest.mark.asyncio
     async def test_unknown_identity_is_rejected(self, server):
         with pytest.raises(ValueError, match="unknown identity"):
             await server.compare(
@@ -233,6 +240,7 @@ class TestCompare:
                 identities=[Identity(label="real")],
             )
 
+    @pytest.mark.asyncio
     async def test_unknown_baseline_identity_is_rejected(self, server):
         with pytest.raises(ValueError, match="unknown baseline identity"):
             await server.compare(
@@ -240,6 +248,7 @@ class TestCompare:
                 identities=[Identity(label="real")], baseline_identity="ghost",
             )
 
+    @pytest.mark.asyncio
     async def test_baseline_identity_headers_are_applied(self, server, monkeypatch):
         sent = {}
 

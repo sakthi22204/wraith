@@ -26,7 +26,9 @@ DANGEROUS_TOOLS = {"run_hydra", "run_msf_module"}
 # killswitch + signed grant + re-read scope, not merely on who the caller says
 # it is: the request body chooses the destination, so a caller name proves
 # nothing about where the packet is going.
-GATED_NETWORK_TOOLS = {"http_probe", "http_probe_diff", "http_probe_race"}
+GATED_NETWORK_TOOLS = {
+    "http_probe", "http_probe_diff", "http_probe_race", "http_probe_threshold",
+}
 AUTHORIZED_DANGEROUS_CALLERS = set(os.getenv("AUTHORIZED_DANGEROUS_CALLERS", "active_exploit_runner").split(","))
 
 def verify_caller(tool_name: str, caller: Optional[str]):
@@ -55,6 +57,50 @@ def gate_request(tool_name: str, body: dict, request=None):
                 targets=[t for t in targets if t], settings=settings)
     except GateError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail)
+
+
+# Prefixes a probe tool raises for a request it refuses to send. These are
+# argument errors, not sandbox failures: an unknown identity or an out-of-range
+# count means the caller must fix the request, and reporting it as a 500 would
+# read as an outage and invite pointless retries.
+_REJECTED_ARGUMENT_PREFIXES = (
+    "unknown identity",
+    "unknown baseline identity",
+    "duplicate identity label",
+    "identity labels must be",
+    "at least one variant",
+    "at most",
+    "count must be",
+    "at least 2",
+    "interval must be",
+    "variants per comparison",
+    "comparison exceeds",
+    "insufficient",
+    "exceeds the permitted",
+    "unsupported method",
+    "scheme",
+    "no host",
+    "invalid url",
+)
+
+
+def _is_rejected_argument(detail: str) -> bool:
+    """True when a tool's error means 'this request was refused', not 'it broke'.
+
+    FastMCP prefixes the tool's own message with "Error executing tool <name>:",
+    so a prefix match against the raw string would miss every case.
+    """
+    text = (detail or "").lower()
+    message = text
+    # The prefix is added once per MCP hop, so an outer tool re-reporting an
+    # inner tool's error stacks it. Strip every layer before matching.
+    while True:
+        _, marker, after = message.partition("error executing tool")
+        if not marker:
+            break
+        _, _, after = after.partition(":")
+        message = after.strip()
+    return any(message.startswith(p) for p in _REJECTED_ARGUMENT_PREFIXES)
 
 
 def get_caller() -> Optional[str]:
@@ -189,6 +235,8 @@ async def http_probe_race(
     timeout: float = 20.0,
     follow_redirects: bool = False,
     count: int = 3,
+    identities: Optional[list] = None,
+    identity: Optional[str] = None,
 ):
     """Send one request several times concurrently and return every capture.
 
@@ -199,12 +247,48 @@ async def http_probe_race(
     purpose — this is a missing-lock check, not a stress tool. Safety gates
     (scope, killswitch, rate limit) are enforced by active_exploit_runner before
     this tool is reached.
+
+    Declare ``identities`` and name one in ``identity`` to run the whole burst as
+    a single authenticated user, which is the meaningful test for a one-shot
+    capability. The session token is withheld from the returned evidence.
     """
     caller = get_caller()
     return unwrap_inner(await http_probe_server.mcp.call_tool("http_probe_race", {
         "url": url, "method": method, "headers": headers, "body": body,
         "timeout": timeout, "follow_redirects": follow_redirects,
-        "count": count, "caller": caller,
+        "count": count, "identities": identities, "identity": identity,
+        "caller": caller,
+    }))
+
+@mcp.tool()
+async def http_probe_threshold(
+    url: str,
+    method: str = "GET",
+    headers: Optional[dict] = None,
+    body=None,
+    timeout: float = 20.0,
+    follow_redirects: bool = False,
+    count: int = 10,
+    interval: float = 0.25,
+    identities: Optional[list] = None,
+    identity: Optional[str] = None,
+):
+    """Send one request repeatedly in sequence to observe where throttling starts.
+
+    For a missing rate limit on login, password reset or any expensive endpoint.
+    Absence of a limit is only observable by exceeding one, so this repeats the
+    request and reports the index of the first refusal; a zero means no throttle
+    was seen within the tested range. Requests are sequential deliberately — a
+    rate limiter counts arrivals over a window, so a burst would measure
+    concurrency instead. Count is bounded; this measures a budget rather than
+    loading a host. Safety gates are enforced by active_exploit_runner first.
+    """
+    caller = get_caller()
+    return unwrap_inner(await http_probe_server.mcp.call_tool("http_probe_threshold", {
+        "url": url, "method": method, "headers": headers, "body": body,
+        "timeout": timeout, "follow_redirects": follow_redirects,
+        "count": count, "interval": interval,
+        "identities": identities, "identity": identity, "caller": caller,
     }))
 
 # Add internal REST bridge for Phase 5 executor
@@ -233,8 +317,16 @@ async def call_tool_internal(request):
     try:
         result = await mcp.call_tool(tool_name, body)
     except Exception as e:
-        # Convert internal tool errors to JSON results
-        return JSONResponse(content={"error": str(e), "success": False}, status_code=500)
+        # A rejected argument (unknown identity, count out of range) is the
+        # caller's mistake, not a sandbox failure, so it is reported as a 400
+        # with the reason rather than a 500. FastMCP wraps a tool's own
+        # exception in ToolError, so the rejected-argument signal has to be
+        # recovered from the message.
+        detail = str(e)
+        if _is_rejected_argument(detail):
+            return JSONResponse(content={"error": detail, "success": False},
+                                status_code=400)
+        return JSONResponse(content={"error": detail, "success": False}, status_code=500)
     finally:
         caller_context.reset(token)
         grant_context.reset(grant_token)

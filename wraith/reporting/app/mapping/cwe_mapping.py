@@ -160,6 +160,14 @@ CWE_MAPPING = {
         "cwe_id": "CWE-362",
         "owasp_category": "A04:2021-Insecure Design",
         "cvss_template": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:H/A:N"
+    },
+    # The threshold harness emits this type: absence of a rate limit is
+    # CWE-307 (improper restriction of excessive authentication attempts), which
+    # is what brute force and credential stuffing actually abuse.
+    "missing rate limiting": {
+        "cwe_id": "CWE-307",
+        "owasp_category": "A07:2021-Identification and Authentication Failures",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:N"
     }
 }
 
