@@ -45,6 +45,11 @@ class TestRaceBounds:
         assert srv._validate_race_count(MAX_RACE_REQUESTS) == MAX_RACE_REQUESTS
 
 
+# These reach juice_shop on the compose network, so they are the real
+# end-to-end proof of the harness: a mocked 429 or a mocked concurrency
+# result cannot show that a status survives the HTTP hop or that a
+# burst actually overlaps. Marked so `-m "not integration"` is honest.
+@pytest.mark.integration
 class TestSessionStateRace:
     """The race burst must act as one principal, and must not leak its token."""
 
@@ -157,6 +162,11 @@ class TestThresholdBounds:
         assert max(0.0, min(float(9999), 5.0)) == 5.0
 
 
+# These reach juice_shop on the compose network, so they are the real
+# end-to-end proof of the harness: a mocked 429 or a mocked concurrency
+# result cannot show that a status survives the HTTP hop or that a
+# burst actually overlaps. Marked so `-m "not integration"` is honest.
+@pytest.mark.integration
 class TestThresholdAgainstLiveTarget:
     """Real sequential requests against the local Juice Shop."""
 
@@ -220,6 +230,11 @@ class TestThresholdAgainstLiveTarget:
         assert sweep.identity == "user_a"
 
 
+# These reach juice_shop on the compose network, so they are the real
+# end-to-end proof of the harness: a mocked 429 or a mocked concurrency
+# result cannot show that a status survives the HTTP hop or that a
+# burst actually overlaps. Marked so `-m "not integration"` is honest.
+@pytest.mark.integration
 class TestRaceAgainstLiveTarget:
     """Real concurrent requests against the local Juice Shop."""
 

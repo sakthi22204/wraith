@@ -1,0 +1,21 @@
+# Test-only overrides. Nothing here belongs in the normal stack.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.test.yml up -d
+#
+# The reason this file exists: the image bakes /app, so a test run inside the
+# container would otherwise exercise whatever was in the image at build time.
+# That is a trap worth closing explicitly. The 40 DB-dependent tests in
+# active_exploit_runner had been erroring at setup for want of a reachable
+# database, and a stale image would have hidden the fix rather than showing it.
+services:
+  active_exploit_runner:
+    volumes:
+      - ./active_exploit_runner/app:/app/app
+      - ./active_exploit_runner/tests:/app/tests
+      - ./active_exploit_runner/scripts:/app/scripts
+
+  kali_sandbox:
+    volumes:
+      - ./kali_sandbox/mcp_servers:/app/mcp_servers
+      - ./kali_sandbox/tests:/app/tests
+      - ./kali_sandbox/wordlists:/app/wordlists

@@ -40,8 +40,42 @@ The API will be available at `http://localhost:8001` and the Neo4j Browser at `h
 
 ### Running Tests
 ```bash
-docker compose run graph_api pytest
+scripts/run_tests.sh all      # everything, inside the containers
+scripts/run_tests.sh runner   # active_exploit_runner only
+scripts/run_tests.sh sandbox  # kali_sandbox only
+scripts/run_tests.sh unit     # the host-runnable subset, no containers needed
 ```
+
+Tests run **inside** the containers. `active_exploit_runner` reaches postgres,
+redis, the live sandbox and juice_shop, and `kali_sandbox` imports the MCP SDK
+that only exists in its image — none of which resolve from the host. Run there
+instead, the failures looked environmental and the suite quietly shrank: 40
+tests in `test_validation.py` had stopped running at all because a module-level
+fixture reached for a database that wasn't there.
+
+Each service splits its suite in two, and the split is recorded in its
+`pytest.ini` rather than left to whoever reads the output:
+
+| Command | Meaning |
+|---|---|
+| `pytest -m "not integration"` | needs nothing running — the fast inner loop |
+| `pytest -m integration` | needs live services |
+| `pytest` | everything |
+
+An unmarked test is expected to be self-contained. `scripts/run_tests.sh` also
+brings up a `docker-compose.test.yml` override that bind-mounts `app/` and
+`tests/`, so a run exercises the working tree rather than the copy baked into
+the image — otherwise a stale image would pass a suite you had already broken.
+
+The sandbox suite is container-only: from a host its `conftest.py` skips
+collection and pytest exits **5** ("no tests collected") rather than **0**
+("everything passed"). A zero there would claim a success no test was in a
+position to make.
+
+Do not override `WRAITH_GATE_SECRET` when running these suites. The runner signs
+each grant with it and the sandbox verifies the signature with the same value,
+so a substituted secret produces grants the sandbox correctly refuses — which
+surfaces as a `403` and reads like a product bug.
 
 ## Example API Usage
 

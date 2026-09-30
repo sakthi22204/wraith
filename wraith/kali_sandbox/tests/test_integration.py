@@ -19,7 +19,6 @@ async def test_target_validation():
     with pytest.raises(ValueError):
         server.validate_target("$(whoami)")
 
-@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_nmap_integration():
     # This requires nmap to be installed on the host running the test

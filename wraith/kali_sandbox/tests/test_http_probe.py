@@ -151,6 +151,9 @@ class TestRedaction:
         assert redact_text(text) == text
 
 
+# Sends real requests to juice_shop on the compose network, so these are
+# part of the live proof rather than the host-runnable subset.
+@pytest.mark.integration
 class TestCaptureAgainstLiveTarget:
     """Real requests against the local Juice Shop. No mocking: the point of
     this feature is that the capture reflects what actually came back."""
@@ -203,6 +206,9 @@ class TestCaptureAgainstLiveTarget:
         assert (cap.request_headers or {}).get("User-Agent") == "wraith-test/1.0"
 
 
+# Sends real requests to juice_shop on the compose network, so these are
+# part of the live proof rather than the host-runnable subset.
+@pytest.mark.integration
 class TestConcurrency:
     @pytest.mark.asyncio
     async def test_parallel_probes_are_independent(self):
