@@ -9,6 +9,7 @@ import pytest
 
 from mcp_servers.gate import (
     GateError,
+    authority_of,
     enforce,
     host_of,
     is_in_scope,
@@ -126,8 +127,11 @@ class TestEnforcement:
     def _real_token(self, **over):
         from mcp_servers.gate import _b64e
         import hashlib, hmac, json
+        # host:port, because that is what a grant now binds. A bare hostname
+        # would authorise every port on the host, which is exactly the gap a
+        # raw-socket tool would otherwise walk through.
         payload = {"v": 1, "caller": "active_exploit_runner", "inv": "inv-1",
-                   "host": "juice_shop", "cost": 1,
+                   "host": "juice_shop:3000", "cost": 1,
                    "exp": int(time.time()) + 60, "nonce": "n"}
         payload.update(over)
         body = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
@@ -137,7 +141,7 @@ class TestEnforcement:
         self._patch(monkeypatch)
         out = enforce(caller="active_exploit_runner", grant_token=self._real_token(),
                       targets=["http://juice_shop:3000/"], settings=Settings)
-        assert out["host"] == "juice_shop"
+        assert out["host"] == "juice_shop:3000"
 
     def test_killswitch_blocks_everything(self, monkeypatch):
         self._patch(monkeypatch, active=True)
@@ -154,17 +158,39 @@ class TestEnforcement:
     def test_grant_for_other_host_is_refused(self, monkeypatch):
         """A valid grant must not be reusable against a different destination."""
         self._patch(monkeypatch)
-        with pytest.raises(GateError, match="grant is for host"):
+        with pytest.raises(GateError, match="grant is for"):
             enforce(caller="active_exploit_runner",
-                    grant_token=self._real_token(host="juice_shop"),
+                    grant_token=self._real_token(host="juice_shop:3000"),
                     targets=["http://attacker.test/"], settings=Settings)
+
+    def test_grant_for_other_port_is_refused(self, monkeypatch):
+        """A grant binds one port, not the whole host.
+
+        This is the case a raw-socket tool would otherwise walk through: it
+        chooses the port it dials, so a grant naming only the host would let it
+        reach any service listening there. The scope rule for the host is wide
+        enough to match, so only the port binding can refuse this.
+        """
+        self._patch(monkeypatch, rules=[{"pattern": "juice_shop", "rule_type": "ALLOW"}])
+        with pytest.raises(GateError, match="grant is for"):
+            enforce(caller="active_exploit_runner",
+                    grant_token=self._real_token(host="juice_shop:3000"),
+                    targets=["http://juice_shop:22/"], settings=Settings)
+
+    def test_default_port_is_normalised_on_both_sides(self, monkeypatch):
+        """An implicit :80 and an explicit :80 are the same destination."""
+        self._patch(monkeypatch, rules=[{"pattern": "juice_shop", "rule_type": "ALLOW"}])
+        out = enforce(caller="active_exploit_runner",
+                      grant_token=self._real_token(host="juice_shop:80"),
+                      targets=["http://juice_shop/"], settings=Settings)
+        assert out["host"] == "juice_shop:80"
 
     def test_variant_pointing_off_scope_is_refused(self, monkeypatch):
         """Both the baseline and every variant destination are checked."""
         self._patch(monkeypatch)
-        with pytest.raises(GateError, match="grant is for host"):
+        with pytest.raises(GateError, match="grant is for"):
             enforce(caller="active_exploit_runner",
-                    grant_token=self._real_token(host="juice_shop"),
+                    grant_token=self._real_token(host="juice_shop:3000"),
                     targets=["http://juice_shop:3000/", "http://169.254.169.254/"],
                     settings=Settings)
 
@@ -178,7 +204,7 @@ class TestEnforcement:
         self._patch(monkeypatch, rules=[{"pattern": "juice_shop", "rule_type": "ALLOW"}])
         with pytest.raises(GateError, match="does not match any allow rule"):
             enforce(caller="active_exploit_runner",
-                    grant_token=self._real_token(host="attacker.test"),
+                    grant_token=self._real_token(host="attacker.test:80"),
                     targets=["http://attacker.test/"], settings=Settings)
 
     def test_investigation_with_no_rules_is_refused(self, monkeypatch):

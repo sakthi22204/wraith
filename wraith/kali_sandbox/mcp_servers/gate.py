@@ -122,6 +122,40 @@ def host_of(url: str) -> str:
         return ""
 
 
+DEFAULT_PORTS = {"http": 80, "https": 443, "ws": 80, "wss": 443}
+
+
+def authority_of(url: str) -> str:
+    """``host:port`` for a URL, with the scheme's default port filled in.
+
+    The grant used to bind a bare hostname, which was adequate while every tool
+    spoke HTTP to the port its own URL named. A raw-socket tool is different: it
+    chooses the port it dials, so a grant for ``example.com:80`` would silently
+    authorise ``example.com:22`` and every other port on that host. Binding the
+    port too keeps the grant meaning "this exact destination", which is the
+    whole reason it exists.
+
+    Normalising the default port is what makes this safe to compare: a URL that
+    omits the port and a URL that spells out ``:80`` are the same destination,
+    and must produce the same string on both sides of the check.
+    """
+    try:
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").lower()
+        if not host:
+            return ""
+        port = parsed.port
+        if port is None:
+            port = DEFAULT_PORTS.get((parsed.scheme or "").lower())
+        # A bracketed IPv6 literal must stay bracketed to remain a valid
+        # authority, and ':' in the host would otherwise be ambiguous.
+        if ":" in host and not host.startswith("["):
+            host = f"[{host}]"
+        return f"{host}:{port}" if port else host
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def killswitch_active(redis_url: str) -> bool:
     """Read the global stop control. An unreachable Redis fails closed."""
     if not redis_url:
@@ -192,9 +226,14 @@ def enforce(
         host = host_of(url)
         if not host:
             raise GateError(f"could not determine destination host from '{url}'", 403)
-        if host != granted_host:
+        # Compared as host:port, so a grant for one destination cannot be spent
+        # on another port of the same host. Scope matching still uses the bare
+        # hostname, because that is what an investigation's rules are written
+        # against.
+        authority = authority_of(url)
+        if authority != granted_host:
             raise GateError(
-                f"grant is for host '{granted_host}', refusing request to '{host}'", 403)
+                f"grant is for '{granted_host}', refusing request to '{authority}'", 403)
         if not is_in_scope(rules, host) and not is_in_scope(rules, url):
             raise GateError(
                 f"host '{host}' does not match any allow rule for investigation "

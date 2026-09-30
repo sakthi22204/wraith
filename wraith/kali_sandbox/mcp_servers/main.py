@@ -28,6 +28,12 @@ DANGEROUS_TOOLS = {"run_hydra", "run_msf_module"}
 # nothing about where the packet is going.
 GATED_NETWORK_TOOLS = {
     "http_probe", "http_probe_diff", "http_probe_race", "http_probe_threshold",
+    # Both of these open a raw socket and speak a protocol of their own rather
+    # than following the URL, so the grant's host:port binding is what stops
+    # them. Gating them is not optional for the same reason as the others: the
+    # request decides the destination, and a caller name proves nothing about
+    # where the bytes land.
+    "http_probe_smuggle", "http_probe_websocket_auth",
 }
 AUTHORIZED_DANGEROUS_CALLERS = set(os.getenv("AUTHORIZED_DANGEROUS_CALLERS", "active_exploit_runner").split(","))
 
@@ -81,6 +87,28 @@ _REJECTED_ARGUMENT_PREFIXES = (
     "scheme",
     "no host",
     "invalid url",
+    # A smuggling variant outside the two fixed ones, and a credential passed
+    # through the WebSocket header bag instead of a declared identity, are both
+    # the caller asking for something the tool will not do.
+    "smuggle_variant",
+    "variant must be",
+    # Refusals from a tool's own header validation all read "Header 'X' <reason>",
+    # so the classifier matches the reason rather than the header name, which
+    # keeps working for smuggling's framing names and the WebSocket credential
+    # rule alike.
+    "carries a credential",
+)
+
+# Substrings that identify a refusal wherever they appear in the message. A
+# tool's own wording is its own; pinning whole prefixes here means adding a
+# refusal has to edit two files in two services or it silently becomes a 500.
+_REJECTED_ARGUMENT_MARKERS = (
+    "carries a credential",
+    "cannot be set",
+    "must be an object of name/value strings",
+    "header names and values must be strings",
+    "header names must be single-line",
+    "header values must not contain newlines",
 )
 
 
@@ -100,7 +128,10 @@ def _is_rejected_argument(detail: str) -> bool:
             break
         _, _, after = after.partition(":")
         message = after.strip()
-    return any(message.startswith(p) for p in _REJECTED_ARGUMENT_PREFIXES)
+    return (
+        any(message.startswith(p) for p in _REJECTED_ARGUMENT_PREFIXES)
+        or any(marker in message for marker in _REJECTED_ARGUMENT_MARKERS)
+    )
 
 
 def get_caller() -> Optional[str]:
@@ -288,6 +319,78 @@ async def http_probe_threshold(
         "url": url, "method": method, "headers": headers, "body": body,
         "timeout": timeout, "follow_redirects": follow_redirects,
         "count": count, "interval": interval,
+        "identities": identities, "identity": identity, "caller": caller,
+    }))
+
+@mcp.tool()
+async def http_probe_smuggle(
+    url: str,
+    variant: str = "both",
+    method: str = "POST",
+    headers: Optional[dict] = None,
+    timeout: float = 20.0,
+    identities: Optional[list] = None,
+    identity: Optional[str] = None,
+):
+    """Test whether a proxy chain disagrees about where a request ends.
+
+    A front-end that trusts Content-Length and a back-end that trusts
+    Transfer-Encoding read different numbers of bytes out of the same request,
+    and the difference becomes the start of the next request the back-end serves.
+    That is request smuggling: a smuggled request stealing another user's session
+    or poisoning a cache.
+
+    Sends one ambiguous request and one confirmation per variant on a single
+    connection and compares the answers to the requests. If the target replies
+    more times than it was asked, or answers the generated hidden request in
+    place of the caller's, it parsed one request as two.
+
+    Bounded hard, because this is the one tool here that can send a request the
+    caller did not write: the URL and variant name are yours, the hidden request
+    is generated against the target's own authority, and it cannot be pointed at a
+    third party. Grading target is ``desync_detected``.
+
+    Expect hardened stacks to reject the malformed framing outright; that is a
+    clean negative, not an error. Test only what you are authorized to test.
+    """
+    caller = get_caller()
+    return unwrap_inner(await http_probe_server.mcp.call_tool("http_probe_smuggle", {
+        "url": url, "variant": variant, "method": method, "headers": headers,
+        "timeout": timeout, "identities": identities, "identity": identity,
+        "caller": caller,
+    }))
+
+@mcp.tool()
+async def http_probe_websocket_auth(
+    url: str,
+    headers: Optional[dict] = None,
+    message: str = "ping",
+    timeout: float = 10.0,
+    identities: Optional[list] = None,
+    identity: Optional[str] = None,
+):
+    """Open a WebSocket as an anonymous visitor and see whether that is allowed.
+
+    A WebSocket handshake is an ordinary HTTP GET, so a browser will send one
+    cross-origin with the victim's cookies attached and never prompt the user
+    about it. The question that matters is therefore not whether the socket is
+    encrypted but who is allowed to open one.
+
+    Completes a real RFC 6455 handshake with no credentials, verifies the server
+    echoed a correct Sec-WebSocket-Accept, then reads a few frames before sending
+    anything. A server that answers 101 and immediately starts pushing has handed
+    a live data stream to whoever asked.
+
+    Grade against ``findings``: ``unauthenticated_upgrade_granted``,
+    ``data_served_before_any_client_message``,
+    ``sec_websocket_accept_missing_or_invalid``, or ``upgrade_rejected`` for a
+    refusal. Pass ``identities`` plus ``identity`` to repeat the upgrade as a
+    known user and compare. One handshake and a handful of frames; the handshake
+    headers are generated here rather than accepted from the caller.
+    """
+    caller = get_caller()
+    return unwrap_inner(await http_probe_server.mcp.call_tool("http_probe_websocket_auth", {
+        "url": url, "headers": headers, "message": message, "timeout": timeout,
         "identities": identities, "identity": identity, "caller": caller,
     }))
 

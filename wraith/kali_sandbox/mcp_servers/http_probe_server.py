@@ -10,12 +10,23 @@ it, and reads the actual response. That captured exchange is simultaneously:
   * and the reproduction recipe (it is literally the traffic that was sent).
 
 The probe is deliberately narrow. It is an HTTP client for a single authorized
-target, not a request smuggling or pivoting primitive: no arbitrary socket
-control, no cross-host redirection following, and a hard cap on response bytes
-so a hostile target cannot exhaust memory.
+target, not a pivoting primitive: no arbitrary socket control, no cross-host
+redirection following, and a hard cap on response bytes so a hostile target
+cannot exhaust memory.
+
+The one deliberate exception is :meth:`HttpProbeServer.smuggle`, which needs raw
+socket control to send framing a normal HTTP client refuses to produce. It is
+bounded hard and generates its own smuggled request against the target's own
+authority -- see ``SMUGGLE_VARIANTS`` above for why the caller is not allowed to
+supply that request.
 """
 import asyncio
+import base64
+import hashlib
 import json
+import re
+import secrets
+import ssl
 import time
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse, urlunparse
@@ -24,7 +35,7 @@ import httpx
 from pydantic import BaseModel, Field
 
 from .common.base_server import BaseSecurityServer
-from .common.redaction import redact_capture
+from .common.redaction import redact_capture, redact_headers, redact_text
 from .common.response_diff import classify_differential, summarize_differential
 
 # Guards against a hostile or broken target exhausting the sandbox.
@@ -64,6 +75,92 @@ THROTTLE_STATUSES = frozenset({429, 503})
 # rather than a burst, short enough to stay inside a typical one-minute window.
 THRESHOLD_INTERVAL = 0.25
 
+# --- Request smuggling -------------------------------------------------------
+#
+# Smuggling works by sending one request that a front-end and a back-end parse
+# into two different requests. That makes it the one harness here that can send
+# a request the caller did not write, so its limits are structural rather than
+# advisory:
+#
+#   * The caller never supplies the smuggled bytes. It supplies a URL and a
+#     variant name; this tool generates the hidden request itself, from the
+#     same authority as the request it is hiding in. Accepting caller-authored
+#     smuggled bytes would turn the sandbox into an open request-desync
+#     primitive aimed at whatever the operator happened to point it at.
+#   * The hidden request's Host is always the target authority, so a desync
+#     cannot be aimed at a third party. The worst outcome is confused framing
+#     against the host under test.
+#   * Bounded: two variants, two requests each, one connection each.
+#
+# Only these two classic ambiguity pairs are offered. There is no "raw bytes"
+# mode and no way to smuggle towards an arbitrary destination.
+MAX_SMUGGLE_VARIANTS = 2
+SMUGGLE_VARIANTS = ("cl_te", "te_cl")
+
+# Requests the tool writes per variant: the ambiguous one, then a confirmation.
+# The confirmation is what makes a desync observable -- if the target split one
+# request into two, the response to the request we did *not* send comes back
+# first.
+SMUGGLE_REQUESTS_SENT_PER_VARIANT = 2
+
+# Requests the *target* receives per variant when the attempt desyncs: the two
+# above plus the hidden one. Budgeting has to count this, not just what we
+# write, because a rate limiter and an operator's log both see three.
+SMUGGLE_REQUESTS_RECEIVED_PER_VARIANT = 3
+
+# Appended to the caller's path to form the hidden request's target. Any real
+# application 404s an unrecognised path, which is what gives the confirmation
+# response a status the hidden request can be told apart by.
+SMUGGLE_CANARY_SUFFIX = "wraith-smuggle-canary"
+
+# Status a target returns for the canary path. Detection compares the *order*
+# of statuses rather than trusting a header the target chooses to echo, so a
+# hostile or minimal target cannot influence the verdict.
+SMUGGLE_NOT_FOUND = 404
+
+# How long to keep listening *after* the expected number of responses has arrived.
+# A desync shows up as one response more than was sent, and that response is
+# produced a moment after the ones we did ask for -- so the read has to outlive
+# the expected count, or the one answer that proves the vulnerability is the one
+# we stop reading before. Bounded so a target that never closes cannot hold the
+# tool open.
+SMUGGLE_DESYNC_GRACE_SECONDS = 2.0
+
+# Hard cap on the generated exchange, so a pathological target cannot make the
+# tool buffer without bound.
+MAX_SMUGGLE_RESPONSE_BYTES = 256 * 1024
+SMUGGLE_TIMEOUT_CEILING = 30.0
+
+# --- WebSocket upgrade authentication ---------------------------------------
+#
+# A WebSocket handshake is a plain HTTP GET, which means the usual browser
+# protections do not automatically apply: the browser will happily send a
+# cross-origin upgrade with the victim's cookies attached, and unlike a normal
+# request there is no "is this a navigation the user intended" check. So the
+# question worth asking is not "is the socket encrypted" but "who is allowed to
+# open one, and does the server notice when nobody is".
+#
+# The client is hand-rolled rather than pulled in as a dependency because the
+# surface needed is one handshake, one masked frame, and a bounded read. That is
+# small enough that a library would add more bytes to audit than it saves.
+WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+WS_VERSION = "13"
+
+# One handshake, one client frame, a handful of frames read back. Bounded because
+# a server that pushes an unbounded stream would otherwise let a probe sit there
+# reading forever.
+WS_MAX_FRAMES_READ = 4
+WS_MAX_FRAME_BYTES = 8 * 1024
+WS_MAX_SEND_BYTES = 1024
+WS_TIMEOUT_CEILING = 30.0
+
+# Findings are fixed strings so a runner can grade them without interpreting
+# prose.
+WS_FINDING_UNAUTHENTICATED_UPGRADE = "unauthenticated_upgrade_granted"
+WS_FINDING_DATA_BEFORE_AUTH = "data_served_before_any_client_message"
+WS_FINDING_ACCEPT_NOT_VALIDATED = "sec_websocket_accept_missing_or_invalid"
+WS_FINDING_UPGRADE_REJECTED = "upgrade_rejected"
+
 # Header names a caller may not set: they would let a probe authenticate as
 # someone else or smuggle a second request stream.
 BLOCKED_REQUEST_HEADERS = frozenset({
@@ -73,6 +170,44 @@ BLOCKED_REQUEST_HEADERS = frozenset({
 # ``host`` is deliberately settable: it only changes the Host line sent to the
 # destination already resolved from the URL, so routing and scope are unaffected
 # while Host-header/cache-poisoning hypotheses become testable.
+
+# Every framing and routing header is the tool's to write. The harness needs to
+# send Content-Length and Transfer-Encoding, but the *caller* must not: letting
+# them through would append a second, conflicting framing header to the ambiguous
+# request, and the resulting byte stream would test nothing in particular. The
+# ambiguity being tested is a specific one, and a caller-chosen length would
+# change it out from under the verdict.
+#
+# ``host`` is here for a second reason: the hidden request's Host is what keeps a
+# desync pointed at the target under test rather than a third party, and the
+# tool always writes the target authority itself.
+BLOCKED_SMUGGLE_HEADERS = frozenset({
+    "host", "content-length", "transfer-encoding", "connection", "keep-alive",
+    "proxy-connection", "upgrade", "proxy-authorization", "te", "trailer",
+    "content-encoding", "expect",
+})
+
+# The WebSocket handshake is generated here, so every header that defines it is
+# not settable: letting a caller supply Upgrade or Sec-WebSocket-Key would only
+# let it produce a request that is not a WebSocket handshake at all.
+# ``Sec-WebSocket-Protocol`` is deliberately absent from this set -- it is how a
+# server advertises and selects an authenticated subprotocol, so a caller needs
+# to be able to ask for one.
+BLOCKED_WEBSOCKET_HEADERS = frozenset({
+    "host", "connection", "upgrade", "content-length", "transfer-encoding",
+    "sec-websocket-key", "sec-websocket-version", "sec-websocket-accept",
+    "sec-websocket-extensions", "proxy-authorization", "te", "trailer",
+    "keep-alive", "proxy-connection", "expect",
+})
+
+# The whole question this tool answers is whether the endpoint checks who is
+# opening the socket, so a credential cannot be smuggled in through the generic
+# header bag: ``Authorization``/``Cookie`` here would be sent while the record
+# still claimed the run was anonymous, turning a safe endpoint into a reported
+# finding. Credentials belong in ``identities``, which labels the run honestly.
+BLOCKED_WEBSOCKET_AUTH_HEADERS = frozenset({
+    "authorization", "cookie", "proxy-authorization", "x-api-key",
+})
 
 
 class ProbeCapture(BaseModel):
@@ -190,6 +325,104 @@ class ProbeThreshold(BaseModel):
     throttled_count: int = 0
     throttle_statuses: List[int] = Field(default_factory=list)
     rate_limited: bool = False
+    identity: str = ""
+    identities_used: List[str] = Field(default_factory=list)
+
+
+class SmuggleAttempt(BaseModel):
+    """One ambiguity pair, and what the target did with it."""
+
+    variant: str = ""
+    #: The hidden request's path. Generated, not supplied by the caller.
+    canary_path: str = ""
+    #: Exactly what went on the wire, minus any identity credentials. Kept so a
+    #: reviewer can reproduce the finding byte for byte, which is the whole
+    #: point of a smuggling capture.
+    sent_preview: str = ""
+    #: Final (non-1xx) statuses in the order they came back.
+    statuses: List[int] = Field(default_factory=list)
+    requests_sent: int = 0
+    responses_received: int = 0
+    #: A 404 arrived that the caller's own path would not produce, i.e. the
+    #: hidden request was really served. Corroborating detail, not the verdict:
+    #: it is only meaningful because the confirmation's own status is known.
+    canary_served: bool = False
+    #: True when the target returned more answers than it was sent requests, or
+    #: answered the hidden request in place of ours. Either means it parsed one
+    #: request as two. See :meth:`HttpProbeServer.smuggle`.
+    split_detected: bool = False
+    note: str = ""
+
+
+class ProbeSmuggle(BaseModel):
+    """Result of probing for HTTP request smuggling over a raw socket.
+
+    ``desync_detected`` is the field to grade against. It is set only when the
+    target's answers outnumber the requests it was sent, or when the hidden
+    request was answered in place of the caller's -- either way it parsed one
+    request as two. ``attempts`` carries the statuses behind that conclusion so
+    it can be re-read rather than trusted.
+
+    Both variants are always reported, including the ones that did not split.
+    A front-end that disagrees only about the reverse pair is a real finding
+    about a partially-hardened setup, so negative results are evidence too.
+    """
+
+    requested_url: str = ""
+    method: str = "POST"
+    authority: str = ""
+    variants_tried: List[str] = Field(default_factory=list)
+    attempts: List[SmuggleAttempt] = Field(default_factory=list)
+    desync_detected: bool = False
+    total_requests: int = 0
+    identity: str = ""
+    identities_used: List[str] = Field(default_factory=list)
+
+
+class WebSocketFrame(BaseModel):
+    """One decoded frame from the server, with its payload preview."""
+
+    opcode: int = 0
+    payload_preview: str = ""
+    payload_bytes: int = 0
+    truncated: bool = False
+
+
+class ProbeWebSocketAuth(BaseModel):
+    """Whether a WebSocket endpoint authenticates the upgrade, and what it leaks.
+
+    The WebSocket handshake is a plain HTTP GET, so a browser will send a
+    cross-origin one with the victim's cookies attached and there is no
+    navigation prompt to stop it. What matters is therefore not whether the
+    socket is encrypted but whether the server checks who is opening it, and
+    whether it starts pushing data to a socket that presented no credentials.
+
+    ``findings`` holds fixed strings rather than prose so a runner can grade the
+    result without interpreting English. The ones that matter:
+
+      * ``unauthenticated_upgrade_granted`` -- the server completed a 101 with no
+        credentials of any kind sent.
+      * ``data_served_before_any_client_message`` -- it then started pushing,
+        which is what turns an open upgrade into a data leak rather than a
+        curiosity.
+      * ``sec_websocket_accept_missing_or_invalid`` -- the handshake response did
+        not prove it was addressed to *this* request, which is the check that
+        stops a malicious page from reading a cross-origin socket.
+
+    ``upgrade_granted`` and ``accept_valid`` are kept separate on purpose: a
+    101 with a bad accept header is a different, subtler problem from a 101 that
+    was never meant to be reachable without a session.
+    """
+
+    requested_url: str = ""
+    authority: str = ""
+    handshake_status: int = 0
+    upgrade_granted: bool = False
+    accept_valid: bool = False
+    frames: List[WebSocketFrame] = Field(default_factory=list)
+    data_before_client_message: bool = False
+    findings: List[str] = Field(default_factory=list)
+    note: str = ""
     identity: str = ""
     identities_used: List[str] = Field(default_factory=list)
 
@@ -345,7 +578,19 @@ class HttpProbeServer(BaseSecurityServer):
             raise ValueError(f"Method '{m}' not allowed. Allowed: {sorted(ALLOWED_METHODS)}")
         return m
 
-    def _validate_headers(self, headers: Optional[Dict[str, str]]) -> Dict[str, str]:
+    def _validate_headers(
+        self,
+        headers: Optional[Dict[str, str]],
+        blocked: frozenset = BLOCKED_REQUEST_HEADERS,
+        reason: str = "is controlled by the HTTP client and cannot be set",
+    ) -> Dict[str, str]:
+        """Normalise caller headers, refusing the ones the tool must own.
+
+        ``blocked``/``reason`` exist because the smuggling and WebSocket harnesses
+        have a wider set than plain probing does. Checking it here rather than in
+        a second pass keeps one message accurate instead of two, one of which
+        would blame the HTTP client for a header the client never touches.
+        """
         if not headers:
             return {}
         if not isinstance(headers, dict):
@@ -362,8 +607,8 @@ class HttpProbeServer(BaseSecurityServer):
                 raise ValueError("header names must be single-line non-empty strings")
             if "\n" in str(value) or "\r" in str(value):
                 raise ValueError("header values must not contain newlines")
-            if lname in BLOCKED_REQUEST_HEADERS:
-                raise ValueError(f"Header '{name}' is controlled by the HTTP client and cannot be set")
+            if lname in blocked:
+                raise ValueError(f"Header '{name}' {reason}")
             clean[name] = str(value)
         return clean
 
@@ -793,6 +1038,627 @@ class HttpProbeServer(BaseSecurityServer):
             identities_used=[label] if label else [],
         )
 
+    def _validate_smuggle_headers(self, headers: Optional[Dict[str, str]]) -> Dict[str, str]:
+        """Headers for a smuggling attempt: framing allowed, routing not.
+
+        Stricter than :meth:`_validate_headers` on purpose. ``Host`` is refused
+        because the hidden request's Host is the only thing keeping a desync
+        aimed at this target, and that value is written by the tool.
+        """
+        return self._validate_headers(
+            headers, blocked=BLOCKED_SMUGGLE_HEADERS,
+            reason="defines the request framing or routing and cannot be set when testing smuggling",
+        )
+
+    @staticmethod
+    def _smuggle_authority(parsed) -> str:
+        """``host:port`` for the socket dial, with the default port filled in.
+
+        Deliberately the same normalisation the grant uses, so the destination
+        the tool dials is the destination the grant named. If these two
+        disagreed, the gate would be authorising one port while the tool
+        dialled another.
+        """
+        host = (parsed.hostname or "").lower()
+        port = parsed.port
+        if port is None:
+            port = 443 if parsed.scheme == "https" else 80
+        if ":" in host and not host.startswith("["):
+            host = f"[{host}]"
+        return f"{host}:{port}"
+
+    @staticmethod
+    def _smuggle_canary_path(path: str, token: str) -> str:
+        """Build the hidden request's path from the caller's path plus a token.
+
+        Derived from the caller's own path so it stays on the same origin, and
+        suffixed with a per-attempt token so a cached or replayed response cannot
+        be mistaken for this attempt's evidence. Any real application 404s a path
+        it does not recognise, and that 404 is how the hidden request is later
+        told apart from the confirmation.
+        """
+        base = path or "/"
+        if base == "/":
+            return f"/{SMUGGLE_CANARY_SUFFIX}-{token}"
+        return f"{base.rstrip('/')}/{SMUGGLE_CANARY_SUFFIX}-{token}"
+
+    @staticmethod
+    def _smuggle_exchange(
+        method: str,
+        path: str,
+        authority: str,
+        variant: str,
+        canary_path: str,
+        extra_headers: Dict[str, str],
+    ) -> str:
+        """Build the two-request exchange for one ambiguity pair.
+
+        Both variants send the same bytes over the wire -- a request whose visible
+        body is an empty chunked stream, followed by the hidden request -- and
+        differ only in the ``Content-Length`` they advertise. That is the whole
+        trick: the number the front-end trusts and the number the back-end
+        trusts now disagree, and the hidden request is left pending in whichever
+        of the two read the framing differently.
+
+          * ``cl_te``: ``Content-Length`` covers the hidden request too, so a
+            front-end that trusts CL forwards it and a back-end that trusts TE
+            stops at the empty chunk, leaving the hidden request queued behind it.
+          * ``te_cl``: ``Content-Length`` covers only the hidden request, so a
+            front-end that trusts TE forwards just the terminator and queues the
+            hidden request itself.
+
+        Neither variant lets the caller influence the hidden request, and the
+        hidden request's Host is always ``authority`` -- the same origin the
+        caller asked for.
+        """
+        hidden = f"GET {canary_path} HTTP/1.1\r\nHost: {authority}\r\n\r\n"
+        terminator = "0\r\n\r\n"
+        content_length = len(terminator) + len(hidden) if variant == "cl_te" else len(hidden)
+
+        rendered = "".join(f"{k}: {v}\r\n" for k, v in extra_headers.items())
+        ambiguous = (
+            f"{method} {path} HTTP/1.1\r\n"
+            f"Host: {authority}\r\n"
+            f"{rendered}"
+            f"Content-Length: {content_length}\r\n"
+            f"Transfer-Encoding: chunked\r\n"
+            f"\r\n"
+            f"{terminator}{hidden}"
+        )
+        # The confirmation. If the target split the first request in two, the
+        # answer to this one is not the first thing that comes back.
+        confirmation = (
+            f"GET {path} HTTP/1.1\r\n"
+            f"Host: {authority}\r\n"
+            f"{rendered}"
+            f"\r\n"
+        )
+        return ambiguous + confirmation
+
+    @staticmethod
+    def _final_statuses(data: bytes) -> List[int]:
+        """Status codes in ``data``, with informational (1xx) ones dropped.
+
+        ``100 Continue`` and ``103 Early Hints`` are answers *to* a request, not
+        extra requests. Counting them would make any target that uses them look
+        desyncable.
+        """
+        return [
+            int(m) for m in re.findall(rb"HTTP/1\.[01] (\d{3})", data)
+            if not m.startswith(b"1")
+        ]
+
+    @staticmethod
+    async def _smuggle_statuses(
+        reader: asyncio.StreamReader,
+        expected: int,
+        deadline: float,
+        cap: int = MAX_SMUGGLE_RESPONSE_BYTES,
+        grace: float = SMUGGLE_DESYNC_GRACE_SECONDS,
+    ) -> List[int]:
+        """Collect final response statuses, then keep listening past ``expected``.
+
+        A desync is detected by a response *beyond* the number of requests that
+        were written, so stopping at ``expected`` would stop one answer short of
+        the evidence: the extra status has not been produced yet when the
+        expected ones are all in hand, and it arrives a moment later. Reading
+        exactly what we expected is how a real desync gets reported as "nothing
+        unusual" on a slow run and found on a fast one.
+
+        So once the expected count is reached the reader stays open for ``grace``
+        seconds, and only a genuine silence (or the deadline) ends the wait. The
+        grace window is what makes the count meaningful, and it is bounded so a
+        target that never closes cannot hold the tool open.
+
+        Returns the statuses in order. A target that closes right after the split
+        is a desync too, and shows up here as the window ending early.
+        """
+        buf = b""
+        loop = asyncio.get_event_loop()
+        grace_deadline: Optional[float] = None
+
+        while len(buf) < cap:
+            remaining = deadline - loop.time()
+            if grace_deadline is not None:
+                remaining = min(remaining, grace_deadline - loop.time())
+            if remaining <= 0:
+                break
+            try:
+                chunk = await asyncio.wait_for(reader.read(4096), timeout=remaining)
+            except (asyncio.TimeoutError, ConnectionError):
+                break
+            if not chunk:
+                break
+            buf += chunk
+            if grace_deadline is None and len(HttpProbeServer._final_statuses(buf)) >= expected:
+                grace_deadline = loop.time() + grace
+        return HttpProbeServer._final_statuses(buf)
+
+    @staticmethod
+    def _smuggle_split(
+        statuses: List[int], sent: int = SMUGGLE_REQUESTS_SENT_PER_VARIANT
+    ) -> tuple:
+        """Decide whether the target parsed one of our requests as two.
+
+        Two independent signals, because neither covers every real desync:
+
+          * **More answers than requests.** We sent ``sent`` requests; if the
+            target answers more than that on the same connection it served a
+            request nobody sent separately. This is the sound one, and it holds
+            whatever the hidden request happened to return.
+          * **The hidden request answered in place of ours.** A front-end that
+            swallows our request and forwards the leftover serves the canary
+            first and the caller's own path last. The last status is therefore
+            the caller's path's real answer, which is what makes a leading 404
+            meaningful.
+
+        The leading-404 test needs the confirmation's status to be trustworthy,
+        which is why it also checks the tail. A caller pointing this at a path
+        that itself 404s sees 404 on both ends and is correctly not flagged --
+        without that guard, every probe of a missing endpoint would "confirm"
+        smuggling.
+        """
+        extra = len(statuses) - sent
+        canary_first = bool(
+            len(statuses) >= 2
+            and statuses[0] == SMUGGLE_NOT_FOUND
+            and statuses[-1] != SMUGGLE_NOT_FOUND
+        )
+        split = extra > 0 or canary_first
+        canary_served = canary_first or SMUGGLE_NOT_FOUND in statuses[1:-1]
+        if extra > 0:
+            note = (
+                f"target answered {len(statuses)} requests it was sent {sent}: "
+                "framing disagree")
+        elif canary_first:
+            note = "hidden request was answered instead of the caller's own path"
+        else:
+            note = "no framing disagreement observed for this variant"
+        return split, canary_served, note
+
+    async def smuggle(
+        self,
+        url: str,
+        variant: str = "both",
+        method: str = "POST",
+        headers: Optional[Dict[str, str]] = None,
+        timeout: float = 20.0,
+        identities: Optional[List[Identity]] = None,
+        identity: Optional[str] = None,
+    ) -> ProbeSmuggle:
+        """Test whether a front-end and back-end disagree about request framing.
+
+        A proxy chain is only as safe as the least consistent hop in it. If the
+        front-end decides a request ends at one byte and the back-end at another,
+        the leftover bytes become the start of the next request the back-end
+        serves -- an attacker-supplied request the front-end never approved. That
+        is how request smuggling turns into hijacked sessions and poisoned caches.
+
+        This sends one ambiguous request plus one confirmation per variant on a
+        single connection, then compares the answers to the requests. If the
+        target replies more times than it was asked, or answers the hidden
+        request in place of the caller's, it parsed one request as two: that is
+        a desync. Grade against ``desync_detected``, and read ``attempts`` for
+        the statuses and which variant split.
+
+        What it deliberately will not do: accept caller-authored smuggled bytes,
+        or send the hidden request at any destination other than the target's own
+        authority. A general desync primitive is a weapon pointed at whoever the
+        operator happens to be scanning, so the hidden request is generated here
+        and the budget is four requests across at most two connections.
+
+        Test this only where you are authorized. It sends deliberately malformed
+        framing, which is exactly what WAFs and hardening middleware flag.
+        """
+        url = self._validate_url(url)
+        method = self._validate_method(method)
+        variant = (variant or "both").strip().lower()
+        if variant not in ("both",) + SMUGGLE_VARIANTS:
+            raise ValueError(f"variant must be 'cl_te', 'te_cl' or 'both', got '{variant}'")
+        if not isinstance(timeout, (int, float)) or isinstance(timeout, bool):
+            raise ValueError("timeout must be a number")
+        timeout = max(1.0, min(float(timeout), SMUGGLE_TIMEOUT_CEILING))
+
+        requested = (
+            list(SMUGGLE_VARIANTS) if variant == "both" else [variant]
+        )
+        if len(requested) > MAX_SMUGGLE_VARIANTS:
+            raise ValueError(f"at most {MAX_SMUGGLE_VARIANTS} variants per attempt")
+
+        parsed = urlparse(url)
+        authority = self._smuggle_authority(parsed)
+        path = parsed.path or "/"
+        if parsed.query:
+            path = f"{path}?{parsed.query}"
+
+        registry, label = self._identity_registry(identities, identity)
+        extra_headers = self._validate_smuggle_headers(headers)
+        if label:
+            # An authenticated smuggle is the interesting one: it is how a
+            # desync becomes account takeover rather than a stray 404. The token
+            # goes on the wire and is kept out of the evidence.
+            extra_headers.update(registry[label].headers)
+
+        attempts: List[SmuggleAttempt] = []
+        total_requests = 0
+        for name in requested:
+            token = secrets.token_hex(6)
+            canary = self._smuggle_canary_path(path.split("?")[0], token)
+            wire = self._smuggle_exchange(
+                method, path, authority, name, canary, extra_headers)
+            # The preview is rebuilt with redacted header values rather than
+            # redacted afterwards. ``redact_text`` understands JSON and query
+            # strings, not a raw ``Authorization:`` line, so scrubbing the
+            # finished wire would have let the session token straight through
+            # into the evidence. Redacting the headers before they are rendered
+            # is the only ordering that cannot leak.
+            preview = redact_text(self._smuggle_exchange(
+                method, path, authority, name, canary, redact_headers(extra_headers)))
+
+            statuses: List[int] = []
+            note = ""
+            try:
+                ssl_ctx = (
+                    ssl.create_default_context() if parsed.scheme == "https" else None
+                )
+                reader, writer = await asyncio.wait_for(
+                    asyncio.open_connection(
+                        parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80),
+                        ssl=ssl_ctx,
+                    ),
+                    timeout=timeout,
+                )
+            except (asyncio.TimeoutError, OSError, ssl.SSLError) as exc:
+                note = f"could not open a connection: {type(exc).__name__}: {exc}"
+                attempts.append(SmuggleAttempt(
+                    variant=name, canary_path=canary, sent_preview=preview,
+                    statuses=[], requests_sent=0, responses_received=0,
+                    canary_served=False, split_detected=False, note=note))
+                continue
+
+            try:
+                total_requests += SMUGGLE_REQUESTS_RECEIVED_PER_VARIANT
+                deadline = asyncio.get_event_loop().time() + timeout
+                writer.write(wire.encode("latin-1"))
+                await asyncio.wait_for(writer.drain(), timeout=timeout)
+                statuses = await self._smuggle_statuses(
+                    reader, SMUGGLE_REQUESTS_SENT_PER_VARIANT, deadline)
+            except (asyncio.TimeoutError, OSError) as exc:
+                note = f"exchange did not complete: {type(exc).__name__}: {exc}"
+            finally:
+                try:
+                    writer.close()
+                    await asyncio.wait_for(writer.wait_closed(), timeout=2.0)
+                except (asyncio.TimeoutError, OSError):
+                    pass
+
+            # More answers than requests is the desync. The canary records what
+            # got smuggled; it is not the verdict, because a target that happens
+            # to 404 the caller's own path would otherwise flag every probe.
+            split, canary_served, split_note = self._smuggle_split(statuses)
+            if not note:
+                note = split_note
+            attempts.append(SmuggleAttempt(
+                variant=name, canary_path=canary, sent_preview=preview,
+                statuses=statuses,
+                requests_sent=SMUGGLE_REQUESTS_SENT_PER_VARIANT,
+                responses_received=len(statuses),
+                canary_served=canary_served,
+                split_detected=split, note=note))
+
+        return ProbeSmuggle(
+            requested_url=url,
+            method=method,
+            authority=authority,
+            variants_tried=requested,
+            attempts=attempts,
+            desync_detected=any(a.split_detected for a in attempts),
+            total_requests=total_requests,
+            identity=label,
+            identities_used=[label] if label else [],
+        )
+
+    def _validate_websocket_headers(self, headers: Optional[Dict[str, str]]) -> Dict[str, str]:
+        """Headers for a WebSocket handshake: everything that defines it is ours.
+
+        Same shape as the smuggling check -- validate normally, then refuse the
+        names the tool has to own, and then refuse the names that would make the
+        run something other than the anonymous visit it is recorded as.
+        """
+        validated = self._validate_headers(
+            headers, blocked=BLOCKED_WEBSOCKET_HEADERS,
+            reason="defines the WebSocket handshake and cannot be set",
+        )
+        return self._validate_headers(
+            validated, blocked=BLOCKED_WEBSOCKET_AUTH_HEADERS,
+            reason=(
+                "carries a credential; an identity must be declared as one so "
+                "the run is recorded as authenticated rather than anonymous"
+            ),
+        )
+
+    @staticmethod
+    def _ws_accept_for(key: str) -> str:
+        """The value a correct server must echo back for this key."""
+        digest = hashlib.sha1((key + WS_GUID).encode("ascii")).digest()
+        return base64.b64encode(digest).decode("ascii")
+
+    @staticmethod
+    def _ws_encode_frame(payload: bytes, opcode: int = 0x1) -> bytes:
+        """Encode one client frame, masked as RFC 6455 requires.
+
+        Clients must mask; a server that will not accept an unmasked frame is
+        doing the one thing the spec makes mandatory, so the harness cannot
+        quietly skip it.
+        """
+        mask = secrets.token_bytes(4)
+        masked = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
+        header = bytes([0x80 | opcode])
+        length = len(payload)
+        if length < 126:
+            header += bytes([0x80 | length])
+        elif length < (1 << 16):
+            header += bytes([0x80 | 126]) + length.to_bytes(2, "big")
+        else:
+            header += bytes([0x80 | 127]) + length.to_bytes(8, "big")
+        return header + mask + masked
+
+    @staticmethod
+    async def _ws_read_frames(
+        reader: asyncio.StreamReader,
+        deadline: float,
+        limit: int = WS_MAX_FRAMES_READ,
+        initial: bytes = b"",
+    ) -> List[WebSocketFrame]:
+        """Decode up to ``limit`` frames, stopping at the cap or the deadline.
+
+        ``initial`` is bytes already read off the socket -- a frame that arrived
+        in the same segment as the handshake response would otherwise be lost,
+        and that frame is usually the interesting one.
+
+        Deliberately shallow: the question is whether the server starts talking
+        unprompted, not what it can be made to say.
+        """
+        buf = initial
+        loop = asyncio.get_event_loop()
+        frames: List[WebSocketFrame] = []
+
+        async def pull() -> None:
+            nonlocal buf
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                raise asyncio.TimeoutError
+            chunk = await asyncio.wait_for(reader.read(4096), timeout=remaining)
+            if not chunk:
+                raise ConnectionError
+            buf += chunk
+
+        while len(frames) < limit:
+            try:
+                # A frame header is at least two bytes; a large frame also needs
+                # its extended length, so read until the length is knowable.
+                while len(buf) < 2:
+                    await pull()
+                opcode = buf[0] & 0x0F
+                masked = bool(buf[1] & 0x80)
+                length = buf[1] & 0x7F
+                offset = 2
+                if length == 126:
+                    while len(buf) < offset + 2:
+                        await pull()
+                    length = int.from_bytes(buf[offset:offset + 2], "big")
+                    offset += 2
+                elif length == 127:
+                    while len(buf) < offset + 8:
+                        await pull()
+                    length = int.from_bytes(buf[offset:offset + 8], "big")
+                    offset += 8
+                truncated = length > WS_MAX_FRAME_BYTES
+                take = min(length, WS_MAX_FRAME_BYTES)
+                if masked:
+                    while len(buf) < offset + 4:
+                        await pull()
+                    offset += 4
+                while len(buf) < offset + take:
+                    await pull()
+                payload = buf[offset:offset + take]
+                buf = buf[offset + length:]
+                frames.append(WebSocketFrame(
+                    opcode=opcode,
+                    payload_preview=redact_text(payload[:512].decode("utf-8", "replace")),
+                    payload_bytes=length,
+                    truncated=truncated,
+                ))
+                # A close frame ends the conversation.
+                if opcode == 0x8:
+                    break
+            except (asyncio.TimeoutError, ConnectionError, OSError):
+                break
+        return frames
+
+    async def websocket_auth(
+        self,
+        url: str,
+        headers: Optional[Dict[str, str]] = None,
+        message: str = "ping",
+        timeout: float = 10.0,
+        identities: Optional[List[Identity]] = None,
+        identity: Optional[str] = None,
+    ) -> ProbeWebSocketAuth:
+        """Open a WebSocket as an anonymous visitor and see whether it is allowed.
+
+        A WebSocket handshake is an ordinary HTTP GET, so a browser will send one
+        to another origin with the victim's cookies attached, and there is no
+        navigation prompt to interrupt it. That makes "who may open this socket"
+        the question, not "is the socket encrypted".
+
+        This completes a real RFC 6455 handshake with no credentials, checks the
+        server echoed a correct ``Sec-WebSocket-Accept``, then reads a few frames
+        *before* sending anything. A server that answers 101 and immediately
+        starts pushing has handed a data stream to whoever asked, which is the
+        finding; grade against ``findings``.
+
+        Pass ``identities`` plus ``identity`` to repeat the upgrade as a known
+        user. The difference between the two runs is what tells you whether the
+        endpoint is checking anything, and the credential is withheld from the
+        evidence either way.
+
+        The handshake headers are generated here and are not settable, so this
+        cannot be turned into a request that is not a WebSocket upgrade.
+        """
+        url = self._validate_url(url)
+        if not isinstance(timeout, (int, float)) or isinstance(timeout, bool):
+            raise ValueError("timeout must be a number")
+        timeout = max(1.0, min(float(timeout), WS_TIMEOUT_CEILING))
+        if not isinstance(message, str):
+            raise ValueError("message must be a string")
+        message = message[:WS_MAX_SEND_BYTES]
+
+        parsed = urlparse(url)
+        authority = self._smuggle_authority(parsed)
+        path = parsed.path or "/"
+        if parsed.query:
+            path = f"{path}?{parsed.query}"
+
+        registry, label = self._identity_registry(identities, identity)
+        extra_headers = self._validate_websocket_headers(headers)
+        if label:
+            extra_headers.update(registry[label].headers)
+
+        key = base64.b64encode(secrets.token_bytes(16)).decode("ascii")
+        handshake = (
+            f"GET {path} HTTP/1.1\r\n"
+            f"Host: {authority}\r\n"
+            f"Upgrade: websocket\r\n"
+            f"Connection: Upgrade\r\n"
+            f"Sec-WebSocket-Key: {key}\r\n"
+            f"Sec-WebSocket-Version: {WS_VERSION}\r\n"
+            f"User-Agent: {DEFAULT_USER_AGENT}\r\n"
+            + "".join(f"{k}: {v}\r\n" for k, v in extra_headers.items())
+            + "\r\n"
+        )
+
+        result = ProbeWebSocketAuth(
+            requested_url=url, authority=authority, identity=label,
+            identities_used=[label] if label else [],
+        )
+
+        try:
+            ssl_ctx = ssl.create_default_context() if parsed.scheme == "https" else None
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(
+                    parsed.hostname,
+                    parsed.port or (443 if parsed.scheme == "https" else 80),
+                    ssl=ssl_ctx,
+                ),
+                timeout=timeout,
+            )
+        except (asyncio.TimeoutError, OSError, ssl.SSLError) as exc:
+            result.note = f"could not open a connection: {type(exc).__name__}: {exc}"
+            result.findings.append(WS_FINDING_UPGRADE_REJECTED)
+            return result
+
+        try:
+            loop = asyncio.get_event_loop()
+            deadline = loop.time() + timeout
+            writer.write(handshake.encode("latin-1"))
+            await asyncio.wait_for(writer.drain(), timeout=timeout)
+
+            raw = b""
+            while b"\r\n\r\n" not in raw:
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    raise asyncio.TimeoutError
+                chunk = await asyncio.wait_for(reader.read(4096), timeout=remaining)
+                if not chunk:
+                    break
+                raw += chunk
+
+            if b"\r\n\r\n" not in raw:
+                result.note = "connection closed before the handshake completed"
+                result.findings.append(WS_FINDING_UPGRADE_REJECTED)
+                return result
+
+            head, _, rest = raw.partition(b"\r\n\r\n")
+            head_text = head.decode("latin-1", "replace")
+            first_line = head_text.split("\r\n")[0]
+            parts = first_line.split(" ", 2)
+            result.handshake_status = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
+            result.upgrade_granted = result.handshake_status == 101
+
+            response_headers = {}
+            for line in head_text.split("\r\n")[1:]:
+                if ":" in line:
+                    name, _, value = line.partition(":")
+                    response_headers[name.strip().lower()] = value.strip()
+
+            if result.upgrade_granted:
+                accept = response_headers.get("sec-websocket-accept", "")
+                result.accept_valid = accept == self._ws_accept_for(key)
+                if not result.accept_valid:
+                    result.findings.append(WS_FINDING_ACCEPT_NOT_VALIDATED)
+                if not label:
+                    result.findings.append(WS_FINDING_UNAUTHENTICATED_UPGRADE)
+
+                # Read what the server has to say *before* writing our message,
+                # not after. A frame in that window cannot be a response to
+                # anything we sent, so its presence settles the question -- and
+                # deciding it any other way is wrong: judging it by whether the
+                # greeting shared a segment with the handshake would make the
+                # finding depend on TCP segmentation, so the same server would
+                # report or not report based on the network.
+                deadline = loop.time() + timeout
+                result.frames = await self._ws_read_frames(
+                    reader, deadline, initial=rest)
+                if result.frames:
+                    result.data_before_client_message = True
+                    result.findings.append(WS_FINDING_DATA_BEFORE_AUTH)
+                    writer.write(self._ws_encode_frame(message.encode("utf-8")))
+                    await asyncio.wait_for(writer.drain(), timeout=timeout)
+            else:
+                result.findings.append(WS_FINDING_UPGRADE_REJECTED)
+                result.note = (
+                    f"upgrade refused with {result.handshake_status}; "
+                    "the endpoint did check the request"
+                )
+        except (asyncio.TimeoutError, OSError, ssl.SSLError) as exc:
+            result.note = f"exchange did not complete: {type(exc).__name__}: {exc}"
+            if not result.findings:
+                result.findings.append(WS_FINDING_UPGRADE_REJECTED)
+        finally:
+            try:
+                writer.close()
+                await asyncio.wait_for(writer.wait_closed(), timeout=2.0)
+            except (asyncio.TimeoutError, OSError):
+                pass
+
+        if result.upgrade_granted and not result.note:
+            result.note = (
+                "upgrade granted and the server spoke first" if result.frames
+                else "upgrade granted; no unsolicited data observed"
+            )
+        return result
+
     def setup_tools(self):
         @self.mcp.tool()
         async def http_probe(
@@ -936,4 +1802,98 @@ class HttpProbeServer(BaseSecurityServer):
                 url=url, method=method, headers=headers, body=body,
                 timeout=timeout, follow_redirects=follow_redirects, count=count,
                 interval=interval, identities=identities, identity=identity,
+            )
+
+        @self.mcp.tool()
+        async def http_probe_smuggle(
+            url: str,
+            variant: str = "both",
+            method: str = "POST",
+            headers: Optional[Dict[str, str]] = None,
+            timeout: float = 20.0,
+            identities: Optional[List[Identity]] = None,
+            identity: Optional[str] = None,
+            caller: Optional[str] = None,
+        ) -> ProbeSmuggle:
+            """Test whether a proxy chain disagrees about where a request ends.
+
+            A front-end that trusts Content-Length and a back-end that trusts
+            Transfer-Encoding read different numbers of bytes out of the same
+            request, and the difference becomes the start of the next request the
+            back-end serves. That is request smuggling, and it is how a smuggled
+            request steals another user's session or poisons a cache.
+
+            Sends one ambiguous request and one confirmation per variant on a
+            single connection, then compares the answers to the requests. If the
+            target replies more times than it was asked, or answers the hidden
+            request in place of the caller's, it parsed one request as two.
+            Grade against ``desync_detected``, and read ``attempts`` for the
+            statuses and which variant split.
+
+            Bounded on purpose, because this is the one tool here that can send a
+            request the caller did not write: you supply the URL and the variant
+            name, and the hidden request is generated against the target's own
+            authority. It cannot be pointed at a third party, and ``Host`` is not
+            settable so the hidden request cannot claim to be somewhere else.
+            Four requests, two connections, per call.
+
+            An authenticated test is the one that matters -- that is how a desync
+            becomes account takeover -- so pass ``identities`` plus ``identity`` to
+            smuggle a session. The credential is sent and then withheld from the
+            evidence.
+
+            Only send this to a target you are authorized to test, and expect
+            hardened stacks to reject the malformed framing outright; that is a
+            clean negative, not an error.
+            """
+            self.verify_caller("http_probe_smuggle", caller)
+            return await self.smuggle(
+                url=url, variant=variant, method=method, headers=headers,
+                timeout=timeout, identities=identities, identity=identity,
+            )
+
+        @self.mcp.tool()
+        async def http_probe_websocket_auth(
+            url: str,
+            headers: Optional[Dict[str, str]] = None,
+            message: str = "ping",
+            timeout: float = 10.0,
+            identities: Optional[List[Identity]] = None,
+            identity: Optional[str] = None,
+            caller: Optional[str] = None,
+        ) -> ProbeWebSocketAuth:
+            """Open a WebSocket as an anonymous visitor and see whether that is allowed.
+
+            A WebSocket handshake is an ordinary HTTP GET, so a browser will send
+            one to another origin with the victim's cookies attached and never
+            prompt the user about it. The question worth asking is therefore not
+            "is this encrypted" but "who is allowed to open this socket, and does
+            the server notice when nobody is".
+
+            Completes a real RFC 6455 handshake with no credentials, verifies the
+            server echoed a correct Sec-WebSocket-Accept, then reads a few frames
+            *before* sending anything. A server that answers 101 and immediately
+            starts pushing has handed a live data stream to whoever asked.
+
+            Grade against ``findings``, which are fixed strings:
+              * ``unauthenticated_upgrade_granted`` -- 101 with no credentials sent.
+              * ``data_served_before_any_client_message`` -- it then pushed anyway.
+              * ``sec_websocket_accept_missing_or_invalid`` -- the reply did not
+                prove it was addressed to this request, which is the check that
+                stops a malicious page reading a cross-origin socket.
+              * ``upgrade_rejected`` -- the endpoint did check, and said no.
+
+            Pass ``identities`` plus ``identity`` to repeat the upgrade as a known
+            user; comparing the two runs is what shows whether the endpoint is
+            checking anything. The credential is sent and then withheld from the
+            evidence.
+
+            One handshake and a handful of frames, and the handshake headers are
+            generated here rather than accepted from you, so this cannot become a
+            request that is not a WebSocket upgrade.
+            """
+            self.verify_caller("http_probe_websocket_auth", caller)
+            return await self.websocket_auth(
+                url=url, headers=headers, message=message, timeout=timeout,
+                identities=identities, identity=identity,
             )
