@@ -26,7 +26,7 @@ DANGEROUS_TOOLS = {"run_hydra", "run_msf_module"}
 # killswitch + signed grant + re-read scope, not merely on who the caller says
 # it is: the request body chooses the destination, so a caller name proves
 # nothing about where the packet is going.
-GATED_NETWORK_TOOLS = {"http_probe", "http_probe_diff"}
+GATED_NETWORK_TOOLS = {"http_probe", "http_probe_diff", "http_probe_race"}
 AUTHORIZED_DANGEROUS_CALLERS = set(os.getenv("AUTHORIZED_DANGEROUS_CALLERS", "active_exploit_runner").split(","))
 
 def verify_caller(tool_name: str, caller: Optional[str]):
@@ -178,6 +178,33 @@ async def http_probe_diff(
         "body": body, "timeout": timeout, "follow_redirects": follow_redirects,
         "identities": identities, "baseline_identity": baseline_identity,
         "caller": caller,
+    }))
+
+@mcp.tool()
+async def http_probe_race(
+    url: str,
+    method: str = "POST",
+    headers: Optional[dict] = None,
+    body=None,
+    timeout: float = 20.0,
+    follow_redirects: bool = False,
+    count: int = 3,
+):
+    """Send one request several times concurrently and return every capture.
+
+    For single-use actions (coupon redemption, account creation, checkout, vote)
+    the observable question is whether the endpoint serializes the operation:
+    if more than one of several simultaneous identical requests succeeds, the
+    action is not serialized. The concurrent count is small and bounded on
+    purpose — this is a missing-lock check, not a stress tool. Safety gates
+    (scope, killswitch, rate limit) are enforced by active_exploit_runner before
+    this tool is reached.
+    """
+    caller = get_caller()
+    return unwrap_inner(await http_probe_server.mcp.call_tool("http_probe_race", {
+        "url": url, "method": method, "headers": headers, "body": body,
+        "timeout": timeout, "follow_redirects": follow_redirects,
+        "count": count, "caller": caller,
     }))
 
 # Add internal REST bridge for Phase 5 executor

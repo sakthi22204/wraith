@@ -149,6 +149,17 @@ CWE_MAPPING = {
         "cwe_id": "CWE-400",
         "owasp_category": "A04:2021-Insecure Design",
         "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:L"
+    },
+    # The Phase 1.6 concurrency harness emits this type.
+    "race condition / toctou": {
+        "cwe_id": "CWE-367",
+        "owasp_category": "A04:2021-Insecure Design",
+        "cvss_template": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:H/A:N"
+    },
+    "race condition": {
+        "cwe_id": "CWE-362",
+        "owasp_category": "A04:2021-Insecure Design",
+        "cvss_template": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:H/A:N"
     }
 }
 

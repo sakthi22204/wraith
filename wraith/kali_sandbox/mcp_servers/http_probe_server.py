@@ -43,6 +43,11 @@ DEFAULT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.
 MAX_COMPARISON_REQUESTS = 2
 MAX_VARIANTS = 8
 
+# A race sweep sends the *same* request several times at once. The cap is
+# deliberately small: concurrency multiplies load on a live host, so the harness
+# is a check for a missing lock, not a stress tool.
+MAX_RACE_REQUESTS = 6
+
 # Header names a caller may not set: they would let a probe authenticate as
 # someone else or smuggle a second request stream.
 BLOCKED_REQUEST_HEADERS = frozenset({
@@ -124,6 +129,23 @@ class VariantResult(BaseModel):
     summary: str = ""
     identity: str = ""
     authz_signal: Optional[str] = None
+
+
+class ProbeRace(BaseModel):
+    """The same request sent concurrently ``count`` times.
+
+    A single-use action (coupon redemption, account creation, checkout, vote)
+    should honour only one of a set of simultaneous requests. When several
+    succeed, the endpoint is not serializing the operation and a caller can
+    reuse a one-shot capability. ``captures`` is kept in full so the count is
+    reviewable from the evidence rather than taken on trust.
+    """
+
+    requested_url: str = ""
+    method: str = "GET"
+    captures: List[Dict[str, Any]] = Field(default_factory=list)
+    count: int = 0
+    total_requests: int = 0
 
 
 class ProbeComparison(BaseModel):
@@ -554,6 +576,55 @@ class HttpProbeServer(BaseSecurityServer):
             total_requests=1 + total_variants,
         )
 
+    # -- race / concurrency ---------------------------------------------------
+
+    def _validate_race_count(self, count: int) -> int:
+        """A race needs at least two simultaneous requests, and never many."""
+        if not isinstance(count, int) or isinstance(count, bool):
+            raise ValueError("count must be an integer")
+        if count < 2:
+            raise ValueError("count must be at least 2 for a race sweep")
+        if count > MAX_RACE_REQUESTS:
+            raise ValueError(
+                f"at most {MAX_RACE_REQUESTS} concurrent requests per race sweep")
+        return count
+
+    async def race(
+        self,
+        url: str,
+        method: str = "POST",
+        headers: Optional[Dict[str, str]] = None,
+        body=None,
+        timeout: float = 20.0,
+        follow_redirects: bool = False,
+        count: int = 3,
+    ) -> ProbeRace:
+        """Send one identical request several times at once and return every capture.
+
+        This is how a missing lock becomes observable from outside: a
+        single-use action should honour only the first of several simultaneous
+        requests, so a success count above one is the signal. Only a small
+        fixed number of concurrent requests is ever sent.
+        """
+        url = self._validate_url(url)
+        method = self._validate_method(method)
+        count = self._validate_race_count(count)
+
+        captures = await asyncio.gather(*(
+            self.probe(
+                url=url, method=method, headers=dict(headers or {}), body=body,
+                timeout=timeout, follow_redirects=follow_redirects,
+            )
+            for _ in range(count)
+        ))
+        return ProbeRace(
+            requested_url=url,
+            method=method,
+            captures=[c.model_dump() for c in captures],
+            count=count,
+            total_requests=len(captures),
+        )
+
     def setup_tools(self):
         @self.mcp.tool()
         async def http_probe(
@@ -618,4 +689,35 @@ class HttpProbeServer(BaseSecurityServer):
                 url=url, variants=variants, method=method, headers=headers,
                 body=body, timeout=timeout, follow_redirects=follow_redirects,
                 identities=identities, baseline_identity=baseline_identity,
+            )
+
+        @self.mcp.tool()
+        async def http_probe_race(
+            url: str,
+            method: str = "POST",
+            headers: Optional[Dict[str, str]] = None,
+            body=None,
+            timeout: float = 20.0,
+            follow_redirects: bool = False,
+            count: int = 3,
+            caller: Optional[str] = None,
+        ) -> ProbeRace:
+            """Send the same request several times concurrently and return every capture.
+
+            Use this for a single-use action — coupon redemption, account
+            creation, checkout, vote, transfer — where the interesting question
+            is whether the endpoint serializes the operation. Fire a small
+            fixed number of identical simultaneous requests and count the
+            successes: if more than one succeeds, the action was not serialized
+            and a one-shot capability can be replayed.
+
+            Every capture is returned, so the success count is reviewable rather
+            than taken on trust. Only send this against a target you are
+            authorized to test; the request is repeated, so keep ``count`` at the
+            small default.
+            """
+            self.verify_caller("http_probe_race", caller)
+            return await self.race(
+                url=url, method=method, headers=headers, body=body,
+                timeout=timeout, follow_redirects=follow_redirects, count=count,
             )
