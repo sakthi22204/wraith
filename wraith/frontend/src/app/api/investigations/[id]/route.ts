@@ -4,6 +4,9 @@ export async function DELETE(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  // No inbound auth token here on purpose; see the note in the killswitch route.
+  // This one is destructive, so the exposure that matters is that the panel is
+  // published to 127.0.0.1 only, not that it re-authenticates the browser.
   const { id } = await params;
   const adminToken = process.env.ADMIN_API_TOKEN;
   const graphDbUrl = process.env.GRAPH_DB_URL || 'http://graph_api:8001';

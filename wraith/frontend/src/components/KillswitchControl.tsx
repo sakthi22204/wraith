@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { fetchKillswitchStatus, setKillswitch } from '@/lib/exploitApi';
+import { errorMessage } from '@/lib/apiError';
 
 type KillswitchState = 'loading' | 'active' | 'inactive' | 'error';
 type PendingAction = 'activate' | 'deactivate' | null;
@@ -21,7 +22,7 @@ export default function KillswitchControl() {
       setLastError(null);
     } catch (e) {
       setState('error');
-      setLastError('Unable to reach the exploit runner service.');
+      setLastError(errorMessage(e, 'Unable to reach the exploit runner service.'));
     }
   }, []);
 
@@ -42,8 +43,8 @@ export default function KillswitchControl() {
       setIsModalOpen(false);
       toast.success(confirming === 'activate' ? 'Killswitch activated' : 'Killswitch deactivated');
       refresh();
-    } catch (e: any) {
-      toast.error(`Failed to ${confirming} killswitch`);
+    } catch (e) {
+      toast.error(errorMessage(e, `Failed to ${confirming} killswitch`));
       await refresh();
       setLastError('Backend reported an error. The killswitch state was not changed.');
     } finally {

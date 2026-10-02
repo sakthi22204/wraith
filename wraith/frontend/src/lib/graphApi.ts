@@ -1,21 +1,27 @@
 import { config } from './config';
 import { GraphResponse } from '../types/graph';
+import { ApiError } from './apiError';
+
+const fail = async (response: Response): Promise<never> => {
+  throw new ApiError(response.status);
+};
 
 export const fetchGraph = async (investigationId: string): Promise<GraphResponse> => {
   const response = await fetch(`${config.graphDbUrl}/api/v1/investigations/${investigationId}/graph`);
-  if (!response.ok) {
-    throw new Error('Failed to fetch graph data');
-  }
+  if (!response.ok) return fail(response);
   return response.json();
 };
 
 export const createInvestigation = async (name: string, target: string) => {
-  const response = await fetch(`${config.graphDbUrl}/api/v1/investigations`, {
+  // Goes through the panel's own route, not graph_db directly. graph_db's
+  // create route is token-guarded, and the browser cannot present
+  // ADMIN_API_TOKEN -- it is a server-side secret. The panel attaches it.
+  const response = await fetch('/api/investigations', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name, target })
   });
-  if (!response.ok) throw new Error('Failed to create investigation');
+  if (!response.ok) return fail(response);
   return response.json();
 };
 
@@ -28,29 +34,32 @@ export const deleteProgram = async (investigationId: string) => {
   const response = await fetch(`/api/investigations/${investigationId}`, {
     method: 'DELETE',
   });
-  if (!response.ok) throw new Error('Failed to delete investigation');
+  if (!response.ok) return fail(response);
   return response.json();
 };
 
 export const fetchFindings = async (investigationId: string) => {
   const response = await fetch(`${config.graphDbUrl}/api/v1/investigations/${investigationId}/findings`);
-  if (!response.ok) throw new Error('Failed to fetch findings');
+  if (!response.ok) return fail(response);
   return response.json();
 };
 
 export const fetchReviewQueue = async (investigationId: string) => {
   const response = await fetch(`${config.graphDbUrl}/api/v1/investigations/${investigationId}/findings/review-queue`);
-  if (!response.ok) throw new Error('Failed to fetch review queue');
+  if (!response.ok) return fail(response);
   return response.json();
 };
 
 export const reviewFinding = async (findingId: string, decision: string, note: string) => {
-  const response = await fetch(`${config.graphDbUrl}/api/v1/findings/${findingId}/review`, {
+  // Goes through the panel's own route, not graph_db directly. graph_db's
+  // review endpoint is token-guarded, and the browser cannot present
+  // ADMIN_API_TOKEN -- it is a server-side secret. The panel attaches it.
+  const response = await fetch(`/api/findings/${findingId}/review`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ decision, note })
   });
-  if (!response.ok) throw new Error('Failed to review finding');
+  if (!response.ok) return fail(response);
   return response.json();
 };
 

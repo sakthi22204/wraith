@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { fetchScopeRules } from '@/lib/exploitApi';
+import { errorMessage } from '@/lib/apiError';
 import { ScopeRule } from '@/types/graph';
 import Skeleton from './Skeleton';
 
@@ -21,7 +22,7 @@ export default function ScopeRules({ investigationId }: ScopeRulesProps) {
       setError(null);
     } catch (e) {
       console.error(e);
-      setError('Could not load scope rules.');
+      setError(errorMessage(e, 'Could not load scope rules.'));
     } finally {
       setIsLoading(false);
     }

@@ -13,6 +13,7 @@ import SeverityBadge from '@/components/SeverityBadge';
 import ActiveExploitApproval from '@/components/ActiveExploitApproval';
 import ScopeRules from '@/components/ScopeRules';
 import { config } from '@/lib/config';
+import { errorMessage } from '@/lib/apiError';
 
 export default function InvestigationDashboard() {
   const { investigationId } = useParams();
@@ -33,9 +34,17 @@ export default function InvestigationDashboard() {
   const [reviewCount, setReviewQueueCount] = useState(0);
 
   // Assessment & Approvals States
-  const [riskScore, setRiskScore] = useState<number | null>(null);
-
-  // Recon Session Real-time States
+    const [riskScore, setRiskScore] = useState<number | null>(null);
+  
+    // The investigation's own authorized scope. The agent generates real traffic,
+    // so it may only be pointed at these hosts -- the panel proxy rejects an
+    // empty or missing target_scope.
+    const [scopeDomains, setScopeDomains] = useState<string[]>([]);
+  // Shown in the header instead of the bare UUID: on a dashboard full of
+  // investigations the id says nothing about what is actually being tested.
+  const [investigationLabel, setInvestigationLabel] = useState<string | null>(null);
+  
+    // Recon Session Real-time States
   const [activeReconId, setActiveReconId] = useState<string | null>(null);
   const [reconProgress, setReconProgress] = useState(0);
   const [reconCurrentTool, setReconCurrentTool] = useState<string | null>(null);
@@ -120,15 +129,25 @@ export default function InvestigationDashboard() {
 
       // 0. Check if investigation exists (once, on first load)
       if (!notFound) {
-        try {
-          const checkResp = await fetch(`${config.graphDbUrl}/api/v1/investigations/${investigation_id}`);
-          if (checkResp.status === 404) {
-            setNotFound(true);
-            return;
+          try {
+            const checkResp = await fetch(`${config.graphDbUrl}/api/v1/investigations/${investigation_id}`);
+            if (checkResp.status === 404) {
+              setNotFound(true);
+              return;
+            }
+            if (checkResp.ok) {
+              // The agent session needs this to build target_scope.
+              const inv = await checkResp.json().catch(() => null);
+              if (Array.isArray(inv?.scope_domains)) {
+                setScopeDomains(inv.scope_domains.filter((d: unknown): d is string => typeof d === 'string' && d.length > 0));
+              }
+              const name = typeof inv?.name === 'string' ? inv.name : null;
+              const target = typeof inv?.target === 'string' ? inv.target : null;
+              setInvestigationLabel(target ?? name);
+            }
+          } catch {
+            // Network error — keep polling, don't set notFound
           }
-        } catch {
-          // Network error — keep polling, don't set notFound
-        }
       } else {
         return;
       }
@@ -159,9 +178,12 @@ export default function InvestigationDashboard() {
         console.error('Failed to poll findings or review queue', e);
       }
 
-      // 3. Fetch Assessment risk score
+      // 3. Fetch Assessment risk score.
+      // Via the panel proxy: assessment_service's GET requires the admin token
+      // when the report is not already cached, and the browser cannot present it,
+      // so this direct call 401'd on every poll and the score never populated.
       try {
-        const assessResp = await fetch(`${config.assessmentUrl}/api/v1/assessments/${investigation_id}`);
+        const assessResp = await fetch(`/api/assessments/${investigation_id}`);
         if (assessResp.ok) {
           const assessData = await assessResp.json();
           setRiskScore(assessData.risk_score);
@@ -240,6 +262,14 @@ export default function InvestigationDashboard() {
     return () => clearInterval(pollingInterval);
   }, [investigationId]);
 
+  // Prefill from the investigation's authorized scope. The orchestrator rejects
+  // anything outside it, and an empty box made that rejection undiscoverable
+  // until you typed a domain and read a generic "Failed to start recon".
+  const openReconModal = () => {
+    setReconDomains(scopeDomains.join(', '));
+    setIsReconModalOpen(true);
+  };
+
   const handleStartRecon = async () => {
     if (!reconDomains || isStartingRecon) return;
     setIsStartingRecon(true);
@@ -255,20 +285,28 @@ export default function InvestigationDashboard() {
       }
       loadData();
     } catch (e) {
-      toast.error('Failed to start recon');
+      // Previously a hardcoded toast, which made a scope rejection
+      // indistinguishable from an upstream outage.
+      toast.error(errorMessage(e, 'Failed to start recon'));
     } finally {
       setIsStartingRecon(false);
     }
   };
 
   const handleStartAgent = async () => {
+    // Previously this sent an empty target_scope, which the panel proxy rejects
+    // with 400 and the catch below turned into a bare "Failed to start agent".
+    if (scopeDomains.length === 0) {
+      toast.error('This investigation has no scope domains; add one before starting the agent');
+      return;
+    }
     try {
-      const res = await startAgentSession(investigationId as string, [], 10);
+      const res = await startAgentSession(investigationId as string, scopeDomains, 10);
       setActiveAgentId(res.session_id);
       toast.success('Agent session started');
       router.push(`/investigations/${investigationId}/agent/${res.session_id}`);
     } catch (e) {
-      toast.error('Failed to start agent');
+      toast.error(errorMessage(e, 'Failed to start agent'));
     }
   };
 
@@ -292,7 +330,7 @@ export default function InvestigationDashboard() {
       a.download = `report_${investigationId}.${ext}`;
       a.click();
     } catch (e) {
-      toast.error('Failed to download report');
+      toast.error(errorMessage(e, 'Failed to download report'));
     }
   };
 
@@ -306,7 +344,7 @@ export default function InvestigationDashboard() {
       }
       router.push('/');
     } catch (e) {
-      toast.error('Failed to delete investigation');
+      toast.error(errorMessage(e, 'Failed to delete investigation'));
     }
   };
 
@@ -352,7 +390,7 @@ export default function InvestigationDashboard() {
         <div>
           <Link href="/" className="text-indigo-400 text-sm font-bold hover:underline mb-2 inline-block font-sans">← Back to Investigations</Link>
           <h1 className="text-4xl font-bold tracking-tight font-heading flex items-center gap-3">
-            Investigation Dashboard
+            {investigationLabel ?? 'Investigation Dashboard'}
             <span className="text-xs bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 px-2.5 py-1 rounded-full uppercase font-mono font-bold tracking-widest">
               {getCurrentPhase()} Phase
             </span>
@@ -658,7 +696,7 @@ export default function InvestigationDashboard() {
                        </div>
                     </div>
                   ) : (
-                      <button onClick={() => setIsReconModalOpen(true)} className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded-xl text-sm transition-all shadow-lg shadow-indigo-600/20 active:scale-95">
+                      <button onClick={openReconModal} className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded-xl text-sm transition-all shadow-lg shadow-indigo-600/20 active:scale-95">
                       Start New Recon
                     </button>
                   )}
@@ -762,9 +800,14 @@ export default function InvestigationDashboard() {
                   className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white outline-none focus:border-indigo-500 h-24"
                   value={reconDomains}
                   onChange={e => setReconDomains(e.target.value)}
-                  placeholder="example.com, api.example.com"
-                />
-              </div>
+                    placeholder="example.com, api.example.com"
+                  />
+                  {scopeDomains.length > 0 && (
+                    <p className="mt-2 text-[10px] text-slate-500 font-mono break-all">
+                      Authorized: {scopeDomains.join(', ')}
+                    </p>
+                  )}
+                </div>
               <button
                 onClick={handleStartRecon}
                 disabled={isStartingRecon}

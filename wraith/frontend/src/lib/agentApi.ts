@@ -1,5 +1,6 @@
 import { AgentStep } from '../types/graph';
 import { config } from './config';
+import { ApiError } from './apiError';
 
 export type AgentEvent = {
   data: string;
@@ -45,30 +46,35 @@ export const subscribeToAgentStream = (
 
 export const fetchSessionStatus = async (sessionId: string) => {
   const response = await fetch(`${config.agentUrl}/api/v1/agent/sessions/${sessionId}/status`);
-  if (!response.ok) throw new Error('Failed to fetch session status');
+  if (!response.ok) throw new ApiError(response.status);
   return response.json();
 };
 
 export const fetchAgentSessions = async (investigationId: string) => {
   const response = await fetch(`${config.agentUrl}/api/v1/agent/sessions?investigation_id=${investigationId}`);
-  if (!response.ok) throw new Error('Failed to fetch agent sessions');
+  if (!response.ok) throw new ApiError(response.status);
   return response.json();
 };
 
+// Mutating calls go through the Next.js proxy, which attaches ADMIN_API_TOKEN;
+// `POST /sessions` is admin-gated upstream. Reads below stay direct because those
+// routes are open.
 export const startAgentSession = async (investigationId: string, targetScope: string[], maxIterations: number) => {
-  const response = await fetch(`${config.agentUrl}/api/v1/agent/sessions`, {
+  const response = await fetch('/api/agent/sessions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ program_id: investigationId, target_scope: targetScope, max_iterations: maxIterations })
   });
-  if (!response.ok) throw new Error('Failed to start session');
+  // Carry the status so the caller can show a sanitized reason instead of a
+  // bare "Failed to start session"; the proxy's body may hold upstream detail.
+  if (!response.ok) throw new ApiError(response.status);
   return response.json();
 };
 
 export const stopAgentSession = async (sessionId: string) => {
-  const response = await fetch(`${config.agentUrl}/api/v1/agent/sessions/${sessionId}/stop`, {
+  const response = await fetch(`/api/agent/sessions/${sessionId}/stop`, {
     method: 'POST'
   });
-  if (!response.ok) throw new Error('Failed to stop session');
+  if (!response.ok) throw new ApiError(response.status);
   return response.json();
 };

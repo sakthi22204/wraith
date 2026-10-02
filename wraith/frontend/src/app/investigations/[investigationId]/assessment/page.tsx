@@ -4,7 +4,6 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { toast } from 'sonner';
-import { config } from '@/lib/config';
 import Skeleton from '@/components/Skeleton';
 
 export default function AssessmentPage() {
@@ -15,8 +14,9 @@ export default function AssessmentPage() {
 
   const loadData = async () => {
     try {
-      const assessUrl = `${config.assessmentUrl}/api/v1/assessments/${investigationId}`;
-      const assessResp = await fetch(assessUrl);
+      // Via the panel proxy: assessment_service's GET requires the admin token
+      // when the report is not already cached, so a direct browser call 401'd.
+      const assessResp = await fetch(`/api/assessments/${investigationId}`);
       if (assessResp.status === 404) {
         setAssessment(null);
         return;

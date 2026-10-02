@@ -33,6 +33,12 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  // No inbound auth token here on purpose. The browser cannot present one --
+  // ADMIN_API_TOKEN is a server-side secret -- so requiring it would make the
+  // operator's own buttons 401 while adding nothing: the actual control is that
+  // this port is published to 127.0.0.1 only (see docker-compose.yml), so
+  // nothing off-host can reach it at all. If the panel ever gains a login, the
+  // check belongs at that layer, not here.
   let action: unknown;
   try {
     const body = await request.json();

@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { toast } from 'sonner';
 import { fetchPrograms as fetchInvestigations, createInvestigation, deleteProgram as deleteInvestigation } from '@/lib/graphApi';
+import { errorMessage } from '@/lib/apiError';
 import Skeleton from '@/components/Skeleton';
 import { Program as Investigation } from '@/types/graph';
 
@@ -38,9 +39,9 @@ export default function HomePage() {
       setNewInvestigation({ name: '', target: '' });
       toast.success('Investigation created and automatic recon started successfully');
       loadInvestigations();
-    } catch (e) {
-      toast.error('Failed to create investigation');
-    }
+      } catch (e) {
+        toast.error(errorMessage(e, 'Failed to create investigation'));
+      }
   };
 
   const handleDelete = async () => {
@@ -56,7 +57,7 @@ export default function HomePage() {
       setInvestigationToDelete(null);
       loadInvestigations();
     } catch (e) {
-      toast.error('Failed to delete investigation');
+      toast.error(errorMessage(e, 'Failed to delete investigation'));
     }
   };
 
