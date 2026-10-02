@@ -5,6 +5,11 @@ from unittest.mock import AsyncMock, patch, MagicMock
 from app.main import app
 from app.api.routes import get_repo
 from app.schema import Investigation, Program
+from app.config import settings
+
+# Creating an investigation writes to the graph and, through it, starts
+# recon -- so the route is admin-gated. The reads below are not.
+ADMIN = {"Authorization": f"Bearer " + settings.ADMIN_API_TOKEN}
 
 # Mock repository class
 class MockNeo4jRepository:
@@ -46,7 +51,7 @@ async def test_create_investigation_mocked(mock_httpx_client):
         response = await ac.post("/api/v1/investigations", json={
             "name": "Test Investigation",
             "target": "target.local"
-        })
+        }, headers=ADMIN)
 
     assert response.status_code == 200
     data = response.json()
@@ -123,7 +128,7 @@ async def test_legacy_program_routes_mocked():
             "name": "Test Program",
             "platform": "HackerOne",
             "scope_domains": ["target.local"]
-        })
+        }, headers=ADMIN)
         get_resp = await ac.get("/api/v1/programs/test-id")
 
     assert create_resp.status_code == 200

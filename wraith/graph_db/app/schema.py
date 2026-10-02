@@ -140,6 +140,11 @@ class FindingBase(BaseModel):
     impact: Optional[str] = None
     remediation: Optional[str] = None
     validation_stage: str = "NOT_VALIDATED"
+    # The principal the proof was obtained as: "unauthenticated", or the label
+    # of the identity used. Severity is judged differently for a bug anyone can
+    # reach than one that needed a session, and the poc_request alone does not
+    # reliably say which it was, so the fact is recorded rather than inferred.
+    probe_principal: Optional[str] = None
 
 
 class ValidationAttemptBase(BaseModel):
@@ -234,7 +239,14 @@ class FindingUpdate(BaseModel):
     title: Optional[str] = None
     status: Optional[str] = None
     severity: Optional[str] = None
-    confidence: Optional[float] = None
+    # A label, not a score -- same as FindingBase. This was declared float while
+    # the base was str, so a create stored "0.8" and an update to the same node
+    # stored 0.8: one Neo4j property holding two types, with nothing to say
+    # which. Producers genuinely send both forms ("high", "certain", "0.8"), and
+    # nothing ever compares this field numerically -- the review queue orders on
+    # ai_confidence -- so it is carried through to reports as a display label.
+    # Numeric scoring lives in ai_confidence, which is a float.
+    confidence: Optional[str] = None
     evidence: Optional[str] = None
     poc_request: Optional[str] = None
     poc_response: Optional[str] = None
@@ -245,6 +257,7 @@ class FindingUpdate(BaseModel):
     root_cause: Optional[str] = None
     impact: Optional[str] = None
     remediation: Optional[str] = None
+    probe_principal: Optional[str] = None
 
 class FalsePositivePatternBase(BaseModel):
     vuln_type: str

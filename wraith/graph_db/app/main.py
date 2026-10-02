@@ -3,9 +3,15 @@ from fastapi import FastAPI, Response
 from .api.routes import router
 from .client import neo4j_client
 from .repository import Neo4jRepository
+from .config import settings, validate_startup_secrets
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Before the database. A graph service whose admin token is blank or
+    # published is one whose trust-manufacturing write routes are open to
+    # anyone who has read the repo, so this refuses to come up at all rather
+    # than degrading.
+    validate_startup_secrets(settings)
     # Startup: Connect to Neo4j and initialize DB
     await neo4j_client.connect()
     session = await neo4j_client.get_session()

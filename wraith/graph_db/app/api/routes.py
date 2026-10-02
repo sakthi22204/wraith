@@ -13,7 +13,6 @@ from ..schema import (
 from ..client import neo4j_client
 from ..auth import require_admin_token
 from ..repository import Neo4jRepository, ParentNotFoundError
-from ..auth import require_admin_token
 import httpx
 from ..config import settings as graph_settings
 
@@ -46,7 +45,7 @@ class AgentSessionUpdate(BaseModel):
     reasoning_log: Optional[List[str]] = None
 
 # Investigation Endpoints (New Primary workflow)
-@router.post("/investigations", response_model=Investigation)
+@router.post("/investigations", dependencies=[Depends(require_admin_token)], response_model=Investigation)
 async def create_investigation(request: InvestigationCreate, repo: Neo4jRepository = Depends(get_repo)):
     investigation = await repo.create_investigation(request)
 
@@ -112,8 +111,13 @@ async def get_investigation_graph(investigation_id: str, repo: Neo4jRepository =
 async def get_investigation_findings(investigation_id: str, min_severity: str = "info", repo: Neo4jRepository = Depends(get_repo)):
     return await repo.get_findings_by_severity(investigation_id, min_severity)
 
-@router.post("/investigations/{investigation_id}/dedupe")
+@router.post("/investigations/{investigation_id}/dedupe", dependencies=[Depends(require_admin_token)])
 async def deduplicate_investigation_findings(investigation_id: str, repo: Neo4jRepository = Depends(get_repo)):
+    """Relabel duplicate findings as DUPLICATE, which drops them from reports.
+
+    Guarded because it is a bulk mutation of the audit record: an anonymous
+    caller could use it to retire real findings.
+    """
     count = await repo.deduplicate_findings(investigation_id)
     return {"merged_count": count}
 
@@ -121,12 +125,12 @@ async def deduplicate_investigation_findings(investigation_id: str, repo: Neo4jR
 async def get_investigation_review_queue(investigation_id: str, threshold: float = 0.7, repo: Neo4jRepository = Depends(get_repo)):
     return await repo.get_findings_needing_review(investigation_id, threshold)
 
-@router.post("/investigations/{investigation_id}/findings/check-false-positive", response_model=List[FalsePositivePattern])
+@router.post("/investigations/{investigation_id}/findings/check-false-positive", dependencies=[Depends(require_admin_token)], response_model=List[FalsePositivePattern])
 async def check_investigation_false_positive(investigation_id: str, request: FPCheckRequest, repo: Neo4jRepository = Depends(get_repo)):
     return await repo.check_known_false_positive_patterns(investigation_id, request.vuln_type, request.endpoint, request.parameter)
 
 # Legacy Program endpoints point directly to Investigations
-@router.post("/programs", response_model=Program)
+@router.post("/programs", dependencies=[Depends(require_admin_token)], response_model=Program)
 async def create_program(program: ProgramCreate, repo: Neo4jRepository = Depends(get_repo)):
     return await repo.create_program(program)
 
@@ -175,8 +179,9 @@ async def get_program_graph(program_id: str, repo: Neo4jRepository = Depends(get
 async def get_findings(program_id: str, min_severity: str = "info", repo: Neo4jRepository = Depends(get_repo)):
     return await repo.get_findings_by_severity(program_id, min_severity)
 
-@router.post("/programs/{program_id}/dedupe")
+@router.post("/programs/{program_id}/dedupe", dependencies=[Depends(require_admin_token)])
 async def deduplicate_findings(program_id: str, repo: Neo4jRepository = Depends(get_repo)):
+    """See deduplicate_investigation_findings: guarded for the same reason."""
     count = await repo.deduplicate_findings(program_id)
     return {"merged_count": count}
 
@@ -184,32 +189,32 @@ async def deduplicate_findings(program_id: str, repo: Neo4jRepository = Depends(
 async def get_review_queue(program_id: str, threshold: float = 0.7, repo: Neo4jRepository = Depends(get_repo)):
     return await repo.get_findings_needing_review(program_id, threshold)
 
-@router.post("/programs/{program_id}/findings/check-false-positive", response_model=List[FalsePositivePattern])
+@router.post("/programs/{program_id}/findings/check-false-positive", dependencies=[Depends(require_admin_token)], response_model=List[FalsePositivePattern])
 async def check_false_positive(program_id: str, request: FPCheckRequest, repo: Neo4jRepository = Depends(get_repo)):
     return await repo.check_known_false_positive_patterns(program_id, request.vuln_type, request.endpoint, request.parameter)
 
 # Sessions and Nodes endpoints with multi-id fallback support
-@router.post("/scan-sessions")
+@router.post("/scan-sessions", dependencies=[Depends(require_admin_token)])
 async def create_scan_session(investigation_id: Optional[str] = None, program_id: Optional[str] = None, repo: Neo4jRepository = Depends(get_repo)):
     inv_id = investigation_id or program_id
     if not inv_id:
         raise HTTPException(status_code=400, detail="investigation_id or program_id is required")
     return await repo.create_scan_session(inv_id)
 
-@router.patch("/scan-sessions/{session_id}")
+@router.patch("/scan-sessions/{session_id}", dependencies=[Depends(require_admin_token)])
 async def update_scan_session(session_id: str, status: str, repo: Neo4jRepository = Depends(get_repo)):
     await repo.update_scan_session(session_id, status)
     return {"status": "updated"}
 
 # Recon Session Management
-@router.post("/recon-sessions", response_model=ReconSession)
+@router.post("/recon-sessions", dependencies=[Depends(require_admin_token)], response_model=ReconSession)
 async def create_recon_session(session_id: str, domains: List[str], status: str, investigation_id: Optional[str] = None, program_id: Optional[str] = None, repo: Neo4jRepository = Depends(get_repo)):
     inv_id = investigation_id or program_id
     if not inv_id:
         raise HTTPException(status_code=400, detail="investigation_id or program_id is required")
     return await repo.create_recon_session(session_id, inv_id, domains, status)
 
-@router.patch("/recon-sessions/{session_id}", response_model=ReconSession)
+@router.patch("/recon-sessions/{session_id}", dependencies=[Depends(require_admin_token)], response_model=ReconSession)
 async def update_recon_session(session_id: str, status: str, tool_results: Optional[dict] = None, repo: Neo4jRepository = Depends(get_repo)):
     return await repo.update_recon_session_status(session_id, status, tool_results)
 
@@ -248,14 +253,14 @@ def _parse_list_param(value: Optional[str]) -> Optional[List[str]]:
         return [item.strip() for item in value.split(",") if item.strip()]
     return [value]
 
-@router.post("/agent-sessions", response_model=AgentSession)
+@router.post("/agent-sessions", dependencies=[Depends(require_admin_token)], response_model=AgentSession)
 async def create_agent_session(session_id: str, status: str, investigation_id: Optional[str] = None, program_id: Optional[str] = None, iteration_count: int = 0, tools_used: Optional[str] = None, reasoning_log: Optional[str] = None, repo: Neo4jRepository = Depends(get_repo)):
     inv_id = investigation_id or program_id
     if not inv_id:
         raise HTTPException(status_code=400, detail="investigation_id or program_id is required")
     return await repo.create_agent_session(session_id, inv_id, status, iteration_count, _parse_list_param(tools_used) or [], _parse_list_param(reasoning_log) or [])
 
-@router.patch("/agent-sessions/{session_id}", response_model=AgentSession)
+@router.patch("/agent-sessions/{session_id}", dependencies=[Depends(require_admin_token)], response_model=AgentSession)
 async def update_agent_session(session_id: str, request: AgentSessionUpdate, repo: Neo4jRepository = Depends(get_repo)):
     return await repo.update_agent_session_status(
         session_id,
@@ -281,64 +286,79 @@ async def get_agent_session(session_id: str, repo: Neo4jRepository = Depends(get
         raise HTTPException(status_code=404, detail="Agent session not found")
     return session
 
-@router.post("/agent-sessions/cleanup-orphaned")
+@router.post("/agent-sessions/cleanup-orphaned", dependencies=[Depends(require_admin_token)])
 async def cleanup_orphaned_agent_sessions(repo: Neo4jRepository = Depends(get_repo)):
     count = await repo.cleanup_orphaned_agent_sessions()
     return {"cleaned_count": count}
 
-@router.post("/findings/{finding_id}/session/{session_id}")
+@router.post("/findings/{finding_id}/session/{session_id}", dependencies=[Depends(require_admin_token)])
 async def link_finding_to_session(finding_id: str, session_id: str, repo: Neo4jRepository = Depends(get_repo)):
+    """Claim that a finding came out of an agent session.
+
+    Guarded because this is provenance: unauthenticated, it lets a caller
+    attribute a fabricated finding to somebody else's session.
+    """
     await repo.link_finding_to_session(finding_id, session_id)
     return {"status": "linked"}
 
-@router.post("/tools")
+@router.post("/tools", dependencies=[Depends(require_admin_token)])
 async def upsert_tool(name: str, version: str, repo: Neo4jRepository = Depends(get_repo)):
     t_id = await repo.upsert_tool(name, version)
     return {"id": t_id}
 
-@router.post("/findings/{finding_id}/tool/{tool_id}")
+@router.post("/findings/{finding_id}/tool/{tool_id}", dependencies=[Depends(require_admin_token)])
 async def link_finding_to_tool(finding_id: str, tool_id: str, repo: Neo4jRepository = Depends(get_repo)):
+    """Claim that a named tool produced a finding. Guarded as provenance."""
     await repo.link_finding_to_tool(finding_id, tool_id)
     return {"status": "linked"}
 
-@router.post("/investigations/{investigation_id}/hosts", response_model=Host)
+@router.post("/investigations/{investigation_id}/hosts", dependencies=[Depends(require_admin_token)], response_model=Host)
 async def upsert_host(investigation_id: str, host: HostCreate, repo: Neo4jRepository = Depends(get_repo)):
     return await repo.upsert_host(host, investigation_id)
 
-@router.post("/programs/{program_id}/hosts", response_model=Host)
+@router.post("/programs/{program_id}/hosts", dependencies=[Depends(require_admin_token)], response_model=Host)
 async def upsert_host_alias(program_id: str, host: HostCreate, repo: Neo4jRepository = Depends(get_repo)):
     return await repo.upsert_host(host, program_id)
 
-@router.post("/hosts/{host_id}/ports", response_model=Port)
+@router.post("/hosts/{host_id}/ports", dependencies=[Depends(require_admin_token)], response_model=Port)
 async def upsert_port(host_id: str, port: PortCreate, repo: Neo4jRepository = Depends(get_repo)):
     try:
         return await repo.upsert_port(port, host_id)
     except ParentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
-@router.post("/ports/{port_id}/service", response_model=Service)
+@router.post("/ports/{port_id}/service", dependencies=[Depends(require_admin_token)], response_model=Service)
 async def upsert_service(port_id: str, service: ServiceCreate, repo: Neo4jRepository = Depends(get_repo)):
     try:
         return await repo.upsert_service(service, port_id)
     except ParentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
-@router.post("/hosts/{host_id}/endpoints", response_model=Endpoint)
+@router.post("/hosts/{host_id}/endpoints", dependencies=[Depends(require_admin_token)], response_model=Endpoint)
 async def upsert_endpoint(host_id: str, endpoint: EndpointCreate, repo: Neo4jRepository = Depends(get_repo)):
     try:
         return await repo.upsert_endpoint(endpoint, host_id)
     except ParentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
-@router.post("/endpoints/{endpoint_id}/parameters", response_model=Parameter)
+@router.post("/endpoints/{endpoint_id}/parameters", dependencies=[Depends(require_admin_token)], response_model=Parameter)
 async def upsert_parameter(endpoint_id: str, param: ParameterCreate, repo: Neo4jRepository = Depends(get_repo)):
     try:
         return await repo.upsert_parameter(param, endpoint_id)
     except ParentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
-@router.post("/findings", response_model=Finding)
+@router.post("/findings", response_model=Finding, dependencies=[Depends(require_admin_token)])
 async def create_finding(finding: FindingCreate, repo: Neo4jRepository = Depends(get_repo)):
+    """Create a finding.
+
+    Guarded, and this is the sharpest edge in the service: the body may carry
+    status=HUMAN_CONFIRMED together with poc_request/poc_response/
+    expected_result/actual_result. require_validation_evidence checks that those
+    fields are present, not that anyone executed them, so an anonymous caller
+    could invent a proof and a validated status in one request. Every writer
+    (recon_orchestrator, exploit_agent) already sends the admin token.
+    """
     if finding.target_type.lower() not in ["endpoint", "parameter"]:
         raise HTTPException(status_code=400, detail="target_type must be endpoint or parameter")
     try:
@@ -376,17 +396,31 @@ async def update_finding(finding_id: str, payload: FindingUpdate,
 async def get_attack_paths(host_id: str, repo: Neo4jRepository = Depends(get_repo)):
     return await repo.find_attack_paths(host_id)
 
-@router.post("/findings/{finding_id}/cve")
+@router.post("/findings/{finding_id}/cve", dependencies=[Depends(require_admin_token)])
 async def link_cve(finding_id: str, cve: CVECreate, repo: Neo4jRepository = Depends(get_repo)):
+    """Attach a CVE to a finding. Guarded: it feeds severity and CVSS scoring."""
     await repo.link_finding_to_cve(finding_id, cve)
     return {"status": "success"}
 
-@router.post("/findings/{finding_id}/review", response_model=Finding)
+@router.post("/findings/{finding_id}/review", response_model=Finding,
+             dependencies=[Depends(require_admin_token)])
 async def review_finding(finding_id: str, request: ReviewRequest, repo: Neo4jRepository = Depends(get_repo)):
+    """Record a human review decision.
+
+    Guarded because this is the human-in-the-loop step. Unauthenticated it is
+    just a way to confirm your own injected finding, or to mark a real one as a
+    false positive. The browser reaches it through the frontend's own
+    /api/findings/{id}/review route, which attaches the token server-side.
+    """
     if request.decision not in ["confirmed", "false_positive"]:
          raise HTTPException(status_code=400, detail="decision must be confirmed or false_positive")
     return await repo.mark_reviewed(finding_id, request.decision, request.note)
 
-@router.post("/findings/{finding_id}/corroborate", response_model=Finding)
+@router.post("/findings/{finding_id}/corroborate", response_model=Finding,
+             dependencies=[Depends(require_admin_token)])
 async def corroborate_finding(finding_id: str, request: CorroborateRequest, repo: Neo4jRepository = Depends(get_repo)):
+    """Add a corroborating source, which moves the finding to CORROBORATED.
+
+    Guarded for the same reason as review.
+    """
     return await repo.add_corroboration(finding_id, request.source_name)

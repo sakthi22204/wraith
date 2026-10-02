@@ -16,6 +16,7 @@ from .schema import (
     FindingStatus, FalsePositivePattern, FalsePositivePatternCreate,
     ReconSession, AgentSession, Investigation, InvestigationCreate
 )
+from .severity import adjudicate_severity
 
 class ParentNotFoundError(ValueError):
     """Raised when an upsert's MATCH target (host/port/endpoint) does not exist.
@@ -340,6 +341,12 @@ class Neo4jRepository:
         if error:
             raise ValueError(error)
 
+        # Severity is settled against the merged node, after the status gate, so
+        # the floor reflects whatever evidence this write actually carries. The
+        # adjudicated value replaces whatever was claimed in the patch.
+        merged["severity"] = adjudicate_severity(merged)
+        fields["severity"] = merged["severity"]
+
         assignments = ", ".join(f"f.{k} = ${k}" for k in fields)
         query = f"""
         MATCH (f:Finding {{id: $finding_id}})
@@ -361,6 +368,15 @@ class Neo4jRepository:
         if violation:
             raise ValueError(violation)
 
+        # Same rule as update_finding: the claimed severity is clamped to what
+        # the evidence on this node supports before it is ever stored.
+        fields = finding.model_dump()
+        fields["severity"] = adjudicate_severity(fields)
+        finding = finding.model_copy(update={"severity": fields["severity"]})
+        if fields["probe_principal"]:
+            finding = finding.model_copy(
+                update={"probe_principal": fields["probe_principal"]})
+
         f_id = generate_id(finding.vuln_type, finding.target_id)
         now_utc = finding.discovered_at.isoformat() + "Z"
 
@@ -378,7 +394,7 @@ class Neo4jRepository:
                 f.expected_result = $expected_result, f.actual_result = $actual_result,
                 f.steps_to_reproduce = $steps_to_reproduce, f.root_cause = $root_cause,
                 f.impact = $impact, f.remediation = $remediation,
-                f.validation_stage = $validation_stage
+                f.validation_stage = $validation_stage, f.probe_principal = $probe_principal
             MERGE (t)-[:HAS_FINDING]->(f)
             RETURN f
             """
@@ -396,7 +412,7 @@ class Neo4jRepository:
                 f.expected_result = $expected_result, f.actual_result = $actual_result,
                 f.steps_to_reproduce = $steps_to_reproduce, f.root_cause = $root_cause,
                 f.impact = $impact, f.remediation = $remediation,
-                f.validation_stage = $validation_stage
+                f.validation_stage = $validation_stage, f.probe_principal = $probe_principal
             MERGE (t)-[:HAS_FINDING]->(f)
             RETURN f
             """
@@ -419,7 +435,8 @@ class Neo4jRepository:
                                       root_cause=finding.root_cause,
                                       impact=finding.impact,
                                       remediation=finding.remediation,
-                                      validation_stage=finding.validation_stage)
+                                      validation_stage=finding.validation_stage,
+                                      probe_principal=finding.probe_principal)
         record = _require_parent(await result.single(),
                                  "Endpoint" if finding.target_type.lower() == "endpoint" else "Parameter",
                                  finding.target_id)
@@ -644,24 +661,55 @@ class Neo4jRepository:
             })
         return paths
 
-    async def delete_investigation_recursive(self, investigation_id: str) -> None:
-        # Delete Investigation node and everything reachable ONLY through it.
-        # shared nodes like Tool or CVE with other incoming rels should be preserved.
+    async def delete_investigation_recursive(self, investigation_id: str) -> int:
+        """
+        Delete an investigation, the sessions that belong to it, and every node
+        reachable ONLY through it. Returns the number of nodes deleted.
+
+        Two defects in the previous version of this query:
+
+        1. The root Investigation node was subjected to the same
+           "no relationships from outside the subgraph" test as its
+           descendants. A ScanSession points at the investigation via
+           -[:TARGETED]->, the traversal below only walks outbound, so that
+           edge always counted as external. external_rels was therefore 1,
+           the root fell out of `WHERE external_rels = 0`, and nothing was
+           deleted -- while the route still answered {"status": "deleted"}
+           and the UI showed a success toast.
+        2. DETACH DELETE ran interleaved with the [*1..10] expansion that was
+           producing the rows to delete.
+
+        The root is now deleted unconditionally: it is the thing being deleted,
+        so the shared-node rule does not apply to it. Nodes that some other
+        investigation also reaches (a Host in two scopes, a shared Tool or CVE)
+        are still preserved.
+        """
         query = """
         MATCH (i:Investigation {id: $investigation_id})
-        // Find all reachable nodes
         OPTIONAL MATCH (i)-[*1..10]->(n)
-        WITH i, collect(DISTINCT n) as reachable_nodes
-        UNWIND reachable_nodes + [i] as node
+        WITH i, collect(DISTINCT n) AS reachable
 
-        // For each node, check if it has any incoming rel from a node NOT in reachable_nodes
-        OPTIONAL MATCH (other)-[r]->(node)
-        WHERE NOT other IN reachable_nodes AND NOT other = i
-        WITH node, count(r) as external_rels
-        WHERE external_rels = 0
-        DETACH DELETE node
+        // ScanSession points AT the investigation, so it is never in `reachable`
+        // and would be missed entirely. Collect it to cascade.
+        OPTIONAL MATCH (ss:ScanSession)-[:TARGETED]->(i)
+        WITH i, reachable, collect(DISTINCT ss) AS scan_sessions
+
+        // Keep any node that something outside this investigation still points
+        // at: a Host in two scopes, a shared Tool or CVE.
+        WITH i, reachable, scan_sessions,
+             [x IN reachable
+              WHERE size([(o)-[r]->(x) WHERE NOT o IN reachable AND NOT o = i | r]) = 0
+             ] AS exclusive
+
+        UNWIND exclusive + scan_sessions + [i] AS victim
+        WITH victim WHERE victim IS NOT NULL
+        DETACH DELETE victim
         """
-        await self.session.run(query, investigation_id=investigation_id)
+        result = await self.session.run(query, investigation_id=investigation_id)
+        # Consume the result so the write is committed, and so the caller can
+        # see how much was actually removed instead of assuming success.
+        summary = await result.consume()
+        return int(getattr(summary.counters, "nodes_deleted", 0) or 0)
 
     # Legacy Program deletion fallback
     async def delete_program_recursive(self, program_id: str) -> None:

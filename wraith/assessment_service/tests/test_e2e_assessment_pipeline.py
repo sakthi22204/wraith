@@ -19,10 +19,16 @@ from httpx import AsyncClient, ASGITransport, Response
 
 from app.main import app
 from app.config import settings
+from app.services import AssessmentEngine
 import app.main as assessment_main
 
 INVESTIGATION_ID = "inv-e2e-1"
 GRAPH_URL = f"{settings.GRAPH_DB_URL}/investigations/{INVESTIGATION_ID}/graph"
+
+# POST is admin-gated: it pulls the whole investigation graph and writes this
+# service's cache. The uncached GET path delegates to the same function, so it
+# needs the token too. Cached GETs do not -- see the cache test.
+ADMIN = {"Authorization": f"Bearer {settings.ADMIN_API_TOKEN}"}
 
 
 @pytest.fixture(autouse=True)
@@ -39,12 +45,15 @@ RICH_GRAPH = {
         {"id": "h1", "labels": ["Host"], "properties": {"value": "shop.example.com"}},
         {"id": "s1", "labels": ["Service"], "properties": {"name": "OpenSSH"}},
         {"id": "s2", "labels": ["Service"], "properties": {"name": "nginx"}},
-        {"id": "e1", "labels": ["Endpoint"], "properties": {"url": "/admin/login"}},
-        {"id": "e2", "labels": ["Endpoint"], "properties": {"url": "/api/v1/users"}},
-        {"id": "e3", "labels": ["Endpoint"], "properties": {"url": "/wp-content/uploads/x.js"}},
-        {"id": "f1", "labels": ["Finding"], "properties": {"severity": "critical"}},
-        {"id": "f2", "labels": ["Finding"], "properties": {"severity": "high"}},
-        {"id": "f3", "labels": ["Finding"], "properties": {"severity": "medium"}},
+        {"id": "e1", "labels": ["Endpoint"], "properties": {"url": "/admin/login", "source_tool": "katana"}},
+        {"id": "e2", "labels": ["Endpoint"], "properties": {"url": "/api/v1/users", "source_tool": "katana"}},
+        {"id": "e3", "labels": ["Endpoint"], "properties": {"url": "/wp-content/uploads/x.js", "source_tool": "katana"}},
+        # Statuses are not decoration here. Risk weights proven findings only,
+        # so a graph whose three findings are all UNCONFIRMED scores 2.0 -- and
+        # f3 exists to prove the filter reads status rather than counting nodes.
+        {"id": "f1", "labels": ["Finding"], "properties": {"severity": "critical", "status": "AI_VALIDATED"}},
+        {"id": "f2", "labels": ["Finding"], "properties": {"severity": "high", "status": "HUMAN_CONFIRMED"}},
+        {"id": "f3", "labels": ["Finding"], "properties": {"severity": "medium", "status": "REFUTED"}},
     ],
     "links": [
         {"source": "h1", "target": "e1", "type": "HAS_ENDPOINT"},
@@ -60,13 +69,16 @@ async def test_perform_assessment_computes_full_report_from_real_graph_data():
         graph_route = mock.get(GRAPH_URL).mock(return_value=Response(200, json=RICH_GRAPH))
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            resp = await ac.post(f"/api/v1/assessments/{INVESTIGATION_ID}")
+            resp = await ac.post(f"/api/v1/assessments/{INVESTIGATION_ID}", headers=ADMIN)
+
 
         assert resp.status_code == 200
         body = resp.json()
 
-        # Risk score: base 2.0 + critical*2.0 + high*1.5 + medium*0.8 = 2+2+1.5+0.8 = 6.3
-        assert body["risk_score"] == pytest.approx(6.3)
+        # Risk score: base 2.0 + critical*2.0 (validated) + high*1.5 (human-confirmed)
+        # = 5.5. The medium finding is REFUTED and contributes nothing: it is
+        # still inventoried in findings_summary, but a disproven bug is not risk.
+        assert body["risk_score"] == pytest.approx(5.5)
 
         assert body["hosts_count"] == 1
         assert body["services_count"] == 2
@@ -79,7 +91,8 @@ async def test_perform_assessment_computes_full_report_from_real_graph_data():
         cve_ids = {c["cve_id"] for c in body["correlated_cves"]}
         assert cve_ids == {"CVE-2023-38408", "CVE-2021-23017"}
 
-        # Technology detection from URL heuristics
+        # Technology detection from URL heuristics, over paths the target itself
+        # linked to.
         assert "WordPress" in body["technologies"]
         assert "REST API" in body["technologies"]
 
@@ -108,7 +121,9 @@ async def test_get_assessment_computes_on_the_fly_when_not_cached():
         )
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            resp = await ac.get(f"/api/v1/assessments/{inv_id}")
+            # Not cached, so this GET falls through to the compute path, which is
+            # the same gated work POST does -- hence the token.
+            resp = await ac.get(f"/api/v1/assessments/{inv_id}", headers=ADMIN)
 
         assert resp.status_code == 200
         assert resp.json()["investigation_id"] == inv_id
@@ -122,7 +137,8 @@ async def test_get_assessment_uses_cache_and_does_not_recompute():
         graph_route = mock.get(GRAPH_URL).mock(return_value=Response(200, json=RICH_GRAPH))
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            post_resp = await ac.post(f"/api/v1/assessments/{INVESTIGATION_ID}")
+            post_resp = await ac.post(f"/api/v1/assessments/{INVESTIGATION_ID}", headers=ADMIN)
+
             assert post_resp.status_code == 200
             assert graph_route.call_count == 1
 
@@ -141,7 +157,7 @@ async def test_graph_db_error_status_passed_through():
             return_value=Response(404, json={"detail": "Investigation not found"})
         )
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            resp = await ac.post("/api/v1/assessments/nonexistent")
+            resp = await ac.post("/api/v1/assessments/nonexistent", headers=ADMIN)
         assert resp.status_code == 404
 
 
@@ -152,7 +168,7 @@ async def test_graph_db_unreachable_returns_500_not_a_crash():
             side_effect=ConnectionError("graph_db is down")
         )
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            resp = await ac.post("/api/v1/assessments/unreachable-test")
+            resp = await ac.post("/api/v1/assessments/unreachable-test", headers=ADMIN)
         assert resp.status_code == 500
         assert "Graph DB" in resp.json()["detail"]
 
@@ -166,7 +182,7 @@ async def test_empty_graph_falls_back_to_baseline_validation_plan():
             return_value=Response(200, json={"nodes": [], "links": []})
         )
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            resp = await ac.post("/api/v1/assessments/empty-inv")
+            resp = await ac.post("/api/v1/assessments/empty-inv", headers=ADMIN)
         assert resp.status_code == 200
         body = resp.json()
         assert body["hosts_count"] == 0
@@ -174,3 +190,85 @@ async def test_empty_graph_falls_back_to_baseline_validation_plan():
         assert len(body["validation_plan"]) == 1
         assert body["validation_plan"][0]["action"] == "run_nmap_scan"
         assert body["validation_plan"][0]["target"] == "localhost"
+
+
+# --------------------------------------------------------------------------
+# Technology inference must not confuse a question with an answer
+# --------------------------------------------------------------------------
+
+def _report_for(endpoints):
+    graph = {
+        "nodes": [{"id": f"e{i}", "labels": ["Endpoint"], "properties": p}
+                  for i, p in enumerate(endpoints)],
+        "links": [],
+    }
+    return AssessmentEngine.generate_report("inv", graph)
+
+
+def test_a_wordlist_hit_does_not_imply_a_technology():
+    """This is the Juice Shop verdict that was wrong.
+
+    The app answers 200 with the same body for every path, so the sweep
+    "found" /wp-content and /wp-includes. Those are paths we asked about; the
+    app running on port 3000 is not WordPress, and the report said it was.
+    """
+    report = _report_for([
+        {"url": "http://juice_shop:3000/wp-content/themes/x/style.css", "source_tool": "ffuf"},
+        {"url": "http://juice_shop:3000/wp-includes/js/x.js", "source_tool": "ffuf"},
+    ])
+    assert "WordPress" not in report.technologies
+
+
+def test_the_letters_api_inside_a_word_do_not_mean_rest_api():
+    """"api" is a substring of "capital" and "rapid"."""
+    report = _report_for([
+        {"url": "http://t.test/capital-gains", "source_tool": "katana"},
+        {"url": "http://t.test/rapid-test", "source_tool": "katana"},
+    ])
+    assert "REST API" not in report.technologies
+
+
+def test_a_real_api_path_still_registers():
+    report = _report_for([
+        {"url": "http://t.test/api/v1/users", "source_tool": "katana"},
+    ])
+    assert "REST API" in report.technologies
+
+
+def test_a_wp_content_segment_still_registers_when_content_derived():
+    report = _report_for([
+        {"url": "http://t.test/wp-content/themes/x/style.css", "source_tool": "katana"},
+    ])
+    assert "WordPress" in report.technologies
+
+
+def test_a_lookalike_segment_does_not_register():
+    """"/my-wp-content-backup" is a directory, not a WordPress install."""
+    report = _report_for([
+        {"url": "http://t.test/my-wp-content-backup/x.js", "source_tool": "katana"},
+    ])
+    assert "WordPress" not in report.technologies
+
+
+@pytest.mark.asyncio
+async def test_the_assessment_route_refuses_an_unauthenticated_caller():
+    """POST pulls the whole investigation graph and writes this service's cache.
+
+    Without a token that is an unauthenticated view of an investigation and an
+    unauthenticated write, on a port published to the host.
+    """
+    with respx.mock(assert_all_called=False) as mock:
+        graph_route = mock.get(GRAPH_URL).mock(return_value=Response(200, json=RICH_GRAPH))
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            for headers in ({}, {"Authorization": "Bearer wrong-token"}):
+                resp = await ac.post(f"/api/v1/assessments/{INVESTIGATION_ID}", headers=headers)
+                assert resp.status_code == 401
+
+            # The uncached GET path computes, so it is gated the same way.
+            uncached = await ac.get("/api/v1/assessments/inv-e2e-unauth")
+            assert uncached.status_code == 401
+
+        assert graph_route.call_count == 0, (
+            "graph_db was read for a request that should have been refused"
+        )

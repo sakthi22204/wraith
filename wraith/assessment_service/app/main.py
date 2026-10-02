@@ -1,14 +1,25 @@
-from fastapi import FastAPI, HTTPException, Depends
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, Header, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 import httpx
 from typing import Dict
 from datetime import datetime
 
-from .config import settings
+from .auth import require_admin_token
+from .config import settings, validate_startup_secrets
 from .schemas import AssessmentReport
 from .services import AssessmentEngine
 
-app = FastAPI(title="Wraith Assessment Service")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Before anything is served: the assessment route reads the whole graph, so a
+    # blank or published admin token is an unauthenticated view of it.
+    validate_startup_secrets(settings)
+    yield
+
+
+app = FastAPI(title="Wraith Assessment Service", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -21,7 +32,10 @@ app.add_middleware(
 # In-memory storage for assessment cache
 assessments_db: Dict[str, AssessmentReport] = {}
 
-@app.post("/api/v1/assessments/{investigation_id}", response_model=AssessmentReport)
+# Mutating: pulls the whole investigation graph and writes this service's
+# cache. Gated like any other write.
+@app.post("/api/v1/assessments/{investigation_id}", response_model=AssessmentReport,
+          dependencies=[Depends(require_admin_token)])
 async def perform_assessment(investigation_id: str):
     headers = {"Authorization": f"Bearer {settings.ADMIN_API_TOKEN}"}
     graph_url = f"{settings.GRAPH_DB_URL}/investigations/{investigation_id}/graph"
@@ -45,11 +59,14 @@ async def perform_assessment(investigation_id: str):
         raise HTTPException(status_code=500, detail=f"Failed to compute assessment report: {e}")
 
 @app.get("/api/v1/assessments/{investigation_id}", response_model=AssessmentReport)
-async def get_assessment(investigation_id: str):
+async def get_assessment(investigation_id: str, authorization: str = Header(None)):
     if investigation_id in assessments_db:
         return assessments_db[investigation_id]
 
-    # Trigger compute on-the-fly if not cached
+    # Trigger compute on-the-fly if not cached. perform_assessment carries the
+    # admin dependency, and calling it directly here is the uncached path, so the
+    # token is required too rather than inherited from the GET route.
+    await require_admin_token(authorization)
     return await perform_assessment(investigation_id)
 
 @app.get("/health")

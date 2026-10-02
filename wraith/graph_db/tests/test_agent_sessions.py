@@ -6,6 +6,9 @@ from app.main import app
 from app.repository import Neo4jRepository
 from app.schema import AgentSession
 from app.api.routes import get_repo
+from app.config import settings
+
+ADMIN = {"Authorization": f"Bearer " + settings.ADMIN_API_TOKEN}
 
 def _agent_session_record(**overrides):
     record = {
@@ -41,6 +44,7 @@ async def test_update_agent_session_parses_json_list_params(override_repo):
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as ac:
         response = await ac.patch(
             "/api/v1/agent-sessions/s1",
+            headers=ADMIN,
             json={
                 "status": "completed",
                 "iteration_count": 1,
@@ -59,6 +63,7 @@ async def test_update_agent_session_no_lists(override_repo):
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as ac:
         response = await ac.patch(
             "/api/v1/agent-sessions/s1",
+            headers=ADMIN,
             json={"status": "completed"},
         )
     assert response.status_code == 200
@@ -74,6 +79,7 @@ async def test_update_agent_session_large_reasoning_log(override_repo):
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as ac:
         response = await ac.patch(
             "/api/v1/agent-sessions/s1",
+            headers=ADMIN,
             json={"status": "completed", "reasoning_log": big_log},
         )
     assert response.status_code == 200
@@ -85,6 +91,7 @@ async def test_create_agent_session_parses_json_list_params(override_repo):
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as ac:
         response = await ac.post(
             "/api/v1/agent-sessions",
+            headers=ADMIN,
             params={
                 "session_id": "s1",
                 "program_id": "p1",
