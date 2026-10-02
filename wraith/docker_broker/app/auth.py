@@ -1,5 +1,19 @@
+import hmac
+
 from fastapi import Header, HTTPException, status
 from .config import settings
+
+# Constant-time comparison; see graph_db/app/auth.py for why `!=` on the full
+# header string leaks the token prefix by prefix.
+def _bearer_matches(authorization: str | None, expected_token: str) -> bool:
+    if not authorization or not expected_token:
+        return False
+    presented = authorization.encode("utf-8")
+    expected = f"Bearer {expected_token}".encode("utf-8")
+    if len(presented) != len(expected):
+        return False
+    return hmac.compare_digest(presented, expected)
+
 
 async def require_broker_token(authorization: str = Header(None)):
     if not authorization:
@@ -9,10 +23,12 @@ async def require_broker_token(authorization: str = Header(None)):
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    if authorization == f"Bearer {settings.RECON_BROKER_TOKEN}":
+    # Both branches must be evaluated, not short-circuited: returning on the
+    # first match would make the response time depend on which token was right.
+    if _bearer_matches(authorization, settings.RECON_BROKER_TOKEN):
         return "recon_orchestrator"
 
-    if authorization == f"Bearer {settings.EXPLOIT_RUNNER_BROKER_TOKEN}":
+    if _bearer_matches(authorization, settings.EXPLOIT_RUNNER_BROKER_TOKEN):
         return "active_exploit_runner"
 
     raise HTTPException(

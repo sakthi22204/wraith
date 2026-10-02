@@ -16,13 +16,15 @@ from mcp_servers.http_probe_server import (
 )
 
 
-def cap(status=200, body="", headers=None, ms=10.0, final_url="http://x/"):
+def cap(status=200, body="", headers=None, ms=10.0, final_url="http://x/",
+        request_url="http://x/"):
     return {
         "status_code": status,
         "response_body": body,
         "response_headers": headers or {},
         "elapsed_ms": ms,
         "final_url": final_url,
+        "request_url": request_url,
         "content_type": "text/html",
     }
 
@@ -79,11 +81,28 @@ class TestMateriality:
         assert r["material"] is True
 
     def test_effective_url_change_is_material(self):
+        """Both sides request the same URL; only the variant is redirected."""
         r = classify_differential(
-            cap(200, "a", final_url="http://x/a"),
-            cap(200, "a", final_url="http://x/b"),
+            cap(200, "a", request_url="http://x/", final_url="http://x/"),
+            cap(200, "a", request_url="http://x/", final_url="http://x/login"),
         )
         assert r["material"] is True
+
+    def test_a_varying_request_url_is_not_a_redirect(self):
+        """The bug this guards against.
+
+        A differential variant asks for a different URL by design. Comparing
+        the requested URLs made every such comparison "material", so appending
+        ``' OR 1=1--`` to a query was confirmed as injection even when both
+        responses were byte-identical. Only a real redirect counts.
+        """
+        r = classify_differential(
+            cap(200, "same", request_url="http://x/?q=",
+                final_url="http://x/?q="),
+            cap(200, body="same", request_url="http://x/?q=' OR 1=1--",
+                final_url="http://x/?q=' OR 1=1--"),
+        )
+        assert r["material"] is False
 
     def test_summary_is_human_readable(self):
         r = classify_differential(cap(200, "a"), cap(500, "a"))

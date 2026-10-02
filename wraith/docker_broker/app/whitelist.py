@@ -52,3 +52,14 @@ ALLOWED_OPERATIONS = {
     "logs",
     "wait"
 }
+
+# The only named volumes a tool container may mount, and always read-only.
+#
+# Volumes are the sole way recon_orchestrator gets state into a tool container
+# (tools/proxy.py mounts the mitmproxy CA so intercepted TLS is trusted). The
+# set is closed rather than pattern-matched because a named volume is still
+# Docker-managed state that outlives the container, and an open rule here would
+# hand any caller who reached the broker a place to stage a payload.
+ALLOWED_NAMED_VOLUMES = frozenset({
+    "mitmproxy_ca",
+})

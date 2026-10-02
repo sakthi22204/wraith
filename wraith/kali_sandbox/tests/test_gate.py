@@ -109,13 +109,44 @@ class TestScopeMatching:
 
     def test_host_of_handles_malformed_url(self):
         assert host_of("not a url") == ""
+        assert host_of("not a url at all") == ""
+        assert host_of("") == ""
+        assert host_of(None) == ""
+        # A path or userinfo is not a bare host, and must not be reduced to one.
+        assert host_of("juice_shop/../etc") == ""
         assert host_of("http://Example.COM/x") == "example.com"
+
+    def test_host_of_accepts_the_bare_hosts_raw_socket_tools_are_given(self):
+        """nmap, nuclei and hydra take `host`, not `http://host`."""
+        assert host_of("juice_shop") == "juice_shop"
+        assert host_of("juice_shop:3000") == "juice_shop"
+        assert host_of("10.0.0.5") == "10.0.0.5"
+        assert host_of("JUICE_SHOP") == "juice_shop"
 
 
 class TestEnforcement:
+    class _NullRedis:
+        """Grants are single-use now, so the tests below need a store.
+
+        A real Redis would make each test in this class collide with the last on
+        the shared nonce ("n" on the same investigation), turning an unrelated
+        assertion into a replay refusal. An in-memory set keeps each test
+        independent; replay itself is covered in tests/test_grant_replay.py.
+        """
+
+        def __init__(self):
+            self.spent = set()
+
+        def sadd(self, key, value):
+            if value in self.spent:
+                return 0
+            self.spent.add(value)
+            return 1
+
     def _patch(self, monkeypatch, *, active=False, rules=None, rule_error=None):
         import mcp_servers.gate as gate
         monkeypatch.setattr(gate, "killswitch_active", lambda url: active)
+        monkeypatch.setattr(gate, "_redis_client", lambda url: self._NullRedis())
         if rule_error:
             def boom(url, inv):
                 raise rule_error
@@ -224,7 +255,34 @@ class TestEnforcement:
         self._patch(monkeypatch)
         with pytest.raises(GateError, match="could not determine destination host"):
             enforce(caller="active_exploit_runner", grant_token=self._real_token(),
-                    targets=["not-a-url"], settings=Settings)
+                    targets=["not a url at all"], settings=Settings)
+
+    def test_a_bare_host_resolves_to_its_scheme_default_port(self, monkeypatch):
+        """A bare host is a real destination, not an unparseable one.
+
+        `urlparse("juice_shop").hostname` is None -- no scheme means no netloc --
+        so bare targets used to be refused as undeterminable before scope was
+        ever consulted. That failed closed, so it was not a bypass, but it meant
+        the port-claim path could never run against a bare-host target, and the
+        refusal named the wrong problem.
+
+        It resolves to port 80, so a grant for `juice_shop:3000` still refuses
+        it -- the host is now known, and the comparison says why.
+        """
+        self._patch(monkeypatch)
+        assert host_of("juice_shop") == "juice_shop"
+        assert authority_of("juice_shop") == "juice_shop:80"
+
+        with pytest.raises(GateError, match="grant is for 'juice_shop:3000'"):
+            enforce(caller="active_exploit_runner", grant_token=self._real_token(),
+                    targets=["juice_shop"], settings=Settings)
+
+    def test_a_bare_host_is_accepted_when_the_grant_names_that_port(self, monkeypatch):
+        self._patch(monkeypatch)
+        token = self._real_token(host="juice_shop:80")
+        out = enforce(caller="active_exploit_runner", grant_token=token,
+                      targets=["juice_shop"], settings=Settings)
+        assert out["granted_host"] == "juice_shop:80"
 
 
 class TestSharedVector:

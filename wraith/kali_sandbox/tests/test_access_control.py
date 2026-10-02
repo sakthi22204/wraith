@@ -14,6 +14,20 @@ for route in mcp._custom_starlette_routes:
 
 client = TestClient(app)
 
+
+def _message(response) -> str:
+    """Refusals come back in two shapes depending on which check refused.
+
+    `verify_caller` raises an HTTPException, which FastAPI renders as
+    {"detail": ...}; a gate refusal is raised inside the tool body and comes back
+    as {"error": ...}. Tests assert on the reason, not on which wrapper won.
+    """
+    body = response.json()
+    if isinstance(body, dict):
+        return str(body.get("detail") or body.get("error") or "")
+    return str(body)
+
+
 def test_dangerous_tool_unauthorized():
     # Attempt to call run_hydra without header
     response = client.post("/tools/run_hydra/call", json={"target": "t", "service": "s", "user": "u", "pass_list": "p"})
@@ -21,19 +35,46 @@ def test_dangerous_tool_unauthorized():
     assert "not authorized" in response.json()["detail"]
 
 def test_dangerous_tool_authorized():
-    # Attempt to call run_hydra with header (will still fail msf connection, but not 403)
+    """An authorized caller name is no longer enough on its own.
+
+    This used to assert `!= 403` for a hydra call carrying only
+    `X-Wraith-Caller`, which is the request reading back its own header. run_hydra
+    is now gated, so the gate refuses it for want of a signed grant before the
+    caller name is even considered.
+    """
     response = client.post(
         "/tools/run_hydra/call",
         json={"target": "t", "service": "s", "user": "u", "pass_list": "p"},
         headers={"X-Wraith-Caller": "active_exploit_runner"}
     )
-    # It might fail with 500 or something else due to internal tool error, but NOT 403
-    assert response.status_code != 403
+    # 403 either way: refused at the caller check or at the gate. Both are the
+    # gate refusing to act on a self-asserted identity.
+    assert response.status_code == 403
+    message = _message(response).lower()
+    assert "grant" in message or "not authorized" in message
 
-def test_safe_tool_no_header():
-    # Nmap is safe
+
+def test_nmap_is_gated_not_safe():
+    """nmap was treated as a 'safe tool' here and reached the binary on nothing
+    but a caller header. It is in GATED_NETWORK_TOOLS now."""
     response = client.post("/tools/run_nmap_scan/call", json={"target": "127.0.0.1"})
-    assert response.status_code != 403
+    assert response.status_code == 403
+    message = _message(response).lower()
+    assert "grant" in message or "not authorized" in message
+
+
+def test_caller_name_does_not_substitute_for_a_grant():
+    """The specific confusion this change removes: presenting the runner's name
+    used to be the whole authorisation. It is now necessary but not sufficient."""
+    from mcp_servers.main import GATED_NETWORK_TOOLS
+
+    assert "run_hydra" in GATED_NETWORK_TOOLS
+    response = client.post(
+        "/tools/run_hydra/call",
+        json={"target": "127.0.0.1", "service": "ssh", "user": "u", "pass_list": "p"},
+        headers={"X-Wraith-Caller": "active_exploit_runner", "X-Wraith-Grant": "forged.token"},
+    )
+    assert response.status_code == 403
 
 def test_get_caller_from_headers():
     from unittest.mock import MagicMock, patch

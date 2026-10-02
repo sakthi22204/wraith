@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from .api.routes import router
+from .config import settings
 
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -17,9 +18,15 @@ app.include_router(router, prefix="/api/v1")
 
 import docker
 from .whitelist import ALLOWED_IMAGES
+from .config import validate_startup_secrets
 
 @app.on_event("startup")
 async def startup_event():
+    # First, before any work: the broker holds the host Docker socket, so it
+    # must refuse to run at all on a blank or published token. Pulling ~20
+    # images for a process that is about to die is worse than a clean refusal.
+    validate_startup_secrets(settings)
+
     # Pre-pull images to ensure they are available
     client = docker.from_env()
     for image in ALLOWED_IMAGES:

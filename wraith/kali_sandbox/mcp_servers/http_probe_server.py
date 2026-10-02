@@ -28,6 +28,7 @@ import re
 import secrets
 import ssl
 import time
+from contextvars import ContextVar
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse, urlunparse
 
@@ -36,6 +37,19 @@ from pydantic import BaseModel, Field
 
 from .common.base_server import BaseSecurityServer
 from .common.redaction import redact_capture, redact_headers, redact_text
+from .gate import GateError, revalidate_hop
+
+# The gate's context for the request in flight, published by main.gate_request.
+# This is a ContextVar rather than a tool argument on purpose: the probe tools
+# are reachable through FastMCP's own schema, so a `redirect_guard` parameter
+# would be a caller-supplied guard -- something that could wave a hop through
+# unchecked. Set by the gate, read by the probe, never written by a request.
+_redirect_guard: ContextVar = ContextVar("wraith_redirect_guard", default=None)
+
+
+def set_redirect_guard(context) -> None:
+    """Publish the verified gate context for the request being dispatched."""
+    _redirect_guard.set(context)
 from .common.response_diff import classify_differential, summarize_differential
 
 # Guards against a hostile or broken target exhausting the sandbox.
@@ -636,6 +650,73 @@ class HttpProbeServer(BaseSecurityServer):
 
     # -- probe --------------------------------------------------------------
 
+    MAX_REDIRECTS = 3
+
+    async def _follow(
+        self,
+        client,
+        resp,
+        method: str,
+        headers: Dict[str, str],
+        body,
+        *,
+        redirect_guard=None,
+        history: Optional[List[str]] = None,
+    ):
+        """Walk a redirect chain, re-checking every hop before it is requested.
+
+        ``redirect_guard`` is the gate's context for this request. Each new URL
+        has to clear it, so a 302 cannot move the request somewhere the grant
+        does not cover. It is mandatory rather than optional: a caller asking to
+        follow redirects without a guard would be asking for exactly the
+        unchecked walk this replaces, so that is refused instead of permitted.
+
+        A guard that raises GateError propagates, which is what stops the hop from
+        being sent -- the refusal happens before the request, not after the body
+        has been read and then discarded.
+        """
+        if history is None:
+            history = []
+
+        # Fall back to the context the gate published for this request. An
+        # explicit argument wins so a caller can narrow the guard, never widen it:
+        # there is no path here that skips the check when following is on.
+        if redirect_guard is None:
+            redirect_guard = _redirect_guard.get()
+
+        while (
+            resp.is_redirect
+            and resp.status_code in (301, 302, 303, 307, 308)
+            and len(history) < self.MAX_REDIRECTS
+        ):
+            location = resp.headers.get("location")
+            if not location:
+                break
+            nxt = str(resp.url.join(location))
+
+            if redirect_guard is None:
+                raise GateError(
+                    "following redirects requires a gate context; refusing to "
+                    "follow an unchecked destination", 403,
+                )
+            revalidate_hop(redirect_guard, nxt)
+
+            history.append(nxt)
+            # 303, and 301/302 in practice, continue as GET without a body.
+            next_method, next_body = method, body
+            if resp.status_code in (301, 302, 303) and method not in ("GET", "HEAD"):
+                next_method, next_body = "GET", None
+            resp = await client.request(
+                next_method, nxt, headers=headers, content=next_body
+            )
+
+        if resp.is_redirect and len(history) >= self.MAX_REDIRECTS:
+            raise GateError(
+                f"redirect chain exceeded {self.MAX_REDIRECTS} hops; refusing to "
+                "follow further", 403,
+            )
+        return resp
+
     async def probe(
         self,
         url: str,
@@ -644,6 +725,7 @@ class HttpProbeServer(BaseSecurityServer):
         body=None,
         timeout: float = 20.0,
         follow_redirects: bool = False,
+        redirect_guard=None,
     ) -> ProbeCapture:
         url = self._validate_url(url)
         method = self._validate_method(method)
@@ -661,15 +743,25 @@ class HttpProbeServer(BaseSecurityServer):
         started = time.perf_counter()
         try:
             timeout_cfg = httpx.Timeout(timeout)
+            # Redirects are followed by hand rather than by httpx, so each hop
+            # can be re-checked. httpx's own following walks up to three hops
+            # without consulting the gate, which turns any in-scope host that
+            # answers with a 302 into a way to fetch an out-of-scope one -- and
+            # its body comes back as evidence.
             async with httpx.AsyncClient(
                 timeout=timeout_cfg,
-                follow_redirects=follow_redirects,
-                max_redirects=3,
+                follow_redirects=False,
                 verify=False,
             ) as client:
+                history: list[str] = []
                 resp = await client.request(
                     method, url, headers=req_headers, content=req_body
                 )
+                if follow_redirects:
+                    resp = await self._follow(
+                        client, resp, method, req_headers, req_body,
+                        redirect_guard=redirect_guard, history=history,
+                    )
                 raw = resp.content or b""
                 truncated = len(raw) > MAX_RESPONSE_BYTES
                 if truncated:
@@ -697,12 +789,20 @@ class HttpProbeServer(BaseSecurityServer):
                     body_truncated=truncated,
                     elapsed_ms=round((time.perf_counter() - started) * 1000, 2),
                     final_url=str(resp.url),
-                    redirects=[str(h.url) for h in resp.history],
+                    redirects=list(history),
                     content_type=resp.headers.get("content-type", ""),
                     server_header=resp.headers.get("server", ""),
                     body_sha256=hashlib.sha256(raw).hexdigest(),
                     reached_target=True,
                 )
+        except GateError:
+            # A refusal is not a probe failure and must not be dressed up as one.
+            # The generic handler below turns every exception into a ProbeCapture
+            # with reached_target=False, which reads to a caller as "the target was
+            # unreachable" -- so a hop the gate declined would look like an
+            # inconclusive result rather than a stopped request, and the analyst
+            # would go looking for a network problem that does not exist.
+            raise
         except httpx.TimeoutException:
             capture = ProbeCapture(
                 request_url=url, request_method=method, request_headers=req_headers,

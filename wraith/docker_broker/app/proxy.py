@@ -3,7 +3,7 @@ import asyncio
 import requests.exceptions
 from typing import List, Optional
 from .config import settings
-from .validators import validate_container_spec
+from .validators import validate_container_spec, ALLOWED_SPEC_KEYS
 from .audit import audit_log
 
 class DockerProxy:
@@ -40,10 +40,21 @@ class DockerProxy:
                         print(f"Failed to pull image {image}: {pull_err}")
                         raise pull_err
 
+                # Forward only what the allowlist permits, by name.
+                #
+                # **spec used to hand every key the caller sent straight to the
+                # Docker SDK, so the validator was the only thing standing
+                # between a caller and mounts/volumes_from/cgroupns -- and it
+                # had not heard of any of them. Selecting the keys here as well
+                # means a key added to the SDK, or missed by the validator, is
+                # dropped instead of executed: the run() call cannot be widened
+                # by anything the validator does not already know about.
+                forwarded = {k: v for k, v in spec.items() if k in ALLOWED_SPEC_KEYS}
+
                 container = self.client.containers.run(
                     image=image,
                     command=command,
-                    **spec
+                    **forwarded,
                 )
                 return container.id
 

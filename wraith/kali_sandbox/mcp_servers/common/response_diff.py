@@ -182,6 +182,21 @@ def _header_delta(baseline_headers: Dict[str, str], variant_headers: Dict[str, s
     }
 
 
+def _redirect_target(capture: Dict[str, Any]) -> Optional[str]:
+    """Where a response was actually served from, or None if it was not redirected.
+
+    ``request_url`` is deliberately not a fallback. A differential variant is
+    *supposed* to ask for a different URL, so treating the request URL as the
+    "effective" one makes the two sides differ for every URL-borne comparison --
+    which is every differential test worth running.
+    """
+    requested = capture.get("request_url")
+    final = capture.get("final_url")
+    if not requested or not final:
+        return None
+    return final if final != requested else None
+
+
 def classify_differential(baseline: Dict[str, Any], variant: Dict[str, Any]) -> Dict[str, Any]:
     """Compare two captures and report what changed, plus how much it matters.
 
@@ -229,11 +244,18 @@ def classify_differential(baseline: Dict[str, Any], variant: Dict[str, Any]) -> 
             signals.append(timing_signal)
 
     # A redirect that only the variant triggers is a real authorization signal.
-    base_final = baseline.get("final_url") or baseline.get("request_url")
-    var_final = variant.get("final_url") or variant.get("request_url")
-    url_changed = base_final != var_final
-    if url_changed:
-        signals.append(f"effective URL changed: {base_final} -> {var_final}")
+    # The target of the check is where the response *came from*, not where the
+    # tester chose to send it: a differential variant requests a different URL
+    # by construction, so falling back to the request URL made every URL-borne
+    # comparison material and handed back a confirmation for simply appending a
+    # payload. Only a genuine redirect -- a response served from somewhere other
+    # than the URL that was requested -- counts, and only when it differs.
+    base_redirect = _redirect_target(baseline)
+    var_redirect = _redirect_target(variant)
+    url_changed = base_redirect != var_redirect
+    if url_changed and (base_redirect or var_redirect):
+        signals.append(
+            f"redirected: {base_redirect or 'none'} -> {var_redirect or 'none'}")
 
     volatile_only = bool(body.get("volatile_only"))
     identical = bool(body.get("identical")) and not status_changed and not (

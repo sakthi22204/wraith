@@ -4,8 +4,9 @@ The sandbox is a separate service, and a caller header alone cannot carry that
 proof -- ``X-Wraith-Caller`` is just a string anyone on the network can set. So
 the runner mints a short-lived HMAC grant after its own killswitch, scope and
 rate-limit gates pass, and the sandbox verifies the signature before it sends
-anything. The grant names the investigation and the exact host it was issued
-for, so it cannot be replayed against a different destination.
+anything. The grant names the investigation and the exact ``host:port`` it was
+issued for, so it cannot be replayed against a different destination -- and,
+now that a raw-socket tool may choose its own port, not merely a different host.
 
 ``kali_sandbox/mcp_servers/gate.py`` verifies these. Both sides are pinned to
 one test vector in ``tests/test_grant.py`` so the two encodings cannot drift.
@@ -17,6 +18,8 @@ import json
 import secrets
 import time
 from typing import Any, Dict
+
+from tests._runner.authority import normalize_port_claim
 
 GRANT_VERSION = 1
 DEFAULT_TTL_SECONDS = 120
@@ -36,10 +39,19 @@ def mint_grant(
     caller: str,
     investigation_id: str,
     host: str,
+    ports: str | list | None = None,
     cost: int = 1,
     ttl_seconds: int = DEFAULT_TTL_SECONDS,
 ) -> str:
-    """Issue a grant binding one caller to one host for a short window."""
+    """Issue a grant binding one caller to one ``host:port`` for a short window.
+
+    ``ports`` is the port set a raw-socket tool will actually dial. It is
+    separate from ``host`` because the two answer different questions: ``host``
+    names the machine, ``ports`` names which of its ports the grant covers. A
+    tool that dials a port the caller chose cannot be authorised by ``host``
+    alone -- nmap's own default is ``1-1000``, so a grant saying
+    ``juice_shop:80`` would silently authorise a thousand ports on that host.
+    """
     if not secret:
         raise ValueError("gate secret is not configured; refusing to mint a grant")
     payload: Dict[str, Any] = {
@@ -51,6 +63,11 @@ def mint_grant(
         "exp": int(time.time()) + int(ttl_seconds),
         "nonce": secrets.token_hex(8),
     }
+    if ports is not None:
+        # Normalised to a sorted list of ints so that "80,443", "443,80" and
+        # [443, 80] produce byte-identical payloads. Without that, two correct
+        # callers would produce different signatures for the same grant.
+        payload["ports"] = normalize_port_claim(ports)
     body = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     return f"{_b64e(body)}.{_b64e(hmac.new(secret.encode(), body, hashlib.sha256).digest())}"
 

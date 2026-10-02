@@ -18,6 +18,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import time
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
@@ -26,6 +27,12 @@ import httpx
 
 GRANT_VERSION = 1
 KILLSWITCH_KEY = "global:killswitch"
+
+# Spent-grant nonces. Keyed per investigation so two grants that collide on a
+# nonce value stay independent. Entries expire with the grants they describe;
+# there is no cleanup here because a stale entry is indistinguishable from a
+# spent one, which is the safe direction.
+NONCE_KEY_PREFIX = "gate:spent_nonce"
 
 
 class GateError(Exception):
@@ -116,13 +123,111 @@ def is_in_scope(rules: List[Dict[str, str]], target: str) -> bool:
 
 
 def host_of(url: str) -> str:
+    """The bare hostname of a destination, or "" if none can be read.
+
+    A bare host is accepted, because that is what nmap, nuclei and hydra are
+    given. `urlparse("juice_shop").hostname` is None -- there is no scheme, so
+    there is no netloc -- which made every port-selecting tool unresolvable and
+    the request refused. That fails closed, so it was not a bypass, but it meant
+    the port work could never be exercised against a real bare-host target, and
+    a refusal that looks like "host not in scope" misreports the actual problem.
+    """
+    candidate = (url or "").strip()
+    if not candidate:
+        return ""
+    if "://" not in candidate:
+        if not BARE_HOST_RE.match(candidate):
+            # Not a bare `host` or `host:port`. Prefixing a scheme would make
+            # urlparse treat prose as a hostname -- "not a url" became the host
+            # "not a url" -- and a destination nobody could have meant has to
+            # read as undeterminable rather than as a scope miss.
+            return ""
+        candidate = "http://" + candidate
     try:
-        return (urlparse(url).hostname or "").lower()
+        return (urlparse(candidate).hostname or "").lower()
     except Exception:  # noqa: BLE001
         return ""
 
 
 DEFAULT_PORTS = {"http": 80, "https": 443, "ws": 80, "wss": 443}
+
+# A port claim wider than this is refused. nmap's own default is "1-1000"; past
+# a few thousand the claim has stopped describing a decision anyone made and
+# started being a licence for the whole host, which is what binding the port was
+# meant to prevent.
+MAX_CLAIMED_PORTS = 4096
+
+# What a destination may look like when it carries no scheme -- what nmap,
+# nuclei and hydra are handed. Deliberately narrow: a label (letters, digits,
+# dots, hyphens, underscores), optionally one colon and digits. Anything else is
+# prose, a path, or a URL with its scheme stripped, and is refused as
+# undeterminable rather than guessed at.
+BARE_HOST_RE = re.compile(r"^[A-Za-z0-9._-]+(:[0-9]{1,5})?$")
+
+
+def port_of(url: str) -> Optional[int]:
+    """The port a URL will actually be dialled on, or None if unreadable."""
+    try:
+        parsed = urlparse(url)
+        if parsed.port is not None:
+            return parsed.port
+        return DEFAULT_PORTS.get((parsed.scheme or "").lower())
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def parse_port_spec(spec) -> set:
+    """Expand a port claim like ``80``, ``80,443`` or ``1-1000`` to a set of ints.
+
+    Fails closed on anything malformed, on an empty claim, and on a claim wide
+    enough to be a disguised allow-everything. Mirrors
+    ``active_exploit_runner/app/roe/authority.py::normalize_port_claim``; both
+    are pinned to the same vectors in ``tests/test_grant_port_claim.py`` so the
+    two encodings cannot drift.
+    """
+    if spec is None or (isinstance(spec, str) and not spec.strip()):
+        raise GateError("port claim is empty; refusing to send", 403)
+    ports: set = set()
+    try:
+        if isinstance(spec, (list, tuple, set)):
+            parts = [str(p) for p in spec]
+        elif isinstance(spec, int) and not isinstance(spec, bool):
+            parts = [str(spec)]
+        elif isinstance(spec, str):
+            parts = spec.split(",")
+        else:
+            raise ValueError(f"not a port claim: {spec!r}")
+    except (TypeError, ValueError) as exc:
+        raise GateError(f"port claim {spec!r} is malformed; refusing to send", 403) from exc
+
+    for part in parts:
+        part = str(part).strip()
+        if not part:
+            raise GateError(f"port claim {spec!r} is malformed; refusing to send", 403)
+        if "-" in part:
+            lo_raw, _, hi_raw = part.partition("-")
+            if not (lo_raw.strip().isdigit() and hi_raw.strip().isdigit()):
+                raise GateError(f"port range {part!r} is malformed; refusing to send", 403)
+            lo, hi = int(lo_raw), int(hi_raw)
+            if lo > hi:
+                raise GateError(f"port range {part!r} is inverted; refusing to send", 403)
+            if not (1 <= lo <= 65535 and 1 <= hi <= 65535):
+                raise GateError(f"port range {part!r} is outside 1-65535; refusing to send", 403)
+            if hi - lo + 1 > MAX_CLAIMED_PORTS:
+                raise GateError(
+                    f"port claim {spec!r} covers {hi - lo + 1} ports, more than the "
+                    f"{MAX_CLAIMED_PORTS} this gate will honour; refusing to send", 403)
+            ports.update(range(lo, hi + 1))
+        else:
+            if not part.isdigit():
+                raise GateError(f"port {part!r} is malformed; refusing to send", 403)
+            value = int(part)
+            if not 1 <= value <= 65535:
+                raise GateError(f"port {value} is outside 1-65535; refusing to send", 403)
+            ports.add(value)
+    if not ports:
+        raise GateError(f"port claim {spec!r} names no ports; refusing to send", 403)
+    return ports
 
 
 def authority_of(url: str) -> str:
@@ -138,9 +243,13 @@ def authority_of(url: str) -> str:
     Normalising the default port is what makes this safe to compare: a URL that
     omits the port and a URL that spells out ``:80`` are the same destination,
     and must produce the same string on both sides of the check.
+
+    A bare host with no scheme -- what nmap, nuclei and hydra take -- resolves to
+    that host on port 80, which is what such a tool means by an unported host.
     """
+    candidate = (url or "").strip()
     try:
-        parsed = urlparse(url)
+        parsed = urlparse(candidate if "://" in candidate else "http://" + candidate)
         host = (parsed.hostname or "").lower()
         if not host:
             return ""
@@ -190,18 +299,119 @@ def load_scope_rules(database_url: str, investigation_id: str) -> List[Dict[str,
         raise GateError(f"scope rules unavailable ({type(exc).__name__}); refusing", 500) from exc
 
 
-def enforce(
+def _redis_client(redis_url: str):
+    import redis as redis_lib
+
+    return redis_lib.Redis.from_url(redis_url, socket_timeout=3)
+
+
+def spend_nonce(token: str, settings, *, now: Optional[float] = None) -> bool:
+    """Record a grant's nonce as spent, refusing one that has been used before.
+
+    Runs after verification, so an unsigned or expired token never reaches the
+    store -- otherwise an attacker who merely *saw* a grant could burn it by
+    replaying it, turning single-use into denial of service.
+
+    Fails closed. "Have I seen this nonce?" cannot be answered without the shared
+    store, and an unreachable Redis during an incident is exactly when an
+    attacker would replay. The key includes the investigation, so two grants that
+    happen to share a nonce stay independent.
+    """
+    # Raises GateError on a bad signature or an expired token, before any store
+    # access.
+    payload = verify_grant(token, settings.GATE_SECRET, now=now)
+
+    redis_url = getattr(settings, "REDIS_URL", "")
+    if not redis_url:
+        raise GateError("no Redis configured; cannot confirm a grant is unused", 500)
+
+    key = f"{NONCE_KEY_PREFIX}:{payload.get('inv')}"
+    try:
+        client = _redis_client(redis_url)
+        # sadd() returns 0 when the member is already present, which is the
+        # single-use check and the record in one atomic operation.
+        added = client.sadd(key, str(payload.get("nonce")))
+    except GateError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise GateError(
+            f"grant replay store unavailable ({type(exc).__name__}); refusing", 500
+        ) from exc
+
+    if not added:
+        raise GateError("this grant has already been used", 403)
+    return True
+
+
+def _check_destination(url: str, *, granted_host: str, rules: List[Dict[str, str]],
+                       investigation_id: str, port_claim: Optional[str] = None,
+                       granted_ports: Optional[set] = None) -> None:
+    """Every condition a single destination has to clear. Raises to refuse.
+
+    ``port_claim`` is the set of ports the *request* will dial;
+    ``granted_ports`` is the set the *grant* authorised. Both are needed and they
+    are different claims -- the previous version derived the granted set from the
+    request, so a request for ``1-65535`` was checked against itself and always
+    passed. A port is authorised only when the tool will dial it *and* the grant
+    named it.
+    """
+    host = host_of(url)
+    if not host:
+        raise GateError(f"could not determine destination host from '{url}'", 403)
+    # Compared as host:port, so a grant for one destination cannot be spent
+    # on another port of the same host. Scope matching still uses the bare
+    # hostname, because that is what an investigation's rules are written
+    # against.
+    authority = authority_of(url)
+
+    granted_host_name = granted_host.split(":")[0]
+    if host != granted_host_name:
+        raise GateError(
+            f"grant is for '{granted_host}', refusing request to '{authority}'", 403)
+
+    requested_ports = parse_port_spec(port_claim) if port_claim is not None else None
+    if requested_ports is not None:
+        # A tool that chooses its own ports names the host, not an authority, so
+        # the host is settled above and only the port set is left to compare.
+        if granted_ports is None:
+            # The grant named no port set, so it authorises exactly the one port
+            # its own authority carries. A tool that sweeps ports is asking for
+            # more than that.
+            allowed = {int(granted_host.rpartition(":")[2])} if ":" in granted_host else set()
+        else:
+            allowed = granted_ports
+        outside = sorted(requested_ports - allowed)
+        if outside:
+            raise GateError(
+                f"grant '{granted_host}' authorises ports "
+                f"{sorted(allowed) or 'none'}; the request would dial "
+                f"{outside[:8]}{'...' if len(outside) > 8 else ''}; refusing to send",
+                403)
+    elif authority != granted_host:
+        raise GateError(
+            f"grant is for '{granted_host}', refusing request to '{authority}'", 403)
+
+    if not is_in_scope(rules, host) and not is_in_scope(rules, url):
+        raise GateError(
+            f"host '{host}' does not match any allow rule for investigation "
+            f"'{investigation_id}'", 403)
+
+
+def authorization_context(
     *,
     caller: Optional[str],
     grant_token: Optional[str],
     targets: List[str],
     settings,
+    port_claim: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Run every gate for a set of destination URLs. Raises GateError to refuse.
+    """Run every gate for a set of destinations and return the reusable context.
 
-    ``targets`` is every URL that will actually be sent, so a variant that
-    points somewhere else is checked on its own account rather than riding in
-    on the baseline's authorisation.
+    A redirect is followed *after* this returns, by code that does not know about
+    grants, so the checks a later hop needs are kept here: the verified grant's
+    host and the investigation's scope rules. ``revalidate_hop`` then applies the
+    same conditions to each new destination, which is what stops a 302 from
+    becoming an off-scope fetch.
     """
     if killswitch_active(settings.REDIS_URL):
         raise GateError("global killswitch is active; sandbox refused to send", 403)
@@ -222,22 +432,88 @@ def enforce(
         raise GateError(
             f"investigation '{investigation_id}' has no scope rules; refusing to send", 403)
 
-    for url in targets:
-        host = host_of(url)
-        if not host:
-            raise GateError(f"could not determine destination host from '{url}'", 403)
-        # Compared as host:port, so a grant for one destination cannot be spent
-        # on another port of the same host. Scope matching still uses the bare
-        # hostname, because that is what an investigation's rules are written
-        # against.
-        authority = authority_of(url)
-        if authority != granted_host:
+    # The grant's own port claim, if it named one. Absent means "the single port
+    # in the authority", which is the pre-claim behaviour and the tighter of the
+    # two -- so an old grant cannot widen what it authorises.
+    granted_ports = None
+    if payload.get("ports") is not None:
+        try:
+            granted_ports = parse_port_spec(payload["ports"])
+        except GateError as exc:
+            # A grant naming an unreadable port set is not a grant this gate can
+            # honour. Refusing beats silently falling back to the authority's
+            # single port, which would look like a narrower grant than the runner
+            # believes it issued.
             raise GateError(
-                f"grant is for '{granted_host}', refusing request to '{authority}'", 403)
-        if not is_in_scope(rules, host) and not is_in_scope(rules, url):
-            raise GateError(
-                f"host '{host}' does not match any allow rule for investigation "
-                f"'{investigation_id}'", 403)
+                f"grant's port claim is unusable ({exc.detail}); refusing to send", 403)
 
-    return {"investigation_id": investigation_id, "host": granted_host,
-            "cost": int(payload.get("cost", 1)), "expires_at": payload.get("exp")}
+    # The grant is verified and in scope by this point, so it is safe to burn.
+    # After this line the nonce is spent whether or not the remaining destination
+    # checks pass -- deliberate, so a rejected request cannot be retried with the
+    # same grant against a corrected body.
+    spend_nonce(grant_token, settings)
+
+    for url in targets:
+        _check_destination(url, granted_host=granted_host, rules=rules,
+                           investigation_id=investigation_id, port_claim=port_claim,
+                           granted_ports=granted_ports)
+
+    return {
+        "investigation_id": investigation_id,
+        "host": granted_host,
+        "granted_host": granted_host,
+        "granted_ports": sorted(granted_ports) if granted_ports else None,
+        "port_claim": port_claim,
+        "rules": rules,
+        "cost": int(payload.get("cost", 1)),
+        "expires_at": payload.get("exp"),
+    }
+
+
+def revalidate_hop(context: Dict[str, Any], url: str) -> None:
+    """Apply the gate's conditions to a redirect hop. Raises GateError to refuse.
+
+    Deliberately does not re-verify the signature or spend the nonce: the grant
+    was verified once when the context was built, and one grant covers the whole
+    redirect chain. It does re-read the rules held in the context rather than
+    assuming the new host inherits the old one's verdict.
+    """
+    granted_ports = context.get("granted_ports")
+    _check_destination(
+        url,
+        granted_host=context["granted_host"],
+        rules=context["rules"],
+        investigation_id=context["investigation_id"],
+        port_claim=context.get("port_claim"),
+        granted_ports=set(granted_ports) if granted_ports else None,
+    )
+
+
+def enforce(
+    *,
+    caller: Optional[str],
+    grant_token: Optional[str],
+    targets: List[str],
+    settings,
+    port_claim: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Run every gate for a set of destination URLs. Raises GateError to refuse.
+
+    ``targets`` is every URL that will actually be sent, so a variant that
+    points somewhere else is checked on its own account rather than riding in
+    on the baseline's authorisation.
+
+    ``port_claim`` is for tools that dial a port the request chose rather than
+    one the URL named -- nmap's ``-p 1-1000``, nuclei against a whole host. For
+    those, a grant naming ``host:80`` would silently authorise all 1000 ports,
+    which is the exact over-grant the authority binding exists to prevent. The
+    claim is compared against the grant's own ``ports`` field instead, so the
+    authority stays meaningful: a grant for ``1-1000`` cannot be spent on 22.
+    """
+    return authorization_context(
+        caller=caller,
+        grant_token=grant_token,
+        targets=targets,
+        settings=settings,
+        port_claim=port_claim,
+    )
