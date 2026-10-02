@@ -6,7 +6,9 @@ from datetime import datetime
 @pytest.fixture
 def mock_clients():
     with patch("app.generator.graph_db_client", new_callable=AsyncMock) as mock_graph, \
-         patch("app.generator.audit_client", new_callable=AsyncMock) as mock_audit:
+         patch("app.generator.audit_client", new_callable=AsyncMock) as mock_audit, \
+         patch("app.generator.assessment_client", new_callable=AsyncMock) as mock_assess:
+        mock_assess.get_coverage.return_value = None
         yield mock_graph, mock_audit
 
 @pytest.mark.asyncio

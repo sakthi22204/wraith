@@ -255,10 +255,27 @@
                 <div style="font-size: 2rem; font-weight: bold; color: #4f46e5; margin-top: 5px;">{{ executive_summary.average_risk_score }} / 10</div>
             </div>
             <div style="flex: 1; background: #f8fafc; padding: 15px; border-radius: 8px; border: 1px solid #e2e8f0; text-align: center;">
-                <span style="font-size: 0.85rem; text-transform: uppercase; color: #64748b; font-weight: bold;">Active Vulnerabilities</span>
-                <div style="font-size: 2rem; font-weight: bold; color: #0f172a; margin-top: 5px;">{{ findings|length }}</div>
+                <span style="font-size: 0.85rem; text-transform: uppercase; color: #64748b; font-weight: bold;">Confirmed Vulnerabilities</span>
+                <div style="font-size: 2rem; font-weight: bold; color: #0f172a; margin-top: 5px;">{{ executive_summary.confirmed_count if executive_summary.confirmed_count is not none else (findings|length) }}</div>
             </div>
+            {% if executive_summary.unvalidated_count %}
+            <div style="flex: 1; background: #fffbeb; padding: 15px; border-radius: 8px; border: 1px solid #fcd34d; text-align: center;">
+                <span style="font-size: 0.85rem; text-transform: uppercase; color: #92400e; font-weight: bold;">Unvalidated Hypotheses</span>
+                <div style="font-size: 2rem; font-weight: bold; color: #92400e; margin-top: 5px;">{{ executive_summary.unvalidated_count }}</div>
+            </div>
+            {% endif %}
         </div>
+
+        {% if executive_summary.unvalidated_count %}
+        <div class="alert-band" style="background: #fffbeb; border-color: #fcd34d;">
+            <div class="alert-title" style="color: #92400e;">UNVALIDATED HYPOTHESES ARE NOT FINDINGS</div>
+            <p style="margin: 0; font-size: 0.95rem; color: #92400e;">
+                {{ executive_summary.unvalidated_count }} item(s) in this report were produced by
+                automated reconnaissance and were never confirmed against the target. They are
+                included as leads for follow-up. Do not submit them as vulnerabilities.
+            </p>
+        </div>
+        {% endif %}
 
         <h3>Severity Breakdown</h3>
         <table>
@@ -325,7 +342,16 @@
         {% for f in findings %}
         <div class="finding-box">
             <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 15px;">
-                <h2 style="margin: 0; color: #0f172a; font-size: 1.5rem;">{{ f.title }}</h2>
+                <div>
+                    {% if f.validation_state != 'CONFIRMED' %}
+                    <div style="display: inline-block; background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; border-radius: 4px; padding: 3px 8px; font-size: 0.7rem; font-weight: bold; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px;">
+                        Unvalidated hypothesis — not a confirmed vulnerability
+                    </div>
+                    {% endif %}
+                    <h2 style="margin: 0; color: #0f172a; font-size: 1.5rem;">
+                        {% if f.validation_state == 'CONFIRMED' %}Finding:{% else %}Unvalidated Hypothesis:{% endif %} {{ f.title }}
+                    </h2>
+                </div>
                 <div>
                     <span class="badge badge-{{ f.severity|lower }}">{{ f.severity }}</span>
                 </div>

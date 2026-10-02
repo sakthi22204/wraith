@@ -2,9 +2,46 @@ from datetime import datetime
 from typing import List, Dict, Any
 from .models import ReportFinding, ProgramReport
 from .clients.graph_db_client import graph_db_client
+from .clients.assessment_client import assessment_client
 from .clients.audit_client import audit_client
 from .mapping.cwe_mapping import get_mapping
 from .mapping.cvss_calculator import cvss_calculator
+
+# Mirrors graph_db.app.schema.FindingStatus. A report is the artefact a human
+# submits to a program, so the bar for calling something a vulnerability is set
+# by what the graph actually recorded, not by what a scanner proposed.
+#
+# "CONFIRMED" is not in the enum but is normalised to HUMAN_CONFIRMED there, so
+# legacy rows carry it and it has to be honoured here too.
+CONFIRMED_STATUSES = {"AI_VALIDATED", "CORROBORATED", "HUMAN_CONFIRMED", "CONFIRMED"}
+
+
+def normalize_status(status: Any) -> str:
+    return str(status).strip().upper() if status is not None else ""
+
+
+def is_confirmed(finding: Dict[str, Any]) -> bool:
+    """Whether a finding was actually confirmed, as opposed to proposed.
+
+    Two independent signals count, because either alone is misleading:
+
+      * the graph's own status, set by a human or a corroborating pass; and
+      * validation evidence on the finding -- a request that was sent and a
+        response that came back. The second catches a finding whose status was
+        never written but which does carry a real exchange.
+
+    A finding with neither is a hypothesis. It is not a weak vulnerability, it
+    is an untested guess, and the report must not present it as the former.
+    Statuses DUPLICATE and FALSE_POSITIVE are confirmed *negative* verdicts and
+    are filtered out before this is called, but they are rejected here too so
+    the helper is safe to use on its own.
+    """
+    if normalize_status(finding.get("status")) in CONFIRMED_STATUSES:
+        return True
+    if normalize_status(finding.get("status")) in {"FALSE_POSITIVE", "DUPLICATE"}:
+        return False
+    return bool(finding.get("poc_request")) and bool(finding.get("poc_response"))
+
 
 class ReportGenerator:
     async def generate_finding_report(self, program_id: str, finding: Dict[str, Any]) -> ReportFinding:
@@ -130,6 +167,10 @@ class ReportGenerator:
         actual_result = finding.get("actual_result")
         validation_stage = finding.get("validation_stage") or "NOT_VALIDATED"
         is_validated = bool(poc_request) and bool(poc_response)
+        # Drives the headline wording of the whole report. A validated exchange
+        # is the strongest evidence, but a graph status set by a human counts
+        # too, so this is the same test the executive summary uses.
+        validation_state = "CONFIRMED" if is_confirmed(finding) else "UNVALIDATED"
         # Credentials and tokens are masked at capture time in the sandbox; the
         # block below is a second layer so nothing sensitive reaches a rendered
         # report even if a capture predates the redaction change.
@@ -258,7 +299,11 @@ class ReportGenerator:
                 attack_nodes.append(f"Endpoint: {target_details['properties'].get('url')}")
             if "Parameter" in target_details["labels"]:
                 attack_nodes.append(f"Parameter: {target_details['properties'].get('name')}")
-        attack_nodes.append(f"Finding: {title} ({severity})")
+        attack_nodes.append(
+            f"Finding: {title} ({severity})"
+            if validation_state == "CONFIRMED"
+            else f"Unvalidated hypothesis: {title} ({severity})"
+        )
         attack_graph_text = " -> ".join(attack_nodes)
         attack_graph = {
             "path_ascii": attack_graph_text,
@@ -315,6 +360,7 @@ class ReportGenerator:
             expected_result=expected_result,
             actual_result=actual_result,
             validation_stage=validation_stage,
+            validation_state=validation_state,
             discovery_metadata=discovery_metadata,
             risk_rating=risk_rating,
             timeline=timeline,
@@ -325,6 +371,7 @@ class ReportGenerator:
     async def generate_program_report(self, program_id: str) -> ProgramReport:
         program_data = await graph_db_client.get_program(program_id)
         findings_raw = await graph_db_client.get_findings_for_program(program_id)
+        coverage = await assessment_client.get_coverage(program_id)
 
         duplicates = [f for f in findings_raw if f.get("status") == "DUPLICATE"]
         false_positives = [f for f in findings_raw if f.get("status") == "FALSE_POSITIVE"]
@@ -342,32 +389,88 @@ class ReportGenerator:
         severity_order = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3, "Info": 4}
         findings.sort(key=lambda x: severity_order.get(x.severity, 5))
 
-        summary = f"{len(duplicates)} duplicate and {len(false_positives)} false-positive finding(s) excluded from this report."
+        # Confirmed and unvalidated findings are counted separately and never
+        # merged. Reporting an untested hypothesis in the same breath as a
+        # confirmed vulnerability is what produced a report claiming "23 active
+        # security issues" for a target that never resolved a DNS record.
+        confirmed = [f for f in findings if f.validation_state == "CONFIRMED"]
+        unvalidated = [f for f in findings if f.validation_state != "CONFIRMED"]
 
-        # Program Executive Summary
+        summary = (
+            f"{len(duplicates)} duplicate and {len(false_positives)} false-positive finding(s) "
+            f"excluded from this report. "
+            f"{len(confirmed)} confirmed, {len(unvalidated)} unvalidated."
+        )
+
+        # Program Executive Summary. Severity counts and the average score cover
+        # confirmed findings only; an unvalidated hypothesis has no basis for a
+        # severity claim and including it would inflate the numbers a triager
+        # reads first.
         severity_counts = {"Critical": 0, "High": 0, "Medium": 0, "Low": 0, "Info": 0}
+        unvalidated_counts = {"Critical": 0, "High": 0, "Medium": 0, "Low": 0, "Info": 0}
         total_score = 0.0
-        for f in findings:
+        for f in confirmed:
             severity_counts[f.severity] = severity_counts.get(f.severity, 0) + 1
             if f.risk_rating:
                 total_score += f.risk_rating.get("score", 0.0)
+        for f in unvalidated:
+            unvalidated_counts[f.severity] = unvalidated_counts.get(f.severity, 0) + 1
 
-        avg_score = round(total_score / len(findings), 1) if findings else 0.0
-        posture = "HIGH RISK / ACTION REQUIRED" if (severity_counts["Critical"] > 0 or severity_counts["High"] > 0) else "SECURE"
+        avg_score = round(total_score / len(confirmed), 1) if confirmed else None
+
+        # Posture describes what was established. "SECURE" is deliberately not
+        # reachable from a run that confirmed nothing: zero confirmations means
+        # the assessment established nothing about the target's security, which
+        # is not the same as the target being secure. Claiming SECURE off an
+        # empty confirmation set is the same class of error as claiming
+        # vulnerabilities off an unvalidated one.
+        if severity_counts["Critical"] or severity_counts["High"]:
+            posture = "HIGH RISK / ACTION REQUIRED"
+        elif confirmed:
+            posture = "ISSUES CONFIRMED"
+        elif unvalidated:
+            posture = "INCONCLUSIVE / NO CONFIRMED VULNERABILITIES"
+        else:
+            posture = "NO FINDINGS RECORDED"
+
+        if unvalidated:
+            assessment_comment = (
+                f"{len(confirmed)} confirmed vulnerability finding(s). "
+                f"A further {len(unvalidated)} item(s) are unvalidated hypotheses carried "
+                f"from automated reconnaissance: they were proposed but never confirmed "
+                f"against the target, and must not be submitted as vulnerabilities. "
+                f"{severity_counts['Critical']} critical and {severity_counts['High']} high "
+                f"severity confirmed findings require immediate remediation."
+            )
+        else:
+            assessment_comment = (
+                f"An automated security assessment confirmed {len(confirmed)} security "
+                f"issue(s). {severity_counts['Critical']} critical and "
+                f"{severity_counts['High']} high severity findings require immediate "
+                f"remediation."
+            )
 
         executive_summary = {
             "overall_posture": posture,
             "average_risk_score": avg_score,
             "severity_breakdown": severity_counts,
-            "assessment_comment": f"An automated security assessment identified {len(findings)} active security issues. {severity_counts['Critical']} critical and {severity_counts['High']} high severity findings require immediate remediation."
+            "unvalidated_severity_breakdown": unvalidated_counts,
+            "confirmed_count": len(confirmed),
+            "unvalidated_count": len(unvalidated),
+            "assessment_comment": assessment_comment,
         }
 
         # Program Validation Timeline
         program_timeline = []
         for f in findings:
+            is_confirmed_finding = f.validation_state == "CONFIRMED"
             program_timeline.append({
                 "timestamp": f.discovery_metadata.get("timestamp") or datetime.utcnow().isoformat(),
-                "event": f"Vulnerability found: {f.title} ({f.severity})"
+                "event": (
+                    f"Vulnerability confirmed: {f.title} ({f.severity})"
+                    if is_confirmed_finding
+                    else f"Unvalidated hypothesis recorded (not confirmed): {f.title} ({f.severity})"
+                )
             })
 
         all_audit_entries = await audit_client.get_audit_entries(program_id)
@@ -379,14 +482,15 @@ class ReportGenerator:
 
         program_timeline.sort(key=lambda x: x["timestamp"])
 
-        # Overall Attack Graph paths summary
+        # Overall Attack Graph paths summary. Only confirmed findings describe an
+        # attack path that was walked; an unvalidated hypothesis has no path yet.
         paths_ascii = []
-        for f in findings:
+        for f in confirmed:
             if f.attack_graph:
                 paths_ascii.append(f.attack_graph.get("path_ascii"))
 
         program_attack_graph = {
-            "total_attack_paths": len(findings),
+            "total_attack_paths": len(confirmed),
             "paths_summary": paths_ascii[:5]
         }
 
@@ -405,7 +509,8 @@ class ReportGenerator:
             executive_summary=executive_summary,
             timeline=program_timeline,
             attack_graph=program_attack_graph,
-            support_resources=program_support_resources
+            support_resources=program_support_resources,
+            coverage=coverage,
         )
 
 generator = ReportGenerator()

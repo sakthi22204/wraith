@@ -69,7 +69,16 @@ async def test_get_finding_report_markdown():
         response = client.get("/api/v1/reports/p1/findings/f1?format=markdown", headers=headers)
         assert response.status_code == 200
         assert response.headers["content-type"] == "text/markdown; charset=utf-8"
-        assert "# Finding: T" in response.text
+        # No validation_state means no confirmation evidence, so the heading must
+        # not read as a confirmed finding.
+        assert "# Unvalidated Hypothesis: T" in response.text
+        assert "# Finding: T" not in response.text
+
+        # The confirmed case still renders as a finding.
+        mock_gen.return_value = mock_gen.return_value.model_copy(update={"validation_state": "CONFIRMED"})
+        confirmed = client.get("/api/v1/reports/p1/findings/f1?format=markdown", headers=headers)
+        assert "# Finding: T" in confirmed.text
+        assert "# Unvalidated Hypothesis: T" not in confirmed.text
 
 @pytest.mark.asyncio
 async def test_get_program_report_pdf():

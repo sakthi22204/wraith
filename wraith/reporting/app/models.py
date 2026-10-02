@@ -21,6 +21,10 @@ class ReportFinding(BaseModel):
     expected_result: Optional[str] = None
     actual_result: Optional[str] = None
     validation_stage: Optional[str] = None
+    # CONFIRMED or UNVALIDATED. Set by the generator from the graph status and
+    # the presence of a real request/response exchange, so a consumer never has
+    # to re-derive it and cannot accidentally treat a hypothesis as a finding.
+    validation_state: Optional[str] = None
     discovery_metadata: dict # tool, timestamp, program
     risk_rating: Optional[dict] = None
     timeline: Optional[list] = []
@@ -36,6 +40,9 @@ class ProgramReport(BaseModel):
     timeline: Optional[list] = []
     attack_graph: Optional[dict] = None
     support_resources: Optional[list] = []
+    # What the assessment was able to look at. Optional because the assessment
+    # service may be unreachable; a report renders without it.
+    coverage: Optional[dict] = None
 
     @computed_field
     @property
