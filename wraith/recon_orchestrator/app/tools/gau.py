@@ -1,5 +1,5 @@
 from typing import List
-from .base import ReconTool
+from .base import ReconTool, host_from_domain, iter_url_lines
 from ..schemas import ToolResults, EndpointResult
 
 class GauTool(ReconTool):
@@ -11,16 +11,13 @@ class GauTool(ReconTool):
     def get_command(self, domain: str) -> List[str]:
         return [domain]
 
-    def parse_output(self, output: str) -> ToolResults:
+    def parse_output(self, output: str, domain: str = "") -> ToolResults:
         results = ToolResults()
-        for line in output.strip().split("\n"):
-            url = line.strip()
-            if url:
-                host = "unknown"
-                path = "/"
-                if "://" in url:
-                    parts = url.split("://")[1].split("/", 1)
-                    host = parts[0]
-                    path = "/" + parts[1] if len(parts) > 1 else "/"
-                results.endpoints.append(EndpointResult(host=host, url=path, method="GET", source_tool=self.name))
+        # Only lines that are actually URLs: gau's config warnings arrive on the
+        # same stream and are not endpoints.
+        for url in iter_url_lines(output):
+            # gau reports whole URLs; keeping them intact is what makes the
+            # endpoint attributable to a host downstream.
+            host = host_from_domain(url) or host_from_domain(domain) or "unknown"
+            results.endpoints.append(EndpointResult(host=host, url=url, method="GET", source_tool=self.name))
         return results

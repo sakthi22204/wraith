@@ -1,11 +1,15 @@
-from fastapi import APIRouter, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from typing import List, Optional
+from ..auth import require_admin_token
 from ..schemas import ReconRequest, ReconSessionStatus, ReconSessionResults
 from ..orchestrator import orchestrator
 
 router = APIRouter()
 
-@router.post("/start")
+# /start spawns tool containers on the host Docker socket and /cancel tears them
+# down. Both are mutating, so both require the admin token. The read routes stay
+# open because the frontend reads session status to render progress.
+@router.post("/start", dependencies=[Depends(require_admin_token)])
 async def start_recon(request: ReconRequest, response: Response):
     res = await orchestrator.start_session(request)
     if res.get("duplicate_of"):
@@ -67,7 +71,7 @@ async def get_results(session_id: str):
 
     return ReconSessionResults(session_id=session_id, results=results)
 
-@router.post("/{session_id}/cancel")
+@router.post("/{session_id}/cancel", dependencies=[Depends(require_admin_token)])
 async def cancel_recon(session_id: str):
     if session_id not in orchestrator.sessions:
         raise HTTPException(status_code=404, detail="Session not found")

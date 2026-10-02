@@ -37,7 +37,10 @@ class DummyTool(ReconTool):
     def get_command(self, domain):
         return ["-host", domain]
 
-    def parse_output(self, output):
+    def parse_output(self, output, domain=""):
+        # The domain is part of the parser contract: several tools report bare
+        # paths and cannot produce an addressable endpoint without it.
+        self.seen_domain = domain
         return ToolResults()
 
 
@@ -68,3 +71,17 @@ async def test_run_passes_none_extra_hosts_when_unresolvable(monkeypatch):
         "dummy:latest", ["-host", "does-not-resolve.invalid"],
         timeout=ANY, extra_hosts=None, environment=ANY, volumes=ANY,
     )
+
+
+@pytest.mark.asyncio
+async def test_run_hands_the_parser_the_domain_it_was_invoked_with():
+    """The tool's target is the only place a bare path can get its host.
+
+    Dropping it here silently removed every fuzzed/crawled path from the rest
+    of the pipeline, which is not something a per-tool unit test would catch.
+    """
+    tool = DummyTool()
+    with patch("app.tools.base.docker_spawner.spawn_container", new_callable=AsyncMock) as mock_spawn:
+        mock_spawn.return_value = ""
+        await tool.run("juice_shop:3000")
+    assert tool.seen_domain == "juice_shop:3000"

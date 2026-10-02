@@ -1,6 +1,7 @@
+import re
 import socket
 import ipaddress
-from abc import ABC, abstractmethod
+from abc import ABC
 from typing import List, Optional
 from ..schemas import ToolResults, HostResult, PortResult, EndpointResult
 from ..config import settings
@@ -17,6 +18,70 @@ def host_from_domain(domain: str) -> str:
     """Extract the bare hostname from a domain string (strip scheme, path, port)."""
     host = domain.split("://")[-1].split("/")[0]
     return host.split(":")[0] if ":" in host else host
+
+
+# A whole line that is nothing but an absolute http(s) URL. Quotes, spaces and
+# angle brackets are excluded because every logfmt diagnostic these tools emit
+# is `time=... level=... msg="..."`, and the msg values routinely contain both.
+_URL_LINE = re.compile(r"^https?://[^\s\"'<>]+$", re.IGNORECASE)
+
+
+def iter_url_lines(output: str):
+    """Yield only the lines of a tool's merged output that really are URLs.
+
+    Containers are spawned without separating stdout from stderr, so a tool's
+    progress and warnings arrive interleaved with its results. Treating every
+    non-empty line as a URL is how a gau config warning became a Host in the
+    graph (`time="2026-10-02T07;`) and then an endpoint built out of the middle
+    of that same warning.
+    """
+    for line in (output or "").splitlines():
+        candidate = line.strip()
+        if _URL_LINE.match(candidate):
+            yield candidate
+
+
+# The same discipline for tools that report a bare path (`/admin`) rather than a
+# whole URL. Here a result has to be the *entire* line, because the failure mode
+# is a path being mined out of the middle of a diagnostic: linkfinder's merged
+# stream carried `... Config file /root/.gau.toml not found`, and a substring
+# search turned that config path into an endpoint attributed to the target.
+_PATH_OR_URL_LINE = re.compile(
+    r"^(?:https?://[^\s\"'<>]+|/[\w\-./~%:@!$&()*+,;=?#]*)$",
+    re.IGNORECASE,
+)
+
+
+def iter_path_or_url_lines(output: str):
+    """Yield only the lines of a tool's output that are wholly a path or a URL."""
+    for line in (output or "").splitlines():
+        candidate = line.strip()
+        if candidate and _PATH_OR_URL_LINE.match(candidate):
+            yield candidate
+
+
+def absolute_url(path: str, domain: str) -> str:
+    """Qualify a discovered path with the target it was found on.
+
+    Most of these tools report what they matched as a path (``/login``) with the
+    host living only in the tool's invocation. The host is not a detail here:
+    ``EndpointResult.url`` is what the hypothesis generator, the graph and the
+    agent all treat as the endpoint's address, and a bare path is not a usable
+    one -- it cannot be scoped, probed, or attributed to a target. A tool that
+    drops the host silently drops the endpoint from the rest of the pipeline.
+    """
+    if not path:
+        return ""
+    if "://" in path:
+        return path
+    if not domain:
+        return path
+    if path.startswith("//"):
+        # Protocol-relative: keep it relative but re-anchor the authority.
+        return f"http:{path}"
+    if not path.startswith("/"):
+        path = f"/{path}"
+    return f"{target_url(domain).rstrip('/')}{path}"
 
 
 def resolve_extra_hosts(domain: str) -> Optional[dict]:
@@ -44,19 +109,33 @@ class ReconTool(ABC):
     # settings.CPU_QUOTA, so they declare a larger one here.
     timeout: Optional[int] = None
 
-    def __init__(self, name: str, image: str):
+    def __init__(self, name: str, image: Optional[str] = None):
         self.name = name
+        # None means "this tool does its work in this process instead of in a
+        # broker-spawned container". That is a deliberate exception to how every
+        # other tool runs, so it is opt-in per tool rather than a general
+        # capability: an in-process tool reaches the network directly and bypasses
+        # the broker's image allowlist, so only a tool that merely *parses* what
+        # the target already serves may use it. Such a tool must scope its own
+        # fetches -- see js_routes.JsRoutesTool for what that has to mean.
         self.image = image
 
-    @abstractmethod
     def get_command(self, domain: str) -> List[str]:
-        pass
+        raise NotImplementedError(
+            f"{self.name} is an in-process tool and has no container command"
+        )
 
-    @abstractmethod
-    def parse_output(self, output: str) -> ToolResults:
-        pass
+    def parse_output(self, output: str, domain: str = "") -> ToolResults:
+        raise NotImplementedError(f"{self.name} does not parse container output")
+
+    async def run_in_process(self, domain: str) -> ToolResults:
+        raise NotImplementedError(
+            f"{self.name} declares no image but implements no in-process run"
+        )
 
     async def run(self, domain: str) -> ToolResults:
+        if self.image is None:
+            return await self.run_in_process(domain)
         cmd = self.get_command(domain)
         merged_hosts = {}
         eh = resolve_extra_hosts(domain)
@@ -70,4 +149,4 @@ class ReconTool(ABC):
             environment=proxy_env(),
             volumes=proxy_volumes(),
         )
-        return self.parse_output(raw_output)
+        return self.parse_output(raw_output, domain)

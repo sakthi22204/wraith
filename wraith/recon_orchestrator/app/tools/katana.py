@@ -1,6 +1,6 @@
 import json
 from typing import List
-from .base import ReconTool, target_url
+from .base import ReconTool, target_url, absolute_url, host_from_domain
 from .proxy import add_proxy_flags
 from ..schemas import ToolResults, EndpointResult
 
@@ -26,7 +26,7 @@ class KatanaTool(ReconTool):
             "-proxy",
         )
 
-    def parse_output(self, output: str) -> ToolResults:
+    def parse_output(self, output: str, domain: str = "") -> ToolResults:
         results = ToolResults()
         for line in output.strip().split("\n"):
             if not line:
@@ -34,13 +34,14 @@ class KatanaTool(ReconTool):
             try:
                 data = json.loads(line)
                 request = data.get("request", {})
-                # katana outputs "endpoint" not "url"
-                url = request.get("endpoint") or request.get("url")
+                # katana outputs "endpoint" not "url", and it may be a path
+                # relative to the crawl root when the seed had no scheme.
+                url = absolute_url(
+                    request.get("endpoint") or request.get("url") or "", domain
+                )
                 method = request.get("method", "GET")
-                # host can be extracted from URL if needed
                 if url:
-                    from urllib.parse import urlparse
-                    host = urlparse(url).netloc
+                    host = host_from_domain(url) or host_from_domain(domain) or "unknown"
                     results.endpoints.append(EndpointResult(
                         host=host,
                         url=url,

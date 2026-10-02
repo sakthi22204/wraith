@@ -11,7 +11,7 @@ class CloudEnumTool(ReconTool):
         keyword = domain.split(".")[0]
         return ["-k", keyword]
 
-    def parse_output(self, output: str) -> ToolResults:
+    def parse_output(self, output: str, domain: str = "") -> ToolResults:
         results = ToolResults()
         for line in output.strip().split("\n"):
             if "OPEN" in line or "MUTATION" in line:

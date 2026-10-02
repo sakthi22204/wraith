@@ -38,6 +38,11 @@ class ToolResults(BaseModel):
     hosts: List[HostResult] = []
     ports: List[PortResult] = []
     endpoints: List[EndpointResult] = []
+    # Caveats about this tool's own output: what was filtered out and why.
+    # Without somewhere to put them, a parser that discards results has to do
+    # it silently, and "fuzzed, found nothing" is indistinguishable from
+    # "never ran".
+    notes: List[str] = []
 
 class ReconSessionStatus(BaseModel):
     session_id: str

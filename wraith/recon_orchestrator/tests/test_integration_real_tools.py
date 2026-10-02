@@ -79,14 +79,20 @@ def mock_target_server():
 async def test_ffuf_mock_flow():
     tool = FfufTool()
 
-    # Positive case
-    positive_output = '{"url": "http://localhost/api"}\n{"url": "http://localhost/admin"}'
+    # Positive case. ffuf echoes the URL it was invoked with, so a realistic
+    # mock reports the target rather than some other host.
+    positive_output = (
+        '{"url": "http://positive-target.com/api"}\n'
+        '{"url": "http://positive-target.com/admin"}'
+    )
     with patch("app.tools.base.docker_spawner.spawn_container", new_callable=AsyncMock) as mock_spawn:
         mock_spawn.return_value = positive_output
         res = await tool.run("positive-target.com")
         assert len(res.endpoints) == 2
-        assert res.endpoints[0].url == "/api"
-        assert res.endpoints[1].url == "/admin"
+        # Kept whole. Stripping to "/api" here is what made every fuzzed path
+        # unattributable to a target in the live run.
+        assert res.endpoints[0].url == "http://positive-target.com/api"
+        assert res.endpoints[1].url == "http://positive-target.com/admin"
 
     # Negative case
     negative_output = ""
@@ -101,12 +107,17 @@ async def test_kiterunner_mock_flow():
     tool = KiterunnerTool()
 
     # Positive case
-    positive_output = '{"path": "http://localhost/api/v1/users", "method": "GET"}\n{"path": "http://localhost/api/v2/items", "method": "POST"}'
+    positive_output = (
+        '{"path": "/api/v1/users", "method": "GET"}\n'
+        '{"path": "/api/v2/items", "method": "POST"}'
+    )
     with patch("app.tools.base.docker_spawner.spawn_container", new_callable=AsyncMock) as mock_spawn:
         mock_spawn.return_value = positive_output
         res = await tool.run("positive-target.com")
         assert len(res.endpoints) == 2
-        assert res.endpoints[0].url == "/api/v1/users"
+        # kiterunner reports paths relative to its scan root, so the target
+        # domain must be supplied for the result to be addressable at all.
+        assert res.endpoints[0].url == "http://positive-target.com/api/v1/users"
         assert res.endpoints[0].method == "GET"
 
     # Negative case
@@ -128,8 +139,8 @@ async def test_linkfinder_mock_flow():
         res = await tool.run("positive-target.com")
         assert len(res.endpoints) == 2
         urls = [e.url for e in res.endpoints]
-        assert "/api/v1/users" in urls
-        assert "/admin/config" in urls
+        assert "http://positive-target.com/api/v1/users" in urls
+        assert "http://positive-target.com/admin/config" in urls
 
     # Negative case
     negative_output = ""
@@ -143,20 +154,33 @@ async def test_linkfinder_mock_flow():
 async def test_secretfinder_mock_flow():
     tool = SecretfinderTool()
 
-    # Positive case
-    positive_output = "slack_token = 'xoxb-1234567890-abcdef'\n"
+    # Real `-o cli` shape: a block header naming the file, then tab-delimited
+    # findings under it. The old fixture was "slack_token = 'xoxb-...'", which is
+    # not what the tool emits -- it only passed because the parser keyword-
+    # matched, and it asserted the synthesised URL that parser invented.
+    positive_output = (
+        "[ + ] URL: http://positive-target.com/static/app.js\n"
+        "slack_token\t->\txoxb-1234567890-abcdef\n"
+    )
     with patch("app.tools.base.docker_spawner.spawn_container", new_callable=AsyncMock) as mock_spawn:
         mock_spawn.return_value = positive_output
         res = await tool.run("positive-target.com")
         assert len(res.endpoints) == 1
-        assert "secret-disclosure" in res.endpoints[0].url
+        assert res.endpoints[0].url == "http://positive-target.com/static/app.js"
+        assert "slack_token" in " ".join(res.notes)
+        assert "xoxb-1234567890-abcdef" not in " ".join(res.notes), (
+            "the secret value was persisted into the results"
+        )
 
-    # Negative case
-    negative_output = "console.log('clean');\n"
+    # A clean scan: the header is printed, nothing under it.
+    negative_output = (
+        "[ + ] URL: http://negative-target.com/static/app.js\n"
+    )
     with patch("app.tools.base.docker_spawner.spawn_container", new_callable=AsyncMock) as mock_spawn:
         mock_spawn.return_value = negative_output
         res = await tool.run("negative-target.com")
         assert len(res.endpoints) == 0
+        assert res.notes == []
 
 
 @pytest.mark.asyncio
@@ -169,7 +193,7 @@ async def test_gittools_mock_flow():
         mock_spawn.return_value = positive_output
         res = await tool.run("positive-target.com")
         assert len(res.endpoints) == 1
-        assert res.endpoints[0].url == "/.git/"
+        assert res.endpoints[0].url == "http://positive-target.com/.git/"
 
     # Negative case
     negative_output = "No exposed .git directories found.\n"
@@ -285,6 +309,6 @@ class TestRealDockerIntegration:
             remove=True
         )
         output = container.decode("utf-8")
-        res = tool.parse_output(output)
+        res = tool.parse_output(output, f"{host_ip}:{port}")
         assert len(res.endpoints) > 0
-        assert res.endpoints[0].url == "/.git/"
+        assert res.endpoints[0].url == f"http://{host_ip}:{port}/.git/"

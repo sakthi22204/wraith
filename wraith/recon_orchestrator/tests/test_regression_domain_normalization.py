@@ -32,14 +32,31 @@ async def test_regression_domain_normalization():
 
         session = orchestrator.sessions[session_id]
 
-        # Check that there is exactly ONE tool_statuses entry per tool
+        # Check there is exactly ONE tool_statuses entry per tool
         # e.g., "subfinder:chyowe.com", NOT "subfinder:https://chyowe.com"
         expected_keys = {f"{tool.name}:chyowe.com" for tool in orchestrator.tools}
         assert set(session.tool_statuses.keys()) == expected_keys
 
-        # Check all are completed (i.e., transitioned from PENDING -> RUNNING -> COMPLETED)
+        # chyowe.com is a real-world target, so the ROE guard keeps the
+        # aggressive scanners out of the base workflow. Passive tools run;
+        # aggressive ones are SKIPPED (not merely absent) so a conditional
+        # trigger cannot later resurrect them.
+        #
+        # Scoped to the base workflow on purpose: tools that are only ever run
+        # by a conditional trigger (nmap, ffuf, ...) are never scheduled here
+        # at all, and a legacy catch-all closes them out as COMPLETED.
+        base_tool_names = {
+            "subfinder", "naabu", "httpx", "katana",
+            "gau", "waybackurls", "cloud_enum",
+        }
         for key, status in session.tool_statuses.items():
-            assert status == ToolStatus.COMPLETED
+            tool_name = key.split(":")[0]
+            if tool_name not in base_tool_names:
+                continue
+            if tool_name in ReconOrchestrator.AGGRESSIVE_TOOLS:
+                assert status == ToolStatus.SKIPPED, f"{tool_name} should be ROE-skipped"
+            else:
+                assert status == ToolStatus.COMPLETED, f"{tool_name} should have run"
 
 
 @pytest.mark.asyncio

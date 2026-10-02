@@ -1,6 +1,6 @@
 import json
 from typing import List
-from .base import ReconTool
+from .base import ReconTool, host_from_domain
 from ..schemas import ToolResults, PortResult
 
 class NaabuTool(ReconTool):
@@ -11,7 +11,7 @@ class NaabuTool(ReconTool):
         # -host domain, -json output
         return ["-host", domain, "-json", "-silent"]
 
-    def parse_output(self, output: str) -> ToolResults:
+    def parse_output(self, output: str, domain: str = "") -> ToolResults:
         results = ToolResults()
         seen_ports = set()
         for line in output.strip().split("\n"):
@@ -19,8 +19,10 @@ class NaabuTool(ReconTool):
                 continue
             try:
                 data = json.loads(line)
-                host = data.get("host")
                 port = data.get("port")
+                # naabu reports the host it scanned; fall back to the target
+                # rather than emitting a port belonging to nobody.
+                host = data.get("host") or host_from_domain(domain)
                 if host and port:
                     port_key = (host.lower(), int(port))
                     if port_key in seen_ports:

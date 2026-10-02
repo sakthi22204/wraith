@@ -1,8 +1,10 @@
 import asyncio
 import ipaddress
+import re
 import uuid
 from datetime import datetime
 from typing import Dict, List
+from urllib.parse import urlparse
 from fastapi import HTTPException
 from .schemas import ReconRequest, ReconSessionStatus, ToolStatus, ToolResults, HostResult
 from .tools.subfinder import SubfinderTool
@@ -22,7 +24,24 @@ from .tools.trufflehog import TrufflehogTool
 from .tools.gittools import GittoolsTool
 from .tools.wpscan import WpscanTool
 from .tools.cloud_enum import CloudEnumTool
+from .tools.js_routes import JsRoutesTool
 from .graph_client import graph_client
+
+
+def _is_javascript_bundle(url: str) -> bool:
+    """Does this URL point at a JavaScript bundle?
+
+    Judged on the path, with the query string and fragment removed. Bundles are
+    routinely served cache-busted ("/main.js?v=2", "/app.4f3a.js"), so a whole-URL
+    suffix test misses them -- and a miss here is invisible, because the run
+    simply proceeds without reading the one file that would have revealed the
+    API surface.
+    """
+    try:
+        path = urlparse(url or "").path
+    except ValueError:
+        return False
+    return path.lower().endswith(".js")
 
 class ReconOrchestrator:
     # Tools that send high-rate / brute-force traffic or aggressive scans
@@ -59,6 +78,10 @@ class ReconOrchestrator:
         self.gittools = GittoolsTool()
         self.wpscan = WpscanTool()
         self.cloud_enum = CloudEnumTool()
+        # Not in self.tools: it has no place in the always-run base set, because
+        # it is only worth running once something has shown there is a JavaScript
+        # bundle to read. It is scheduled by the conditional trigger instead.
+        self.js_routes = JsRoutesTool()
 
         # Fully implemented real tools activated and wired up
         self.tools = [
@@ -282,11 +305,20 @@ class ReconOrchestrator:
         # 2. JavaScript found (Trigger LinkFinder and SecretFinder)
         js_detected = False
         for endpoint in results.endpoints:
-            if endpoint.url.lower().endswith(".js"):
+            # The path decides, not the whole URL. A bundle served as
+            # "/main.js?v=2" does not end in ".js", and real ones are
+            # versioned -- so a suffix test silently skipped the exact files
+            # worth reading while still passing a test that used a bare path.
+            if _is_javascript_bundle(endpoint.url):
                 js_detected = True
                 break
         if js_detected:
-            for tool in [self.linkfinder, self.secretfinder]:
+            # js_routes reads the bundle the target already serves. LinkFinder
+            # and SecretFinder read secrets and links; js_routes reads the route
+            # table, which is the one thing that shows up in a single-page app
+            # and nowhere else. Without it an SPA recon finds its own shell and
+            # static assets and never its API.
+            for tool in [self.linkfinder, self.secretfinder, self.js_routes]:
                 tool_key = f"{tool.name}:{domain}"
                 if tool_key not in queued_keys:
                     queued_keys.add(tool_key)
@@ -390,6 +422,14 @@ class ReconOrchestrator:
                     self.results[session_id].hosts.extend(results.hosts)
                     self.results[session_id].ports.extend(results.ports)
                     self.results[session_id].endpoints.extend(results.endpoints)
+                    for note in getattr(results, "notes", []) or []:
+                        # A parser that drops results has to say so, or
+                        # "fuzzed and found nothing" is indistinguishable from
+                        # "never ran".
+                        session.logs.append(
+                            f"[{datetime.utcnow().strftime('%H:%M:%S')}] "
+                            f"{tool.name} on {domain}: {note}"
+                        )
 
                     session.tool_statuses[tool_key] = ToolStatus.COMPLETED
                     success = True
@@ -452,8 +492,7 @@ class ReconOrchestrator:
 
     # Multi-part public suffixes (registrable domain = last two labels without
     # these). Keep the common ones so apex-vs-subdomain scope matching is safe.
-    MULTI_PART_SUFFIXES = {
-        "co.uk", "org.uk", "ac.uk", "gov.uk", "net.uk", "me.uk", "ltd.uk", "plc.uk",
+    MULTI_PART_SUFFIXES = {        "co.uk", "org.uk", "ac.uk", "gov.uk", "net.uk", "me.uk", "ltd.uk", "plc.uk",
         "com.au", "net.au", "org.au", "edu.au", "gov.au", "co.nz", "co.jp",
         "co.in", "net.in", "org.in", "com.br", "co.za", "com.cn", "com.hk",
         "com.tr", "com.my", "com.sg", "com.ph", "co.kr", "com.tw", "com.eg",
@@ -527,7 +566,8 @@ class ReconOrchestrator:
             )
             raise HTTPException(
                 status_code=400,
-                detail=f"Requested domains out of scope for program {request.investigation_id}: {', '.join(out_of_scope)}"
+                detail=f"Requested domains out of scope for program {request.investigation_id}: {', '.join(out_of_scope)}",
+                headers=out_of_scope_headers(out_of_scope),
             )
 
         # Check for existing running session for same investigation and exact domains
@@ -567,3 +607,26 @@ class ReconOrchestrator:
         return {"session_id": session_id}
 
 orchestrator = ReconOrchestrator()
+
+
+# The scope rejection's `detail` is a human sentence (it names the program id),
+# which is too coarse for the panel to display safely. This header carries the
+# rejected domains on their own so the UI can name them without re-parsing
+# prose, while `detail` stays byte-identical for logs and existing consumers.
+OUT_OF_SCOPE_HEADER = "X-Wraith-Out-Of-Scope"
+_SAFE_HOST_RE = re.compile(r"^[A-Za-z0-9._-]{1,253}$")
+_MAX_OUT_OF_SCOPE_HEADER_HOSTS = 10
+
+
+def out_of_scope_headers(domains: List[str]) -> Dict[str, str]:
+    """Build the machine-readable rejection header.
+
+    `domains` is raw client input, so only entries that are already bare
+    hostnames are forwarded; anything else (CRLF, spaces, ports, markup) is
+    dropped rather than escaped, since a partial list is still useful and an
+    injected header never is.
+    """
+    safe = [d.strip() for d in domains if _SAFE_HOST_RE.match(d.strip())]
+    if not safe:
+        return {}
+    return {OUT_OF_SCOPE_HEADER: ",".join(safe[:_MAX_OUT_OF_SCOPE_HEADER_HOSTS])}

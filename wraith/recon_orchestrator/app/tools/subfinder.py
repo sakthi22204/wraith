@@ -11,7 +11,7 @@ class SubfinderTool(ReconTool):
         # -d domain, -json output
         return ["-d", domain, "-json"]
 
-    def parse_output(self, output: str) -> ToolResults:
+    def parse_output(self, output: str, domain: str = "") -> ToolResults:
         results = ToolResults()
         for line in output.strip().split("\n"):
             if not line:

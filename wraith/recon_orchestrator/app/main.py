@@ -2,9 +2,14 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from .api.routes import router
 from .graph_client import graph_client
+from .config import settings, validate_startup_secrets
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Before anything is served. This service's POST /recon/start spawns tool
+    # containers on the host Docker socket, so a blank or published broker token
+    # is not a degraded mode, it is an open door. Refuse to come up instead.
+    validate_startup_secrets(settings)
     yield
     await graph_client.close()
 

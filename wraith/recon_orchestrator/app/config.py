@@ -1,10 +1,33 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Values that must never be accepted as a live secret, because they are already
+# published in docker-compose.yml and in this repository. A service that starts
+# on one of these is running with its primary control disabled.
+KNOWN_INSECURE_SECRETS = frozenset({
+    "",
+    "dev-recon-token",
+    "dev-exploit-token",
+    "dev-token-change-me",
+    "wraith-dev-gate-secret",
+    "password",
+    "changeme",
+    "change-me",
+    "secret",
+})
+
+# RECON_BROKER_TOKEN authorizes container creation on the host Docker socket;
+# ADMIN_API_TOKEN gates this service's own mutating routes.
+SECRET_FIELDS = ("RECON_BROKER_TOKEN", "ADMIN_API_TOKEN")
+
+
 class Settings(BaseSettings):
     GRAPH_DB_URL: str = "http://localhost:8001/api/v1"
     DOCKER_BROKER_URL: str = "http://localhost:8005/api/v1"
-    RECON_BROKER_TOKEN: str = "dev-recon-token"
-    ADMIN_API_TOKEN: str = "dev-token-change-me"
+    # No working defaults: both of these authorize something dangerous, and a
+    # value baked into the image is a published key rather than a credential.
+    # Unset is caught by validate_startup_secrets at startup.
+    RECON_BROKER_TOKEN: str = ""
+    ADMIN_API_TOKEN: str = ""
     RECON_DOCKER_NETWORK: str = "wraith_wraith_internal"
     TOOL_TIMEOUT: int = 300
 
@@ -23,5 +46,25 @@ class Settings(BaseSettings):
     CPU_QUOTA: int = 50000  # 0.5 CPU (assuming 100000 default period)
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+
+def validate_startup_secrets(settings) -> None:
+    """Refuse to start on a blank or well-known secret. Raises RuntimeError."""
+    problems = []
+    for field in SECRET_FIELDS:
+        value = (getattr(settings, field, "") or "").strip()
+        if not value:
+            problems.append(f"{field} is empty")
+        elif value in KNOWN_INSECURE_SECRETS:
+            problems.append(
+                f"{field} is set to a value published in this repository "
+                f"({value!r}); generate a real secret and inject it"
+            )
+    if problems:
+        raise RuntimeError(
+            "Refusing to start recon_orchestrator with insecure secrets: "
+            + "; ".join(problems)
+        )
+
 
 settings = Settings()
