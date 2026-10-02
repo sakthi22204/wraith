@@ -1,16 +1,25 @@
 #!/usr/bin/env python3
 """Wraith recon interception E2E — real sidecar, real orchestrator, two live merchants.
 Byte-identical-scope contract per merchant; every recon response shown verbatim IDs."""
-import json, time, sys, urllib.request, urllib.error
+import json, time, sys, os, urllib.request, urllib.error
 
 G = "http://localhost:8001/api/v1"   # graph_api
 O = "http://localhost:8002/api/v1"   # recon orchestrator
+
+# Every mutating route on graph_api and recon_orchestrator is guarded by
+# require_admin_token, so all of them need the bearer header.
+ADMIN_API_TOKEN = os.environ.get("ADMIN_API_TOKEN", "")
+if not ADMIN_API_TOKEN:
+    print("!! ADMIN_API_TOKEN is not set; POST /investigations and POST /recon/start will 401")
+    sys.exit(2)
 
 def req(method, url, body=None, timeout=25):
     data = None if body is None else json.dumps(body).encode()
     r = urllib.request.Request(url, data=data, method=method)
     if data is not None:
         r.add_header("Content-Type", "application/json")
+    if method in ("POST", "PUT", "PATCH", "DELETE"):
+        r.add_header("Authorization", f"Bearer {ADMIN_API_TOKEN}")
     try:
         with urllib.request.urlopen(r, timeout=timeout) as resp:
             raw = resp.read().decode()

@@ -6,10 +6,15 @@ services:
     networks:
       - wraith_internal
     ports:
-      - "7474:7474"
-      - "7687:7687"
+      # Loopback only. Bolt (7687) is a full query channel, not a read-only
+      # one: reaching it means being able to rewrite the findings, reviews and
+      # corroboration that the rest of the system treats as evidence. The
+      # browser does not need it -- the panel talks to graph_api on 8001 -- so
+      # publishing it on the host only widened the attack surface.
+      - "127.0.0.1:7474:7474"
+      - "127.0.0.1:7687:7687"
     environment:
-      - NEO4J_AUTH=neo4j/password
+      - NEO4J_AUTH=neo4j/${NEO4J_PASSWORD:?NEO4J_PASSWORD must be set; generate one, do not reuse a published default}
       - NEO4J_PLUGINS=["apoc"]
       - NEO4J_dbms_security_procedures_unrestricted=apoc.*
     volumes:
@@ -27,13 +32,17 @@ services:
     networks:
       - wraith_internal
     ports:
-      - "8001:8001"
+      # Loopback only. This API writes the audit record -- findings, review
+      # decisions, corroboration -- and the panel used to reach it straight from
+      # the browser, so it was reachable from the whole network. Writes are now
+      # token-guarded; the binding removes the reachability.
+      - "127.0.0.1:8001:8001"
     environment:
       - NEO4J_URI=bolt://graph_db:7687
       - NEO4J_USER=neo4j
-      - NEO4J_PASSWORD=password
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD:?NEO4J_PASSWORD must be set; generate one, do not reuse a published default}
       - NEO4J_DATABASE=neo4j
-      - ADMIN_API_TOKEN=${ADMIN_API_TOKEN:-dev-token-change-me}
+      - ADMIN_API_TOKEN=${ADMIN_API_TOKEN:?ADMIN_API_TOKEN must be set; generate one, do not reuse a published default}
     depends_on:
       graph_db:
         condition: service_healthy
@@ -53,8 +62,8 @@ services:
     environment:
       - GRAPH_DB_URL=http://graph_api:8001/api/v1
       - DOCKER_BROKER_URL=http://docker_broker:8005/api/v1
-      - RECON_BROKER_TOKEN=${RECON_BROKER_TOKEN:-dev-recon-token}
-      - ADMIN_API_TOKEN=${ADMIN_API_TOKEN:-dev-token-change-me}
+      - RECON_BROKER_TOKEN=${RECON_BROKER_TOKEN:?RECON_BROKER_TOKEN must be set; it authorizes host-socket container creation}
+      - ADMIN_API_TOKEN=${ADMIN_API_TOKEN:?ADMIN_API_TOKEN must be set; generate one, do not reuse a published default}
       - RECON_DOCKER_NETWORK=${RECON_DOCKER_NETWORK:-wraith_wraith_internal}
       # Optional egress interception. Leave empty (default) to run all recon
       # tools unproxied — behaviour is byte-identical. When set to the proxy
@@ -91,7 +100,7 @@ services:
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://ollama:11434}
       - MCP_SERVER_URLS=["http://kali_sandbox:8000/sse"]
-      - ADMIN_API_TOKEN=${ADMIN_API_TOKEN:-dev-token-change-me}
+      - ADMIN_API_TOKEN=${ADMIN_API_TOKEN:?ADMIN_API_TOKEN must be set; generate one, do not reuse a published default}
     networks:
       - wraith_internal
     depends_on:
@@ -118,17 +127,27 @@ services:
     build:
       context: ./active_exploit_runner
     ports:
-      - "8004:8004"
+      # Loopback only. This service executes approved exploits and serves audit
+      # history, and an unqualified "8004:8004" publishes it on every interface
+      # -- 0.0.0.0 and [::] -- so anything that could route to the host reached
+      # the execute endpoint and the unauthenticated audit/scope/proposal reads.
+      # The browser cannot present ADMIN_API_TOKEN, so the operator-facing proxy
+      # routes in frontend/src/app/api cannot authenticate inbound themselves;
+      # the network layer is the control they actually rely on, and this makes
+      # it true. Server-side callers are unaffected: they use the container DNS
+      # name (EXPLOIT_RUNNER_URL=http://active_exploit_runner:8004), which
+      # traverses the wraith_internal bridge and never touches this mapping.
+      - "127.0.0.1:8004:8004"
     environment:
       - DATABASE_URL=postgresql://wraith:password@postgres:5432/wraith_audit
       - REDIS_URL=redis://redis:6379/0
       - KALI_SANDBOX_URL=http://kali_sandbox:8000
       - GRAPH_DB_URL=http://graph_api:8001
-      - ADMIN_API_TOKEN=${ADMIN_API_TOKEN:-dev-token-change-me}
-      - EXPLOIT_RUNNER_BROKER_TOKEN=${EXPLOIT_RUNNER_BROKER_TOKEN:-dev-exploit-token}
+      - ADMIN_API_TOKEN=${ADMIN_API_TOKEN:?ADMIN_API_TOKEN must be set; generate one, do not reuse a published default}
+      - EXPLOIT_RUNNER_BROKER_TOKEN=${EXPLOIT_RUNNER_BROKER_TOKEN:?EXPLOIT_RUNNER_BROKER_TOKEN must be set; it authorizes host-socket container creation}
       # Shared with kali_sandbox. The runner signs each approved request with
       # it; the sandbox refuses anything without a valid signature.
-      - WRAITH_GATE_SECRET=${WRAITH_GATE_SECRET:-wraith-dev-gate-secret}
+      - WRAITH_GATE_SECRET=${WRAITH_GATE_SECRET:?WRAITH_GATE_SECRET must be set; it signs the grants the sandbox trusts as proof of scoping}
     networks:
       - wraith_internal
     depends_on:
@@ -181,15 +200,17 @@ services:
   docker_broker:
     build:
       context: ./docker_broker
-    ports:
-      - "8005:8005"
+    # Deliberately not published to the host. This service mounts the host
+    # Docker socket, so reaching it from outside the compose network is
+    # equivalent to root on the host. Only the orchestrator and the runner,
+    # both on wraith_internal, need to call it.
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - wraith_internal
     environment:
-      - RECON_BROKER_TOKEN=${RECON_BROKER_TOKEN:-dev-recon-token}
-      - EXPLOIT_RUNNER_BROKER_TOKEN=${EXPLOIT_RUNNER_BROKER_TOKEN:-dev-exploit-token}
+      - RECON_BROKER_TOKEN=${RECON_BROKER_TOKEN:?RECON_BROKER_TOKEN must be set; it authorizes host-socket container creation}
+      - EXPLOIT_RUNNER_BROKER_TOKEN=${EXPLOIT_RUNNER_BROKER_TOKEN:?EXPLOIT_RUNNER_BROKER_TOKEN must be set; it authorizes host-socket container creation}
       - RECON_DOCKER_NETWORK=${RECON_DOCKER_NETWORK:-wraith_wraith_internal}
     restart: unless-stopped
     healthcheck:
@@ -206,7 +227,7 @@ services:
       - MSF_DATABASE_CONFIG=/opt/msf/config/database.yml
       # The sandbox verifies the runner's grant signature, and independently
       # re-reads the killswitch and scope rules before it sends anything.
-      - WRAITH_GATE_SECRET=${WRAITH_GATE_SECRET:-wraith-dev-gate-secret}
+      - WRAITH_GATE_SECRET=${WRAITH_GATE_SECRET:?WRAITH_GATE_SECRET must be set; it signs the grants the sandbox trusts as proof of scoping}
       - REDIS_URL=redis://redis:6379/0
       - DATABASE_URL=postgresql://wraith:password@postgres:5432/wraith_audit
     networks:
@@ -254,7 +275,7 @@ services:
     environment:
       - GRAPH_DB_URL=http://graph_api:8001/api/v1
       - ACTIVE_EXPLOIT_RUNNER_URL=http://active_exploit_runner:8004/api/v1
-      - ADMIN_API_TOKEN=${ADMIN_API_TOKEN:-dev-token-change-me}
+      - ADMIN_API_TOKEN=${ADMIN_API_TOKEN:?ADMIN_API_TOKEN must be set; generate one, do not reuse a published default}
     networks:
       - wraith_internal
     depends_on:
@@ -269,7 +290,7 @@ services:
       - "8007:8007"
     environment:
       - GRAPH_DB_URL=http://graph_api:8001/api/v1
-      - ADMIN_API_TOKEN=${ADMIN_API_TOKEN:-dev-token-change-me}
+      - ADMIN_API_TOKEN=${ADMIN_API_TOKEN:?ADMIN_API_TOKEN must be set; generate one, do not reuse a published default}
     networks:
       - wraith_internal
     depends_on:
@@ -288,12 +309,18 @@ services:
         - NEXT_PUBLIC_REPORTING_URL=http://localhost:8006
         - NEXT_PUBLIC_ASSESSMENT_URL=http://localhost:8007
     environment:
-      - ADMIN_API_TOKEN=${ADMIN_API_TOKEN:-dev-token-change-me}
+      - ADMIN_API_TOKEN=${ADMIN_API_TOKEN:?ADMIN_API_TOKEN must be set; generate one, do not reuse a published default}
       - GRAPH_DB_URL=http://graph_api:8001/api/v1
       - EXPLOIT_RUNNER_URL=http://active_exploit_runner:8004/api/v1
       - REPORTING_URL=http://reporting:8006/api/v1
+      - ASSESSMENT_SERVICE_URL=http://assessment_service:8007/api/v1
     ports:
-      - "3000:3000"
+      # Loopback only. This panel has no login of its own, so binding it to every
+      # interface exposed the operator's admin token to the whole network. The
+      # mutating proxy routes now require that token as well, so reaching the
+      # panel is not the same as being authorised -- but it should not be
+      # reachable from off-host in the first place.
+      - "127.0.0.1:3000:3000"
     networks:
       - wraith_internal
     depends_on:

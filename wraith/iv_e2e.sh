@@ -4,13 +4,17 @@ cd /home/sakthi/projects/wraith/wraith
 G=http://localhost:8001/api/v1
 O=http://localhost:8002/api/v1
 
+# POST /investigations and POST /recon/start are both token-guarded.
+: "${ADMIN_API_TOKEN:?ADMIN_API_TOKEN must be set; guarded routes will 401 without it}"
+AUTH=(-H "Authorization: Bearer $ADMIN_API_TOKEN")
+
 echo "=== [0] which tool names does the orchestrator registry accept? (runtime source) ==="
 timeout 15 grep -nE "KatanaTool|HttpxProbeTool|register|TOOL|name=" recon_orchestrator/app/orchestrator.py recon_orchestrator/app/tools/__init__.py 2>/dev/null | grep -iE "\"[a-z_]+tool\"" | head
 
 echo
 echo "=== [1] create Investigation: flipkart.com + myntra.com in scope ==="
 INV=$(timeout 25 curl -sS -m 20 -X POST "$G/investigations" \
-  -H "Content-Type: application/json" \
+  -H "Content-Type: application/json" "${AUTH[@]}" \
   -d '{"name": "FlipkartMyntra E2E", "target": "flipkart.com,myntra.com", "platform": "automatic", "scope_domains": ["flipkart.com", "myntra.com"]}' \
   -w "\n###HTTP=%{http_code}")
 echo "$INV"
@@ -24,7 +28,7 @@ timeout 20 curl -sS -m 15 "$G/investigations/$INV_ID" | timeout 15 sed -E "s/sco
 echo
 echo "=== [3] fire the real scan through the proxy sidecar (tools: katana + httpx_probe) ==="
 timeout 35 curl -sS -m 30 -X POST "$O/recon/start" \
-  -H "Content-Type: application/json" \
+  -H "Content-Type: application/json" "${AUTH[@]}" \
   -d "{\"investigation_id\": \"$INV_ID\", \"domains\": [\"www.flipkart.com\", \"www.myntra.com\"], \"tools\": [\"katana\", \"httpx_probe\"]}" \
   -w "\n###HTTP=%{http_code}\n" | tail -4
 

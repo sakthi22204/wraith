@@ -4,13 +4,17 @@ cd /home/sakthi/projects/wraith/wraith
 G=http://localhost:8001/api/v1
 O=http://localhost:8002/api/v1
 
+# POST /investigations and POST /recon/start are both token-guarded.
+: "${ADMIN_API_TOKEN:?ADMIN_API_TOKEN must be set; guarded routes will 401 without it}"
+AUTH=(-H "Authorization: Bearer $ADMIN_API_TOKEN")
+
 refresh_scan() {
   # $1=inv_id  $2=merchant-label  $3==domain
   local inv="$1" label="$2" dom="$3"
   echo
   echo "======== [scan $label] POST $O/recon/start  investigation_id=$inv  domain=$dom ========"
   RESP=$(timeout 40 curl -sS -m 35 -X POST "$O/recon/start" \
-    -H "Content-Type: application/json" \
+    -H "Content-Type: application/json" \ "${AUTH[@]}" \
     -d "{\"investigation_id\": \"$inv\", \"domains\": [\"$dom\"], \"tools\": [\"katana\"]}")
   echo "  orchestration session: $(printf "%s" "$RESP" | timeout 12 grep -oE "\"investigation_id\" *: *\"[^\"]*\"|HTTP [0-9]{3}" | head -2)"
   SID=$(printf "%s" "$RESP" | timeout 12 sed -nE "s/.*\"id\" *: *\"([^\"]+)\".*/\1/p" | head -1)
@@ -19,7 +23,7 @@ refresh_scan() {
 
 echo "=== [A] create FLIPKART investigation (exact single scope: flipkart.com) ==="
 FK=$(timeout 25 curl -sS -m 20 -X POST "$G/investigations" \
-  -H "Content-Type: application/json" \
+  -H "Content-Type: application/json" \ "${AUTH[@]}" \
   -d '{"name": "Flipkart Proxy-E2E", "target": "flipkart.com", "platform": "automatic", "scope_domains": ["flipkart.com"]}')
 FK_ID=$(printf "%s" "$FK" | timeout 12 sed -nE "s/.*\"id\" *: *\"([^\"]+)\".*/\1/p" | head -1)
 echo "  flipkart investigation_id=$FK_ID"
@@ -28,7 +32,7 @@ echo "  flipkart investigation_id=$FK_ID"
 echo
 echo "=== [B] create MYNTRA investigation (exact single scope: myntra.com) ==="
 MY=$(timeout 25 curl -sS -m 20 -X POST "$G/investigations" \
-  -H "Content-Type: application/json" \
+  -H "Content-Type: application/json" \ "${AUTH[@]}" \
   -d '{"name": "Myntra Proxy-E2E", "target": "myntra.com", "platform": "automatic", "scope_domains": ["myntra.com"]}')
 MY_ID=$(printf "%s" "$MY" | timeout 12 sed -nE "s/.*\"id\" *: *\"([^\"]+)\".*/\1/p" | head -1)
 echo "  myntra investigation_id=$MY_ID"

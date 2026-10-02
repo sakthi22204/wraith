@@ -13,6 +13,43 @@ services:
       - ./active_exploit_runner/app:/app/app
       - ./active_exploit_runner/tests:/app/tests
       - ./active_exploit_runner/scripts:/app/scripts
+      # Read-only, and only so a test can assert the runner's sweep ceilings
+      # match the sandbox's. The two services are separate images and the
+      # sandbox's module needs the MCP SDK, so the check reads the source
+      # rather than importing it.
+      - ./kali_sandbox/mcp_servers:/app/kali_sandbox/mcp_servers:ro
+
+  exploit_agent:
+    volumes:
+      - ./exploit_agent/app:/app/app
+      - ./exploit_agent/tests:/app/tests
+
+  recon_orchestrator:
+    volumes:
+      - ./recon_orchestrator/app:/app/app
+      - ./recon_orchestrator/tests:/app/tests
+
+  assessment_service:
+    volumes:
+      - ./assessment_service/app:/app/app
+      - ./assessment_service/tests:/app/tests
+
+  # The reporting image bakes /app too, and its template is part of what these
+  # tests exercise. Without the mount, a test here would assert against the
+  # template as it was at build time and pass while the working tree said
+  # something else.
+    # The graph API is the trust boundary for finding status and now for
+  # severity, so its adjudication code is exactly the kind of thing a test must
+  # exercise against the working tree rather than the image it was built from.
+  graph_api:
+    volumes:
+      - ./graph_db/app:/app/app
+      - ./graph_db/tests:/app/tests
+
+  reporting:
+    volumes:
+      - ./reporting/app:/app/app
+      - ./reporting/tests:/app/tests
 
   kali_sandbox:
     volumes:

@@ -7,3 +7,15 @@ venv/
 .env
 .pytest_cache/
 node_modules/
+
+# Local scratch state. `.inv_id` and the sqlite files are written by test runs
+# and e2e scripts into the repo root, where they get picked up as untracked
+# noise on every run.
+.inv_id
+*.db
+wraith-logs.txt
+
+# The corporate TLS-inspection root this network MITMs with. It is specific to
+# one machine and must not be published; ollama/Dockerfile expects it to be
+# supplied locally.
+ollama/certs/

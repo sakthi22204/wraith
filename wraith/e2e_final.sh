@@ -3,9 +3,13 @@ set -u
 G=http://localhost:8001/api/v1
 O=http://localhost:8002/api/v1
 
+# POST /investigations is token-guarded.
+: "${ADMIN_API_TOKEN:?ADMIN_API_TOKEN must be set; guarded routes will 401 without it}"
+AUTH=(-H "Authorization: Bearer $ADMIN_API_TOKEN")
+
 echo "=== [1] create FLIPKART investigation (exact scope: flipkart.com) ==="
 FK=$(timeout 25 curl -sS -m 20 -X POST "$G/investigations" \
-  -H "Content-Type: application/json" \
+  -H "Content-Type: application/json" "${AUTH[@]}" \
   -d '{"name": "Flipkart Proxy-E2E", "target": "flipkart.com", "platform": "automatic", "scope_domains": ["flipkart.com"]}')
 printf "%s" "$FK" | timeout 10 sed -E "s/\"id\": \"([^\"]+)\"/\"id\": \"\1\"/" | head -c 200
 echo
