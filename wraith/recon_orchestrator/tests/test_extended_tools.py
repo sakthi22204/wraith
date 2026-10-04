@@ -120,12 +120,25 @@ def test_secretfinder_parser():
     assert "xoxb-1234567890-abcdef" not in " ".join(res.notes)
 
 def test_trufflehog_parser():
+    """A human-readable line is not a detection, and must not become a URL.
+
+    This test used to assert the opposite: it fed the string "Found private key
+    leak in commit 123456" and required a synthesised
+    http://example.com/trufflehog-finding. That URL does not exist. It was
+    persisted as a recon asset and later proposed as a validation candidate, so
+    a finding could have been reported against a route this pipeline invented.
+    """
     tool = TrufflehogTool()
-    output = 'Found private key leak in commit 123456'
-    res = tool.parse_output(output, "example.com")
-    assert len(res.endpoints) == 1
-    assert "trufflehog-finding" in res.endpoints[0].url
-    assert res.endpoints[0].url.startswith("http://example.com/")
+    res = tool.parse_output("Found private key leak in commit 123456", "example.com")
+    assert res.endpoints == []
+    assert any("no endpoint was synthesised" in n for n in res.notes)
+
+    # A real detection is only an endpoint when the result carries a real URL.
+    res = tool.parse_output(
+        '{"SourceMetadata":{"Data":{"HTTP":{"URL":"https://example.com/.env"}}}'
+        ',"DetectorName":"PrivateKey","Verified":true,"Raw":"x"}',
+        "example.com")
+    assert [e.url for e in res.endpoints] == ["https://example.com/.env"]
 
 def test_gittools_parser():
     tool = GittoolsTool()

@@ -203,9 +203,49 @@ class TestToolsKeepTheHost:
         assert results.endpoints == []
         assert results.notes == []
 
-    def test_trufflehog_attributes_its_marker(self):
-        results = TrufflehogTool().parse_output("secret leak detected\n", TARGET)
-        assert results.endpoints[0].url == f"http://{TARGET}/trufflehog-finding"
+    def test_trufflehog_never_synthesises_a_url(self):
+        """A banner line is not a detection, and a detection has no invented URL.
+
+        The old parser substring-matched "found"/"leak"/"secret" anywhere in a
+        line and emitted http://<domain>/trufflehog-finding for each hit. Those
+        URLs do not exist, but they were persisted as assets and later proposed
+        as validation candidates, so a finding could rest on a fabricated route.
+        """
+        results = TrufflehogTool().parse_output(
+            "## Found 2 secret(s) in git http://juice_shop:3000\n"
+            "Secret found in file config.py line 12\n",
+            TARGET,
+        )
+        assert results.endpoints == []
+        assert any("no endpoint was synthesised" in n for n in results.notes)
+
+    def test_trufflehog_records_a_real_location_from_metadata_only(self):
+        results = TrufflehogTool().parse_output(
+            json.dumps({
+                "SourceMetadata": {"Data": {"HTTP": {"URL": "https://api.toom.de/.env"}}},
+                "DetectorName": "PrivateKey",
+                "Verified": True,
+                "Raw": "-----BEGIN PRIVATE KEY-----",
+            }),
+            TARGET,
+        )
+        assert [e.url for e in results.endpoints] == ["https://api.toom.de/.env"]
+        assert results.endpoints[0].source_tool == "trufflehog"
+
+    def test_trufflehog_never_persists_raw_secret_material(self):
+        secret = "AKIAIOSFODNN7EXAMPLEKEY"
+        results = TrufflehogTool().parse_output(
+            json.dumps({
+                "SourceMetadata": {"Data": {"Git": {"repository": "r", "file": "c.py"}}},
+                "DetectorName": "AWS",
+                "Verified": False,
+                "Raw": secret,
+            }),
+            TARGET,
+        )
+        assert secret not in json.dumps(results.model_dump())
+        assert any("detector=AWS verified=false" in n for n in results.notes)
+        assert any("2 verified and 1 unverified" not in n for n in results.notes)
 
     def test_wpscan_attributes_plugins_and_themes(self):
         output = json.dumps({"plugins": {"akismet": {}}, "themes": {"twentytwenty": {}}})
@@ -239,7 +279,9 @@ class TestNoEndpointLacksAHost:
         (GittoolsTool(), "exposed"),
         (LinkfinderTool(), "/x"),
         (SecretfinderTool(), f"[ + ] URL: http://{TARGET}/static/app.js\ngoogle_api\t->\tAIza1\n"),
-        (TrufflehogTool(), "found"),
+        (TrufflehogTool(), json.dumps({
+            "SourceMetadata": {"Data": {"HTTP": {"URL": "https://t.test/.env"}}},
+            "DetectorName": "PrivateKey", "Verified": True, "Raw": "x"})),
         (WpscanTool(), json.dumps({"plugins": {"p": {}}})),
     ]
 
