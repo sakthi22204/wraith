@@ -353,7 +353,7 @@ class ReconOrchestrator:
                 task_launch = asyncio.create_task(launch_tool(self.dnsx, domain))
                 running_tasks.append(task_launch)
 
-        # 5. Discovered open ports (Trigger Nmap and tlsx)
+        # 5. Discovered open ports (Trigger Nmap, tlsx and port-scoped HTTpx)
         if completed_tool.name == "naabu" and results.ports and not remote:
             # Trigger Nmap
             nmap_key = f"nmap:{domain}"
@@ -362,6 +362,36 @@ class ReconOrchestrator:
                 session.tool_statuses[nmap_key] = ToolStatus.WAITING
                 session.logs.append(f"[{datetime.utcnow().strftime('%H:%M:%S')}] Open ports discovered. Scheduling Nmap scan.")
                 task_launch = asyncio.create_task(launch_tool(self.nmap, domain))
+                running_tasks.append(task_launch)
+
+            # Trigger HTTpx against the ports naabu actually found.
+            #
+            # httpx ran concurrently with naabu, on the bare host, so it probed
+            # port 80/443 and nothing else. A service on 3000 (or 8000, or 9200)
+            # was invisible to it, and because httpx exits 0 when it reaches
+            # nothing the run was logged as "completed successfully" with zero
+            # endpoints -- so every downstream trigger that keys off httpx
+            # (katana, ffuf, linkfinder, kiterunner) never fired either. The
+            # whole HTTP half of recon was silently blind to non-default ports.
+            #
+            # The port list is naabu's, so this cannot widen the scan beyond
+            # what the port scan already touched; it only re-aims the probe.
+            http_ports = sorted({
+                p.number for p in results.ports
+                if p.state == "open" and p.protocol == "tcp"
+            })
+            for port in http_ports:
+                port_target = f"{domain}:{port}"
+                port_key = f"httpx:{port_target}"
+                if port_key in queued_keys:
+                    continue
+                queued_keys.add(port_key)
+                session.tool_statuses[port_key] = ToolStatus.WAITING
+                session.logs.append(
+                    f"[{datetime.utcnow().strftime('%H:%M:%S')}] "
+                    f"Open port {port} on {domain}. Scheduling httpx on {port_target}."
+                )
+                task_launch = asyncio.create_task(launch_tool(self.httpx_probe, port_target))
                 running_tasks.append(task_launch)
 
             # Trigger tlsx on TLS ports
