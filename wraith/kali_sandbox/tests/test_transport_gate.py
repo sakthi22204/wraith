@@ -63,6 +63,7 @@ _DISPATCHABLE_BODIES = {
     "http_probe_diff": {"url": "http://127.0.0.1/a", "variants": [{"url": "http://127.0.0.1/b"}]},
     "http_probe_race": {"url": "http://127.0.0.1/"},
     "http_probe_threshold": {"url": "http://127.0.0.1/", "count": 2},
+    "http_probe_timing": {"url": "http://127.0.0.1/"},
     "http_probe_smuggle": {"url": "http://127.0.0.1/"},
     "http_probe_websocket_auth": {"url": "http://127.0.0.1/"},
 }
@@ -88,6 +89,7 @@ _PROVIDER_FOR_TOOL = {
     "http_probe_diff": "http_probe_server",
     "http_probe_race": "http_probe_server",
     "http_probe_threshold": "http_probe_server",
+    "http_probe_timing": "http_probe_server",
     "http_probe_smuggle": "http_probe_server",
     "http_probe_websocket_auth": "http_probe_server",
 }

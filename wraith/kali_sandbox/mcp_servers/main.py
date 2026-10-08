@@ -38,6 +38,8 @@ DANGEROUS_TOOLS = {"run_hydra", "run_msf_module"}
 # sends traffic is ever added without being gated.
 GATED_NETWORK_TOOLS = {
     "http_probe", "http_probe_diff", "http_probe_race", "http_probe_threshold",
+    # Timing harness (median-of-N)
+    "http_probe_timing",
     # Both of these open a raw socket and speak a protocol of their own rather
     # than following the URL, so the grant's host:port binding is what stops
     # them. Gating them is not optional for the same reason as the others: the
@@ -136,8 +138,8 @@ def _destination_of(tool_name: str, body: dict) -> tuple[list[str], Optional[str
     port_claim = None
 
     if tool_name in {"http_probe", "http_probe_diff", "http_probe_race",
-                     "http_probe_threshold", "http_probe_smuggle",
-                     "http_probe_websocket_auth"}:
+                     "http_probe_threshold", "http_probe_timing",
+                     "http_probe_smuggle", "http_probe_websocket_auth"}:
         if body.get("url"):
             targets.append(str(body["url"]))
         # Every variant is a separate request to a possibly separate host, so each
@@ -505,6 +507,29 @@ async def http_probe_race(
         "count": count, "identities": identities, "identity": identity,
         "caller": caller,
     }))
+
+@mcp.tool()
+async def http_probe_timing(
+    url: str,
+    method: str = "GET",
+    headers: Optional[dict] = None,
+    body=None,
+    timeout: float = 20.0,
+    follow_redirects: bool = False,
+    repeats: int = 3,
+    interval: float = 0.0,
+    identities: Optional[list] = None,
+    identity: Optional[str] = None,
+):
+    """Send one request repeatedly and return median elapsed_ms."""
+    caller = get_caller()
+    return unwrap_inner(await http_probe_server.mcp.call_tool("http_probe_timing", {
+        "url": url, "method": method, "headers": headers, "body": body,
+        "timeout": timeout, "follow_redirects": follow_redirects, "repeats": repeats,
+        "interval": interval, "identities": identities, "identity": identity,
+        "caller": caller,
+    }))
+
 
 @mcp.tool()
 async def http_probe_threshold(

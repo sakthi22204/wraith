@@ -13,6 +13,8 @@ import pytest
 from mcp_servers.http_probe_server import (
     MAX_RACE_REQUESTS,
     MAX_THRESHOLD_REQUESTS,
+    MAX_TIMING_REPEATS,
+    MIN_TIMING_REPEATS,
     HttpProbeServer,
 )
 
@@ -353,3 +355,41 @@ class TestRejectedArgumentReporting:
             "Error executing tool x: httpx.ReadTimeout",
         ):
             assert _is_rejected_argument(detail) is False, detail
+
+
+class TestTimingBounds:
+    def test_requires_at_least_two_repeats(self):
+        with pytest.raises(ValueError, match="at least 2"):
+            srv._validate_timing_repeats(1)
+
+    def test_caps_the_repeats(self):
+        with pytest.raises(ValueError, match="at most"):
+            srv._validate_timing_repeats(MAX_TIMING_REPEATS + 1)
+
+    def test_rejects_non_integer_counts(self):
+        with pytest.raises(ValueError, match="integer"):
+            srv._validate_timing_repeats("3")
+
+    def test_rejects_boolean_counts(self):
+        with pytest.raises(ValueError, match="integer"):
+            srv._validate_timing_repeats(True)
+
+    def test_accepts_the_documented_range(self):
+        assert srv._validate_timing_repeats(3) == 3
+        assert srv._validate_timing_repeats(MAX_TIMING_REPEATS) == MAX_TIMING_REPEATS
+
+
+@pytest.mark.integration
+class TestTimingAgainstLiveTarget:
+    @pytest.mark.asyncio
+    async def test_timing_returns_one_capture_per_repeat(self):
+        result = await srv.timing("http://juice_shop:3000/api/Products?page=0",
+                                  method="GET", repeats=3, timeout=20)
+        assert result.repeats == 3
+        assert result.total_requests == 3
+        assert len(result.captures) == 3
+        assert all(c["reached_target"] for c in result.captures)
+        assert result.reached_count <= 3
+        if result.reached_count:
+            assert result.median_elapsed_ms is not None
+            assert isinstance(result.median_elapsed_ms, (int, float))

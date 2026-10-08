@@ -79,6 +79,11 @@ MAX_RACE_REQUESTS = 6
 # needed to break a lock, but still a small fixed number: this measures whether a
 # limiter exists, it is not a way to load a host.
 MAX_THRESHOLD_REQUESTS = 20
+# Timing harness: repeat the same request N times and compute median elapsed_ms
+# (matches the "3-repetition timing delta" requirement). Bounded like other
+# sweeps; not a stress test.
+MAX_TIMING_REPEATS = 10
+MIN_TIMING_REPEATS = 2
 
 # Statuses that mean "you are going too fast", plus the ones targets use when
 # shedding load. A target answering 503 or 402 to a burst is not necessarily
@@ -339,6 +344,26 @@ class ProbeThreshold(BaseModel):
     throttled_count: int = 0
     throttle_statuses: List[int] = Field(default_factory=list)
     rate_limited: bool = False
+    identity: str = ""
+    identities_used: List[str] = Field(default_factory=list)
+
+
+class ProbeTiming(BaseModel):
+    """One request sent ``repeats`` times to obtain timing samples.
+
+    Returns median elapsed_ms across successful reaches; captures preserved for
+    audit. This is intentionally signature-only for B0: the expectation grammar
+    (``response time >= N ms``) already decides using ``elapsed_ms``.
+    """
+
+    requested_url: str = ""
+    method: str = "GET"
+    captures: List[Dict[str, Any]] = Field(default_factory=dict)
+    repeats: int = 0
+    total_requests: int = 0
+    reached_count: int = 0
+    elapsed_ms_samples: List[float] = Field(default_factory=list)
+    median_elapsed_ms: Optional[float] = None
     identity: str = ""
     identities_used: List[str] = Field(default_factory=list)
 
@@ -1154,6 +1179,81 @@ class HttpProbeServer(BaseSecurityServer):
             identities_used=[label] if label else [],
         )
 
+    def _validate_timing_repeats(self, repeats: int) -> int:
+        if not isinstance(repeats, int) or isinstance(repeats, bool):
+            raise ValueError("repeats must be an integer")
+        if repeats < MIN_TIMING_REPEATS:
+            raise ValueError(
+                f"repeats must be at least {MIN_TIMING_REPEATS} for a timing harness"
+            )
+        if repeats > MAX_TIMING_REPEATS:
+            raise ValueError(
+                f"at most {MAX_TIMING_REPEATS} repeats per timing harness"
+            )
+        return repeats
+
+    async def timing(
+        self,
+        url: str,
+        method: str = "GET",
+        headers: Optional[Dict[str, str]] = None,
+        body=None,
+        timeout: float = 20.0,
+        follow_redirects: bool = False,
+        repeats: int = 3,
+        interval: float = 0.0,
+        identities: Optional[List[Identity]] = None,
+        identity: Optional[str] = None,
+    ) -> ProbeTiming:
+        """Send one request ``repeats`` times and return median elapsed_ms."""
+        url = self._validate_url(url)
+        method = self._validate_method(method)
+        repeats = self._validate_timing_repeats(repeats)
+        if not isinstance(interval, (int, float)) or isinstance(interval, bool):
+            raise ValueError("interval must be a number")
+        interval = max(0.0, min(float(interval), 5.0))
+
+        registry, label = self._identity_registry(identities, identity)
+        request_headers = dict(headers or {})
+        if label:
+            request_headers.update(registry[label].headers)
+
+        captures: List[Dict[str, Any]] = []
+        samples: List[float] = []
+        for index in range(repeats):
+            capture = await self.probe(
+                url=url,
+                method=method,
+                headers=dict(request_headers),
+                body=body,
+                timeout=timeout,
+                follow_redirects=follow_redirects,
+            )
+            captures.append(_scrub_identity_headers(capture.model_dump(), label))
+            if capture.reached_target and capture.elapsed_ms is not None:
+                samples.append(float(capture.elapsed_ms))
+            if index + 1 < repeats and interval:
+                await asyncio.sleep(interval)
+
+        median = None
+        if samples:
+            s = sorted(samples)
+            m = len(s) // 2
+            median = (s[m - 1] + s[m]) / 2.0 if len(s) % 2 == 0 else s[m]
+
+        return ProbeTiming(
+            requested_url=url,
+            method=method,
+            captures=captures,
+            repeats=repeats,
+            total_requests=len(captures),
+            reached_count=len(samples),
+            elapsed_ms_samples=samples,
+            median_elapsed_ms=median,
+            identity=label,
+            identities_used=[label] if label else [],
+        )
+
     def _validate_smuggle_headers(self, headers: Optional[Dict[str, str]]) -> Dict[str, str]:
         """Headers for a smuggling attempt: framing allowed, routing not.
 
@@ -1918,6 +2018,35 @@ class HttpProbeServer(BaseSecurityServer):
                 url=url, method=method, headers=headers, body=body,
                 timeout=timeout, follow_redirects=follow_redirects, count=count,
                 interval=interval, identities=identities, identity=identity,
+            )
+
+        @self.mcp.tool()
+        async def http_probe_timing(
+            url: str,
+            method: str = "GET",
+            headers: Optional[Dict[str, str]] = None,
+            body=None,
+            timeout: float = 20.0,
+            follow_redirects: bool = False,
+            repeats: int = 3,
+            interval: float = 0.0,
+            identities: Optional[List[Identity]] = None,
+            identity: Optional[str] = None,
+            caller: Optional[str] = None,
+        ) -> ProbeTiming:
+            """Send one request repeatedly and return median elapsed_ms."""
+            self.verify_caller("http_probe_timing", caller)
+            return await self.timing(
+                url=url,
+                method=method,
+                headers=headers,
+                body=body,
+                timeout=timeout,
+                follow_redirects=follow_redirects,
+                repeats=repeats,
+                interval=interval,
+                identities=identities,
+                identity=identity,
             )
 
         @self.mcp.tool()

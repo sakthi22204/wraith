@@ -44,6 +44,7 @@ TRAFFIC_SENDING_TOOLS = {
     "http_probe_diff",
     "http_probe_race",
     "http_probe_threshold",
+    "http_probe_timing",
     "http_probe_smuggle",
     "http_probe_websocket_auth",
 }
