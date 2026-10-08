@@ -32,6 +32,14 @@ TRAFFIC_SENDING_TOOLS = {
     "run_sqlmap",
     "run_hydra",
     "run_msf_module",
+    "run_arjun",
+    "run_dalfox",
+    "run_corsy",
+    "run_commix",
+    "run_ghauri",
+    "run_jwt_tool",
+    "run_nikto",
+    "run_xsstrike",
     "http_probe",
     "http_probe_diff",
     "http_probe_race",
@@ -121,6 +129,31 @@ class TestDestinationResolution:
         assert targets == ["http://evil.test/?id=1"]
         assert ports is None
 
+    def test_the_web_scanners_read_url_and_report_no_port_claim(self):
+        """The Phase 1.9 scanners take a full URL and dial the port it names,
+        so like sqlmap they report no port claim -- the authority the grant
+        binds already carries the port, and the whole query string is what
+        gets scope-checked and sent."""
+        url_tools = ("run_arjun", "run_dalfox", "run_corsy", "run_commix",
+                     "run_ghauri", "run_nikto", "run_xsstrike")
+        for tool in url_tools:
+            targets, ports = _destination_of(tool, {"url": "http://juice_shop:3000/?id=1&x=2"})
+            assert targets == ["http://juice_shop:3000/?id=1&x=2"], tool
+            assert ports is None, tool
+            # A target passed in the wrong field must not be read -- that would
+            # scope-check a value the tool never sends.
+            with pytest.raises(ValueError):
+                _destination_of(tool, {"target": "http://juice_shop:3000/"})
+
+    def test_jwt_tool_reads_target_never_the_token(self):
+        """jwt_tool sends the token to `target`; the token is data."""
+        targets, ports = _destination_of(
+            "run_jwt_tool", {"token": "e30.e30.e30", "target": "http://juice_shop:8080/"})
+        assert targets == ["http://juice_shop:8080/"]
+        assert ports is None
+        with pytest.raises(ValueError):
+            _destination_of("run_jwt_tool", {"token": "e30.e30.e30"})
+
     def test_hydra_and_msf_read_target(self):
         assert _destination_of("run_hydra", {"target": "juice_shop"})[0] == ["juice_shop"]
         assert _destination_of(
@@ -156,6 +189,8 @@ class TestDestinationResolution:
             ("run_nmap_scan", {}),
             ("run_sqlmap", {"url": ""}),
             ("run_hydra", {"target": None}),
+            ("run_jwt_tool", {"token": "e30.e30.e30", "target": ""}),
+            ("run_unknown_sender", {}),
         ):
             with pytest.raises(ValueError):
                 _destination_of(tool, body)

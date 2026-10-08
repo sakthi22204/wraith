@@ -13,6 +13,7 @@ from .nuclei_server import NucleiServer
 from .sqlmap_server import SQLMapServer
 from .hydra_server import HydraServer
 from .metasploit_server import MetasploitServer
+from .web_tools_server import WebToolsServer
 from .http_probe_server import HttpProbeServer
 from . import http_probe_server as http_probe_server_module
 from .gate import GateError, authorization_context
@@ -44,6 +45,13 @@ GATED_NETWORK_TOOLS = {
     # where the bytes land.
     "http_probe_smuggle", "http_probe_websocket_auth",
     "run_nmap_scan", "run_nuclei_scan", "run_sqlmap", "run_hydra", "run_msf_module",
+    # Phase 1.9 web scanners: arjun, dalfox, corsy, commix, ghauri, jwt_tool,
+    # nikto, xsstrike. All of them take a caller-supplied URL (or, for
+    # jwt_tool, a URL plus a token) and send traffic to it, so they are gated
+    # on the same grant/scope chain as the rest -- a caller name proves nothing
+    # about where the request lands.
+    "run_arjun", "run_dalfox", "run_corsy", "run_commix", "run_ghauri",
+    "run_jwt_tool", "run_nikto", "run_xsstrike",
 }
 AUTHORIZED_DANGEROUS_CALLERS = set(os.getenv("AUTHORIZED_DANGEROUS_CALLERS", "active_exploit_runner").split(","))
 
@@ -140,6 +148,18 @@ def _destination_of(tool_name: str, body: dict) -> tuple[list[str], Optional[str
     elif tool_name == "run_sqlmap":
         if body.get("url"):
             targets.append(str(body["url"]))
+    elif tool_name in {"run_arjun", "run_dalfox", "run_corsy", "run_commix",
+                       "run_ghauri", "run_nikto", "run_xsstrike"}:
+        # Every one of these reads its destination from `url` and dials the
+        # port the URL names, exactly like sqlmap/the probe family -- so no
+        # port claim: the authority the grant binds already carries the port.
+        if body.get("url"):
+            targets.append(str(body["url"]))
+    elif tool_name == "run_jwt_tool":
+        # jwt_tool reads `target` (a URL) and sends the token to it in an
+        # Authorization header; the token itself is data, never a destination.
+        if body.get("target"):
+            targets.append(str(body["target"]))
     elif tool_name in {"run_nmap_scan", "run_nuclei_scan", "run_hydra", "run_msf_module"}:
         if tool_name == "run_msf_module":
             options = body.get("options")
@@ -311,6 +331,7 @@ nuclei = NucleiServer()
 sqlmap = SQLMapServer()
 hydra = HydraServer()
 metasploit = MetasploitServer()
+web_tools = WebToolsServer()
 http_probe_server = HttpProbeServer()
 
 # Register tools from each provider to the main mcp instance
@@ -328,6 +349,54 @@ async def run_nuclei_scan(target: str, category: str = "default"):
 async def run_sqlmap(url: str, param: str = None, method: str = "GET", data: str = None):
     caller = get_caller()
     return unwrap_inner(await sqlmap.mcp.call_tool("run_sqlmap", {"url": url, "param": param, "method": method, "data": data, "caller": caller}))
+
+@mcp.tool()
+async def run_arjun(url: str):
+    """Discover URL/body parameters with Arjun (gated on scope + signed grant)."""
+    caller = get_caller()
+    return unwrap_inner(await web_tools.mcp.call_tool("run_arjun", {"url": url, "caller": caller}))
+
+@mcp.tool()
+async def run_dalfox(url: str):
+    """Scan a URL for XSS with Dalfox (gated on scope + signed grant)."""
+    caller = get_caller()
+    return unwrap_inner(await web_tools.mcp.call_tool("run_dalfox", {"url": url, "caller": caller}))
+
+@mcp.tool()
+async def run_corsy(url: str):
+    """Check a target's CORS policy with Corsy (gated on scope + signed grant)."""
+    caller = get_caller()
+    return unwrap_inner(await web_tools.mcp.call_tool("run_corsy", {"url": url, "caller": caller}))
+
+@mcp.tool()
+async def run_commix(url: str, param: str = None, method: str = "GET", data: str = None):
+    """Test a URL/parameter for OS command injection with Commix (gated)."""
+    caller = get_caller()
+    return unwrap_inner(await web_tools.mcp.call_tool("run_commix", {"url": url, "param": param, "method": method, "data": data, "caller": caller}))
+
+@mcp.tool()
+async def run_ghauri(url: str, param: str = None, method: str = "GET", data: str = None):
+    """Test a URL/parameter for SQL injection with Ghauri (gated)."""
+    caller = get_caller()
+    return unwrap_inner(await web_tools.mcp.call_tool("run_ghauri", {"url": url, "param": param, "method": method, "data": data, "caller": caller}))
+
+@mcp.tool()
+async def run_jwt_tool(token: str, target: str, mode: str = "alg"):
+    """Decode a JWT and test its algorithm handling against `target` (gated)."""
+    caller = get_caller()
+    return unwrap_inner(await web_tools.mcp.call_tool("run_jwt_tool", {"token": token, "target": target, "mode": mode, "caller": caller}))
+
+@mcp.tool()
+async def run_nikto(url: str):
+    """Web server scan with Nikto (gated on scope + signed grant)."""
+    caller = get_caller()
+    return unwrap_inner(await web_tools.mcp.call_tool("run_nikto", {"url": url, "caller": caller}))
+
+@mcp.tool()
+async def run_xsstrike(url: str, data: str = None):
+    """Test a URL for reflected XSS with XSStrike (gated on scope + signed grant)."""
+    caller = get_caller()
+    return unwrap_inner(await web_tools.mcp.call_tool("run_xsstrike", {"url": url, "data": data, "caller": caller}))
 
 @mcp.tool()
 async def run_hydra(target: str, service: str, user: str, pass_list: str):

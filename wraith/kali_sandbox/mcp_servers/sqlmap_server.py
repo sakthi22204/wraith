@@ -33,7 +33,12 @@ class SQLMapServer(BaseSecurityServer):
         async def run_sqlmap(url: str, param: Optional[str] = None, method: str = "GET", data: Optional[str] = None, caller: Optional[str] = None) -> SQLMapResult:
             """Run SQLMap against a target URL."""
             self.verify_caller("run_sqlmap", caller)
-            self.validate_target(url)
+            # sqlmap takes a full URL, which legitimately carries a query string
+            # (?id=1&x=2). `validate_target` rejects those characters, so using
+            # it here would refuse real targets; the URL-safe validator is the
+            # one that admits an opaque query while still refusing shell-shaped
+            # input.
+            self.validate_url(url)
 
             cmd = ["sqlmap", "-u", url, "--batch", "--risk=2", "--level=3"]
             if param:

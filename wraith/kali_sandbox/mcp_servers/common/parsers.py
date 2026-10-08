@@ -59,3 +59,19 @@ class MetasploitResult(BaseModel):
     inconclusive: bool = False
     session_info: Optional[dict] = None
     raw_output: Optional[str] = None
+
+class ScannerResult(BaseModel):
+    """The tri-state verdict shared by the Phase 1.9 web scanners.
+
+    `findings` non-empty means the scanner printed its own positive signals.
+    `inconclusive` means the scanner never reached a verdict at all -- a
+    timeout, a missing binary, or an image without the tool -- which is
+    deliberately distinct from "scanned clean", so an infrastructure failure is
+    never read as a clean bill of health. Both empty and not inconclusive is
+    the honest "it ran and found nothing it would report".
+    """
+    tool: str
+    target: str
+    findings: List[str] = []
+    inconclusive: bool = False
+    raw_output: Optional[str] = None

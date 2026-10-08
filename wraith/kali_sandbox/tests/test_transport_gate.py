@@ -51,6 +51,14 @@ _DISPATCHABLE_BODIES = {
     "run_sqlmap": {"url": "http://127.0.0.1/"},
     "run_hydra": {"target": "127.0.0.1", "service": "ssh", "user": "u", "pass_list": "p"},
     "run_msf_module": {"module": "auxiliary/tcp/connect", "target": "127.0.0.1", "options": {}},
+    "run_arjun": {"url": "http://127.0.0.1/"},
+    "run_dalfox": {"url": "http://127.0.0.1/"},
+    "run_corsy": {"url": "http://127.0.0.1/"},
+    "run_commix": {"url": "http://127.0.0.1/"},
+    "run_ghauri": {"url": "http://127.0.0.1/"},
+    "run_jwt_tool": {"token": "e30.e30.e30", "target": "http://127.0.0.1/"},
+    "run_nikto": {"url": "http://127.0.0.1/"},
+    "run_xsstrike": {"url": "http://127.0.0.1/"},
     "http_probe": {"url": "http://127.0.0.1/"},
     "http_probe_diff": {"url": "http://127.0.0.1/a", "variants": [{"url": "http://127.0.0.1/b"}]},
     "http_probe_race": {"url": "http://127.0.0.1/"},
@@ -68,6 +76,14 @@ _PROVIDER_FOR_TOOL = {
     "run_hydra": "hydra",
     "run_msf_module": "metasploit",
     "list_msf_modules": "metasploit",
+    "run_arjun": "web_tools",
+    "run_dalfox": "web_tools",
+    "run_corsy": "web_tools",
+    "run_commix": "web_tools",
+    "run_ghauri": "web_tools",
+    "run_jwt_tool": "web_tools",
+    "run_nikto": "web_tools",
+    "run_xsstrike": "web_tools",
     "http_probe": "http_probe_server",
     "http_probe_diff": "http_probe_server",
     "http_probe_race": "http_probe_server",
@@ -86,7 +102,8 @@ def stub_providers(monkeypatch):
     from inside it.
     """
     stubs = {name: _StubProvider() for name in ("nmap", "nuclei", "sqlmap", "hydra",
-                                                "metasploit", "http_probe_server")}
+                                                "metasploit", "http_probe_server",
+                                                "web_tools")}
     for name, stub in stubs.items():
         monkeypatch.setattr(main_mod, name, stub)
     return stubs
