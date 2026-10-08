@@ -62,6 +62,82 @@ _LEAK_PATTERNS: Dict[str, "re.Pattern[str]"] = {
 # alone produces the same signal far too often to be evidence.
 TIMING_SIGNIFICANCE_MS = 1000
 
+# Bodies an edge defense serves *instead of* the application. When a payload
+# provokes one of these while the baseline did not, the request was rejected
+# before it reached the code under test, so the two responses are not
+# comparable and the difference says nothing about the application's behavior.
+_WAF_BLOCK_BODY = re.compile(
+    r"(attention required|access denied|access to this page has been denied|"
+    r"request blocked|you have been blocked|web application firewall|"
+    r"cloudflare ray id|error code:\s*1\d{3}|"
+    r"the action you have requested is not allowed|"
+    r"your request has been blocked)",
+    re.IGNORECASE,
+)
+
+# Vendor codes that identify an edge rule (rather than the origin) as the thing
+# that produced the response.
+_EDGE_RULE_MARKERS = re.compile(
+    r"(error code:\s*(?:100\d|1010|1011|1020|102\d)|ray id)",
+    re.IGNORECASE,
+)
+
+
+def _status_of(capture: Dict[str, Any]) -> Optional[int]:
+    status = capture.get("status_code")
+    return status if isinstance(status, int) else None
+
+
+def _headers_of(capture: Dict[str, Any]) -> Dict[str, str]:
+    return {k.lower(): v for k, v in (capture.get("response_headers") or {}).items()}
+
+
+def redirect_target(capture: Dict[str, Any]) -> Optional[str]:
+    """Public wrapper for the redirect target of a capture."""
+    return _redirect_target(capture)
+
+
+def baseline_never_reached_app(capture: Dict[str, Any]) -> Optional[str]:
+    """Return why the baseline response cannot be used as a reference, if so.
+
+    A 3xx is served by routing, before any handler runs, and a 4xx/5xx block
+    page is served in place of the application. Diffing a payload against
+    either compares two different systems: the redirect that every request
+    receives, and whatever answered the payload. Status and header deltas
+    between them are properties of the CDN, not of the endpoint.
+    """
+    status = _status_of(capture)
+    if status is None:
+        return None
+    if 300 <= status < 400:
+        return (
+            f"baseline response is a {status} redirect served before the "
+            f"application ran; no endpoint logic was compared"
+        )
+    if status in (401, 407):
+        return None
+    if status in (403, 406, 429, 503):
+        body = capture.get("response_body") or ""
+        if _WAF_BLOCK_BODY.search(body) or _EDGE_RULE_MARKERS.search(body):
+            return (
+                f"baseline response is a {status} served by an edge defense, "
+                f"not by the application under test"
+            )
+    return None
+
+
+def edge_blocked(capture: Dict[str, Any]) -> Optional[str]:
+    """Return why this capture looks like a rejected request, if it does."""
+    body = capture.get("response_body") or ""
+    headers = _headers_of(capture)
+    marker = _EDGE_RULE_MARKERS.search(body)
+    if marker or _WAF_BLOCK_BODY.search(body):
+        detail = marker.group(0).strip() if marker else "edge block page"
+        return f"response is an edge/WAF block page ({detail})"
+    if headers.get("cf-mitigated") == "challenge":
+        return "response is an edge/WAF challenge (cf-mitigated: challenge)"
+    return None
+
 # Volatile substrings that change on every response even when nothing about the
 # request mattered. Differences confined to these are not evidence of anything.
 # The value has to be consumed as well as the key, or two different nonces would
@@ -205,7 +281,42 @@ def classify_differential(baseline: Dict[str, Any], variant: Dict[str, Any]) -> 
     a status transition, a security header appearing or vanishing, a value
     shape that the baseline never exposed, or a body change that survives
     volatile-field normalization.
+
+    A comparison that never reached the application is reported with
+    ``material=False`` and ``blocked=<reason>``. A status change alone cannot
+    distinguish a vulnerable endpoint from a working WAF: sending a payload to
+    a Cloudflare-fronted host and getting a 403 where a plain request got a 301
+    is the defense operating correctly, and scoring it material hands back a
+    confirmed SQL injection for a site that blocked the injection.
     """
+    baseline_blocked = baseline_never_reached_app(baseline)
+    variant_blocked = edge_blocked(variant)
+
+    if baseline_blocked or variant_blocked:
+        reasons = [r for r in (baseline_blocked, variant_blocked) if r]
+        return {
+            "material": False,
+            "blocked": True,
+            "blocked_reasons": reasons,
+            "inconclusive": True,
+            "identical": False,
+            "volatile_only": False,
+            "signals": [
+                "comparison inconclusive: " + "; ".join(reasons)
+            ],
+            "status": {
+                "baseline": _status_of(baseline),
+                "variant": _status_of(variant),
+                "changed": _status_of(baseline) != _status_of(variant),
+            },
+            "headers": _header_delta(
+                baseline.get("response_headers") or {},
+                variant.get("response_headers") or {},
+            ),
+            "body": {"identical": False, "volatile_only": False, "summary": ""},
+            "timing": {"baseline_ms": None, "variant_ms": None, "significant": False},
+        }
+
     signals: List[str] = []
 
     base_status = baseline.get("status_code")
@@ -277,6 +388,9 @@ def classify_differential(baseline: Dict[str, Any], variant: Dict[str, Any]) -> 
 
     return {
         "material": material,
+        "blocked": False,
+        "blocked_reasons": [],
+        "inconclusive": False,
         "identical": identical,
         "volatile_only": volatile_only,
         "signals": signals,
@@ -297,6 +411,9 @@ def classify_differential(baseline: Dict[str, Any], variant: Dict[str, Any]) -> 
 
 def summarize_differential(result: Dict[str, Any]) -> str:
     """One-line human summary of a comparison, suitable for evidence."""
+    if result.get("blocked"):
+        reasons = "; ".join(result.get("blocked_reasons") or []) or "comparison did not reach the application"
+        return f"inconclusive: {reasons}"
     if result.get("identical"):
         return "baseline and variant responses are equivalent; the change had no effect"
     if result.get("volatile_only") and not result.get("status", {}).get("changed"):

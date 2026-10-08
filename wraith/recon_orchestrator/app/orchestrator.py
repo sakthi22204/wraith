@@ -4,7 +4,7 @@ import re
 import uuid
 from datetime import datetime
 from typing import Dict, List
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit
 from fastapi import HTTPException
 from .schemas import ReconRequest, ReconSessionStatus, ToolStatus, ToolResults, HostResult
 from .tools.subfinder import SubfinderTool
@@ -14,6 +14,7 @@ from .tools.naabu import NaabuTool
 from .tools.dnsx import DnsxTool
 from .tools.nmap import NmapTool
 from .tools.tlsx import TlsxTool
+from .tools.nuclei import NucleiTool
 from .tools.gau import GauTool
 from .tools.waybackurls import WaybackurlsTool
 from .tools.ffuf import FfufTool
@@ -25,7 +26,38 @@ from .tools.gittools import GittoolsTool
 from .tools.wpscan import WpscanTool
 from .tools.cloud_enum import CloudEnumTool
 from .tools.js_routes import JsRoutesTool
+from .tools.base import host_from_domain, target_url
 from .graph_client import graph_client
+from .scope_sync import ScopeReconciliationError, fetch_roe_rules, reconcile
+from .config import settings
+
+
+def _authority_of(url: str) -> str:
+    """`scheme://host:port` for a URL, or "" if it has no scheme.
+
+    Used to aim a scan at the port something actually answered on. A tool given
+    only a bare hostname probes port 80, so a service reachable solely on 3000 is
+    never touched -- which is how a scanner can report a clean run against a
+    target that is listening elsewhere.
+    """
+    if not url or "://" not in url:
+        return ""
+    try:
+        parsed = urlsplit(url)
+    except ValueError:
+        return ""
+    if not parsed.hostname:
+        return ""
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def _is_static_asset(url: str) -> bool:
+    """Does this URL point at a file served as a file, not a route?"""
+    path = urlsplit(url).path.lower()
+    return path.endswith((
+        ".js", ".mjs", ".css", ".png", ".jpg", ".jpeg", ".gif", ".svg",
+        ".ico", ".woff", ".woff2", ".ttf", ".eot", ".map", ".webp",
+    ))
 
 
 def _is_javascript_bundle(url: str) -> bool:
@@ -48,7 +80,11 @@ class ReconOrchestrator:
     # (port scans, fuzzing, crawlers, CMS scanners). A program's rules of
     # engagement typically cap request rate and forbid aggressive scanning, so
     # these are never run against real-world (non-local) targets.
-    AGGRESSIVE_TOOLS = {"naabu", "katana", "nmap", "ffuf", "kiterunner", "wpscan", "gittools"}
+    # nuclei runs vulnerability templates, which is active traffic against the
+    # target. It is aggressive by that measure and stays out of the remote set
+    # below, so a remote run marks it SKIPPED rather than dispatching it.
+    AGGRESSIVE_TOOLS = {"naabu", "katana", "nmap", "ffuf", "kiterunner", "wpscan",
+                        "gittools", "nuclei"}
 
     # Passive / light-touch tools that are safe against remote targets.
     PASSIVE_REMOTE_TOOLS = {
@@ -68,6 +104,7 @@ class ReconOrchestrator:
         self.dnsx = DnsxTool()
         self.nmap = NmapTool()
         self.tlsx = TlsxTool()
+        self.nuclei = NucleiTool()
         self.gau = GauTool()
         self.waybackurls = WaybackurlsTool()
         self.ffuf = FfufTool()
@@ -87,7 +124,7 @@ class ReconOrchestrator:
         self.tools = [
             self.subfinder, self.httpx_probe, self.katana, self.naabu,
             self.dnsx, self.nmap, self.tlsx, self.gau, self.waybackurls,
-            self.ffuf,
+            self.ffuf, self.nuclei,
             self.kiterunner,
             self.linkfinder,
             self.secretfinder,
@@ -99,6 +136,23 @@ class ReconOrchestrator:
         self.semaphore = asyncio.Semaphore(10)  # Concurrency limit
         self.running_tasks: Dict[str, List[asyncio.Task]] = {}
 
+        # Per-session ROE aggressive permission: the ROE rule patterns under
+        # which a remote target may be scanned with aggressive tools (vuln
+        # templates, port scans, brute-force crawlers). Empty for a session
+        # means no remote target is aggressive-exempt, which keeps the ROE gate
+        # closed for every program that has not explicitly opted in. See
+        # _aggressive_allowed.
+        self._aggressive_rules: Dict[str, List[str]] = {}
+
+        # Per-session, per-domain serialization for tools that declare
+        # `serialize_per_target`, plus the URL sets those tools have already
+        # covered this session. See _run_tool: a scanner that fans out across
+        # every discovered route is safe once and dangerous when several passes
+        # overlap, and the trigger that schedules those passes has no way to
+        # know another one is still running.
+        self._target_locks: Dict[str, asyncio.Lock] = {}
+        self._scanned_urls: Dict[str, set] = {}
+
     @staticmethod
     def _is_local_target(domain: str) -> bool:
         host = domain.rsplit(":", 1)[0]
@@ -108,6 +162,23 @@ class ReconOrchestrator:
             return ipaddress.ip_address(host).is_private
         except ValueError:
             return False
+
+    def _aggressive_allowed(self, session_id: str, domain: str) -> bool:
+        """May aggressive tools target ``domain`` this session?
+
+        Local targets always qualify -- the platform owns those hosts. A remote
+        (real-world) target qualifies only when an ROE allow rule that covers it
+        was registered with ``allow_aggressive=True``. Every other remote target
+        keeps the hard ROE gate closed, so an allow rule is opt-in per host and
+        never blankets a whole program.
+        """
+        if self._is_local_target(domain):
+            return True
+        patterns = self._aggressive_rules.get(session_id) or []
+        if not patterns:
+            return False
+        norm = self.normalize_domain(host_from_domain(domain) or domain)
+        return self._scope_matches_any(norm, patterns)
 
     async def run_session(self, session_id: str, investigation_id: str, domains: List[str]):
         session = self.sessions[session_id]
@@ -127,7 +198,13 @@ class ReconOrchestrator:
         except Exception as e:
             print(f"Failed to register session in graph_db for session {session_id}: {e}")
 
-        # Core base tools run initially
+        # Core base tools run initially.
+        # dnsx and tlsx belong here: both are passive (DNS queries and a single
+        # TLS handshake) and both are declared remote-safe in
+        # PASSIVE_REMOTE_TOOLS, but they were absent from this list, so every
+        # remote session left them WAITING and the graph received no hosts and
+        # no ports at all. JS-dependent tools are intentionally not listed --
+        # they are scheduled from the bundles that httpx/js_routes find.
         base_tools = [
             self.subfinder,
             self.naabu,
@@ -135,8 +212,11 @@ class ReconOrchestrator:
             self.katana,
             self.gau,
             self.waybackurls,
-            self.cloud_enum
+            self.cloud_enum,
+            self.dnsx,
+            self.tlsx,
         ]
+  
 
         queued_keys = set()
         running_tasks = []
@@ -150,6 +230,7 @@ class ReconOrchestrator:
         # Archive and cloud-asset tools cannot produce meaningful data for a
         # Docker-local service and can wait on external providers.
         for domain in domains:
+            aggressive_ok = self._aggressive_allowed(session_id, domain)
             domain_base_tools = base_tools
             if self._is_local_target(domain):
                 skipped_tools = {self.gau, self.waybackurls, self.cloud_enum}
@@ -160,6 +241,12 @@ class ReconOrchestrator:
                     session.logs.append(
                         f"[{datetime.utcnow().strftime('%H:%M:%S')}] Skipping {tool.name} for Docker-local target {domain}."
                     )
+            elif aggressive_ok:
+                # Real-world target with an explicit ROE opt-in
+                # (allow_aggressive=True covers this host). The full base set
+                # runs, including naabu and katana; the permission is per-host,
+                # so nothing about this branch is implicit.
+                domain_base_tools = base_tools
             else:
                 # Real-world target: honor the program's rules of engagement.
                 # Only passive / light-touch tools are scheduled; aggressive
@@ -227,10 +314,20 @@ class ReconOrchestrator:
         else:
             session.status = "completed"
 
-        # Mark any remaining WAITING tools as COMPLETED (or skipped/completed) for legacy test expectations
-        for k, v in list(session.tool_statuses.items()):
-            if v == ToolStatus.WAITING:
-                session.tool_statuses[k] = ToolStatus.COMPLETED
+        # Tools still WAITING never ran: they were neither in the base set nor
+        # triggered. Reporting them as COMPLETED claimed work that did not
+        # happen -- an nmap or ffuf that was withheld by the ROE gate showed up
+        # as a successful scan, which is the same false confidence as grading a
+        # blocked request as a confirmed finding. They are recorded as SKIPPED,
+        # with a log line naming the tool, so the session report says what
+        # actually executed.
+        never_ran = [k for k, v in session.tool_statuses.items() if v == ToolStatus.WAITING]
+        for k in never_ran:
+            session.tool_statuses[k] = ToolStatus.SKIPPED
+            session.logs.append(
+                f"[{datetime.utcnow().strftime('%H:%M:%S')}] {k} was not scheduled "
+                f"and did not run; recorded as skipped."
+            )
 
         session.progress = 100.0
         session.current_tool = None
@@ -269,10 +366,32 @@ class ReconOrchestrator:
                     await asyncio.sleep(delay)
                     delay *= 2
 
+    def _known_urls(self, session_id: str, domain: str) -> List[str]:
+        """Discovered endpoint URLs on this domain, for tools that aim at them.
+
+        Filtered to the seed's own host. linkfinder and js_routes extract full
+        URLs out of JavaScript bundles, including third-party ones, and a
+        scanner handed those would send traffic outside the target's scope.
+        """
+        seed_host = (host_from_domain(target_url(domain)) or "").lower()
+        out: List[str] = []
+        for ep in self.results.get(session_id, ToolResults()).endpoints:
+            url = (ep.url or "").split("#", 1)[0]
+            if not url.lower().startswith(("http://", "https://")):
+                continue
+            if seed_host and (host_from_domain(url) or "").lower() != seed_host:
+                continue
+            out.append(url)
+        return out
+
     async def _evaluate_conditional_triggers(self, session_id: str, investigation_id: str, domain: str, completed_tool, queued_keys: set, running_tasks: list):
         session = self.sessions[session_id]
         results = self.results.get(session_id, ToolResults())
         remote = not self._is_local_target(domain)
+        # The ROE gate keys off this, not off `remote`: a remote host the
+        # program explicitly opted into (allow_aggressive=True) scans identical
+        # to a local one, and a local one is never gated.
+        aggressive_ok = self._aggressive_allowed(session_id, domain)
 
         async def launch_tool(tool, domain):
             tool_key = f"{tool.name}:{domain}"
@@ -293,7 +412,7 @@ class ReconOrchestrator:
             if "wp-content" in url_lower or "wp-includes" in url_lower or "wp-json" in url_lower:
                 wordpress_detected = True
                 break
-        if wordpress_detected and not remote:
+        if wordpress_detected and aggressive_ok:
             wpscan_key = f"wpscan:{domain}"
             if wpscan_key not in queued_keys:
                 queued_keys.add(wpscan_key)
@@ -334,7 +453,7 @@ class ReconOrchestrator:
             if "/api" in url_lower or "/v1" in url_lower or "/v2" in url_lower or "swagger" in url_lower:
                 api_detected = True
                 break
-        if api_detected and not remote:
+        if api_detected and aggressive_ok:
             kiterunner_key = f"kiterunner:{domain}"
             if kiterunner_key not in queued_keys:
                 queued_keys.add(kiterunner_key)
@@ -354,7 +473,7 @@ class ReconOrchestrator:
                 running_tasks.append(task_launch)
 
         # 5. Discovered open ports (Trigger Nmap, tlsx and port-scoped HTTpx)
-        if completed_tool.name == "naabu" and results.ports and not remote:
+        if completed_tool.name == "naabu" and results.ports and aggressive_ok:
             # Trigger Nmap
             nmap_key = f"nmap:{domain}"
             if nmap_key not in queued_keys:
@@ -405,13 +524,85 @@ class ReconOrchestrator:
                     task_launch = asyncio.create_task(launch_tool(self.tlsx, domain))
                     running_tasks.append(task_launch)
 
+        # 7. HTTP surface confirmed (Trigger nuclei vulnerability templates).
+        #
+        # Gated on aggressive allowance, not on the passive/aggressive sets: a
+        # template run sends crafted payloads, which is exactly the traffic a
+        # program's rules of engagement govern. Without this, the Juice Shop E2E
+        # produced four header-level findings on an application with confirmed
+        # SQLi, because the only vulnerability scanner in the pipeline was
+        # reachable only through grant-gated MCP tools the agent could not use
+        # here.
+        if aggressive_ok:
+            # Scope nuclei at the authorities httpx/katana actually confirmed, not
+            # at the bare domain. Recon normalizes a target to `host`, so a
+            # service on 3000 (or 8080, or 9200) is invisible to a scan aimed at
+            # port 80 -- which is where the Juice Shop SQLi lives, on 3000.
+            #
+            # The URL set is `_known_urls`, which is filtered to the seed's own
+            # host -- never the session-wide endpoint list. On a real site the
+            # crawlers scrape genuinely third-party URLs (SSO, CDNs, analytics,
+            # OAuth providers), and handing those to a template scanner is active
+            # traffic to a host no ROE rule covers. The Juice Shop E2E never hit
+            # this because every endpoint stays on the local box; the flipkart
+            # E2E scheduled `nuclei:https://login.microsoftonline.com:443`
+            # against a page that only linked there.
+            #
+            # Static assets are not a scan surface. A bundle is not an API route,
+            # and handing nuclei the crawl root and every .js file as a scan
+            # target spends its budget re-fetching files that were just read.
+            known = self._known_urls(session_id, domain)
+            known_scan = sorted({
+                u.split("#", 1)[0] for u in known
+                if not _is_javascript_bundle(u) and not _is_static_asset(u)
+            })
+            vuln_targets = sorted({_authority_of(u) for u in known_scan} - {""})
+            # Scan routes, not just the authority. nuclei is handed the discovered
+            # endpoints as targets, and that list is the whole point: an injection
+            # behind a query string on a route nothing links to
+            # (/rest/products/search?q=) is never requested by a scan aimed at the
+            # homepage alone.
+            #
+            # Which is why the route count is part of the key. This block first runs
+            # when httpx confirms the service, and at that point recon holds the
+            # root URL and nothing else -- katana and js_routes have not reported
+            # yet, so the parameterised routes that make this worth running do not
+            # exist. Keying on the authority alone marked it done for the whole
+            # session, and the Juice Shop E2E scanned one URL and reported a clean
+            # run against an application with confirmed SQLi. Keying on the route
+            # count lets each later tool that widens the surface schedule a pass.
+            scan_routes = {
+                target: sorted({
+                    u for u in known_scan
+                    if _authority_of(u) == target
+                })
+                for target in vuln_targets
+            }
+            for target in vuln_targets:
+                for tool in [self.nuclei]:
+                    route_count = len(scan_routes.get(target) or [])
+                    tool_key = f"{tool.name}:{target}:{route_count}"
+                    if tool_key in queued_keys:
+                        continue
+                    queued_keys.add(tool_key)
+                    session.tool_statuses[tool_key] = ToolStatus.WAITING
+                    session.logs.append(
+                        f"[{datetime.utcnow().strftime('%H:%M:%S')}] "
+                        f"HTTP surface confirmed on {target}. Scheduling {tool.name} "
+                        f"over {route_count} route(s) "
+                        f"({'local target' if not remote else 'remote target (ROE allow_aggressive)'})."
+                    )
+                    task_launch = asyncio.create_task(launch_tool(tool, target))
+                    running_tasks.append(task_launch)
+  
         # 6. Active HTTP web service found (Trigger GitTools, ffuf, TruffleHog)
         if completed_tool.name in ["httpx", "katana"] and results.endpoints:
             triggered_tools = [self.trufflehog, self.gittools, self.ffuf]
             for tool in triggered_tools:
                 # ffuf (content enumeration) and gittools are active/brute-force
-                # checks; never run them against real-world targets.
-                if remote and tool.name in self.AGGRESSIVE_TOOLS:
+                # checks; never run them against real-world targets unless a
+                # program has explicitly opted that host in.
+                if not aggressive_ok and tool.name in self.AGGRESSIVE_TOOLS:
                     continue
                 tool_key = f"{tool.name}:{domain}"
                 if tool_key not in queued_keys:
@@ -422,8 +613,60 @@ class ReconOrchestrator:
                     running_tasks.append(task_launch)
 
     async def _run_tool(self, session_id: str, investigation_id: str, domain: str, tool):
+        run_key = f"{session_id}:{domain}"
+        if not getattr(tool, "serialize_per_target", False):
+            return await self._run_tool_body(session_id, investigation_id, domain, tool, run_key)
+
+        # A scanner that fans out across every discovered URL is safe once and
+        # unsafe when several passes overlap. The conditional trigger schedules
+        # a fresh pass every time the route set widens, so katana, js_routes,
+        # ffuf and linkfinder can each start one while the previous scan is
+        # still running: six concurrent nuclei processes against one local
+        # container took Juice Shop from 220MiB to its 6GiB limit, and once the
+        # target stopped answering every scan in flight reported "0 findings" --
+        # a scanner that cannot reach its target reports a clean bill of health.
+        #
+        # Key the lock on the host, not the domain string: `juice_shop` (base
+        # dispatch) and `http://juice_shop:3000` (triggered, port-scoped) are the
+        # same box and the same scan surface, and separately-locked runs would
+        # overlap against the very container whose memory we are protecting.
+        lock_key = f"{session_id}:{(host_from_domain(domain) or domain).lower()}"
+        lock = self._target_locks.setdefault(lock_key, asyncio.Lock())
+        async with lock:
+            return await self._run_tool_body(session_id, investigation_id, domain, tool, run_key)
+
+    def _planned_targets(self, tool, session_id: str, domain: str):
+        """The URLs an incremental pass should still cover, or None if it does not dedupe.
+
+        Returns only what has not been scanned yet this session, so a rescheduler
+        hands the scanner exactly the routes that widened the surface instead of
+        re-running the whole template set over every URL seen so far.
+        """
+        if not getattr(tool, "dedupe_scanned_urls", False) or not hasattr(tool, "_targets"):
+            return None
+        extra = self._known_urls(session_id, domain) if getattr(tool, "accepts_extra_urls", False) else None
+        already = self._scanned_urls.get(f"{session_id}:{domain}", set())
+        return [u for u in tool._targets(domain, extra) if u not in already]
+
+    async def _run_tool_body(self, session_id: str, investigation_id: str, domain: str, tool, run_key: str):
         session = self.sessions[session_id]
         tool_key = f"{tool.name}:{domain}"
+        planned = self._planned_targets(tool, session_id, domain)
+
+        # Same session, same target, nothing new to look at: the earlier run(s)
+        # already covered every URL this one would scan. Re-running it burns the
+        # tool's whole budget to rediscover a result we have. COMPLETED, not
+        # SKIPPED, because the work it was scheduled for was done -- the log says
+        # so, so "scanned and clean" stays distinguishable from "never ran".
+        if planned is not None and not planned:
+            timestamp = datetime.utcnow().strftime("%H:%M:%S")
+            session.logs.append(
+                f"[{timestamp}] {tool.name} on {domain}: no new targets since the "
+                f"earlier pass this session; nothing to scan."
+            )
+            session.tool_statuses[tool_key] = ToolStatus.COMPLETED
+            return True
+        extra_urls = planned if planned is not None else None
 
         async with self.semaphore:
             session.current_tool = tool.name
@@ -440,7 +683,21 @@ class ReconOrchestrator:
                     session.logs.append(f"[{timestamp}] Retrying {tool.name} on {domain} (Attempt {attempt}/{max_attempts})")
 
                 try:
-                    results = await tool.run(domain)
+                    # Hand the tool the endpoints discovered so far on this
+                    # domain, so a scanner can aim at real routes instead of
+                    # only at the seed URL. Only tools declaring
+                    # accepts_extra_urls get them; everything else is called
+                    # exactly as before, so no other tool's command changes.
+                    # A deduplicated tool gets only the URLs it has not seen
+                    # yet, so a rescan after the surface widened costs a scan of
+                    # the new routes, not a replay of the whole template set.
+                    if getattr(tool, "accepts_extra_urls", False):
+                        results = await tool.run(
+                            domain,
+                            extra_urls=(self._known_urls(session_id, domain)
+                                        if extra_urls is None else extra_urls))
+                    else:
+                        results = await tool.run(domain)
                     timestamp_done = datetime.utcnow().strftime("%H:%M:%S")
                     session.logs.append(f"[{timestamp_done}] {tool.name} completed successfully on {domain}")
 
@@ -462,6 +719,8 @@ class ReconOrchestrator:
                         )
 
                     session.tool_statuses[tool_key] = ToolStatus.COMPLETED
+                    if planned:
+                        self._scanned_urls.setdefault(run_key, set()).update(planned)
                     success = True
                     break
                 except asyncio.TimeoutError:
@@ -493,16 +752,32 @@ class ReconOrchestrator:
             return success
 
     async def _push_to_graph(self, investigation_id: str, results: ToolResults):
+        # A single recon run yields tens of thousands of endpoints spread over a
+        # few hundred distinct hosts. Upserting the host inside the per-endpoint
+        # loop cost one Cypher round-trip per endpoint -- ~46k redundant calls on
+        # the toom.de run, which dominated wall-clock at roughly 50 minutes.
+        # upsert_host is idempotent on host value (it posts only {"value": ...}),
+        # so resolving each distinct host once and reusing its node id is exactly
+        # equivalent, just without the repeat traffic.
+        host_ids: Dict[str, str] = {}
+
+        async def host_id_for(host: str, source_tool: str) -> str:
+            if host not in host_ids:
+                host_obj = await graph_client.upsert_host(
+                    investigation_id, HostResult(value=host, source_tool=source_tool))
+                host_ids[host] = host_obj["id"]
+            return host_ids[host]
+
         for host in results.hosts:
-            await graph_client.upsert_host(investigation_id, host)
+            await host_id_for(host.value, host.source_tool)
 
         for port in results.ports:
-            host_obj = await graph_client.upsert_host(investigation_id, HostResult(value=port.host, source_tool=port.source_tool))
-            await graph_client.upsert_port(host_obj["id"], port)
+            hid = await host_id_for(port.host, port.source_tool)
+            await graph_client.upsert_port(hid, port)
 
         for endpoint in results.endpoints:
-            host_obj = await graph_client.upsert_host(investigation_id, HostResult(value=endpoint.host, source_tool=endpoint.source_tool))
-            await graph_client.upsert_endpoint(host_obj["id"], endpoint)
+            hid = await host_id_for(endpoint.host, endpoint.source_tool)
+            await graph_client.upsert_endpoint(hid, endpoint)
 
     async def cancel_session(self, session_id: str):
         if session_id in self.running_tasks:
@@ -553,6 +828,16 @@ class ReconOrchestrator:
         for allowed in normalized_scope:
             if not allowed:
                 continue
+            # A CIDR is a range of hosts, and the runner enforces it that way
+            # (_match in app/roe/scope_check.py). Comparing it as a string refuses
+            # a scope the runner will honor, and it is this method that recon's own
+            # reconciliation gate runs with, so the divergence is not hypothetical.
+            if "/" in allowed and "://" not in allowed:
+                try:
+                    if ipaddress.ip_address(norm_domain) in ipaddress.ip_network(allowed):
+                        return True
+                except ValueError:
+                    continue
             if norm_domain == allowed:
                 return True
             if norm_domain.endswith(f".{allowed}"):
@@ -568,6 +853,53 @@ class ReconOrchestrator:
             normalized_scope = [self.normalize_domain(d) for d in scope_domains]
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Could not fetch program scope: {e}")
+
+        # Reconcile the selection record (graph scope_domains) against the
+        # enforcement record (the runner's ROE rules) before anything is
+        # selected. Without this the two copies drift: recon picks hosts the
+        # runner will refuse, and the failure surfaces as a rejected session
+        # rather than as the scope bug it actually is.
+        try:
+            roe_rules = await fetch_roe_rules(
+                settings.RUNNER_URL,
+                request.investigation_id,
+                token=settings.RUNNER_ADMIN_TOKEN,
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Could not fetch enforced scope from the active runner for "
+                    f"{request.investigation_id}: {e}. Recon will not start a scan "
+                    f"whose scope it cannot verify."
+                ),
+            )
+        roe_scope = [r.get("pattern") for r in roe_rules if r.get("pattern")]
+        # A host is aggressive-exempt only when an explicit allow rule for it
+        # also says so. Deriving the set here, from the same fetch the scope
+        # reconciliation just trusted, keeps the two in step.
+        aggressive_patterns = [
+            r.get("pattern") for r in roe_rules
+            if r.get("rule_type") == "allow"
+            and r.get("pattern")
+            and r.get("allow_aggressive") is True
+        ]
+
+        reconciliation = reconcile(
+            normalized_scope,
+            roe_scope,
+            matcher=self._scope_matches_any,
+        )
+        if not reconciliation.agreed:
+            raise HTTPException(
+                status_code=400,
+                detail=ScopeReconciliationError(
+                    reconciliation.unauthorized,
+                    normalized_scope,
+                    roe_scope,
+                ).args[0],
+                headers=out_of_scope_headers(reconciliation.unauthorized),
+            )
 
         out_of_scope = []
         normalized_requested = []
@@ -630,6 +962,10 @@ class ReconOrchestrator:
             await graph_client.create_recon_session(session_id, request.investigation_id, normalized_requested, "accepted")
         except Exception as e:
             print(f"Warning: Failed to persist recon session {session_id} to graph_db: {e}")
+
+        # Make the ROE aggressive allowance (if any) visible to run_session and
+        # the conditional triggers, which key off _aggressive_allowed.
+        self._aggressive_rules[session_id] = aggressive_patterns
 
         # Start background task with normalized domains
         asyncio.create_task(self.run_session(session_id, request.investigation_id, normalized_requested))

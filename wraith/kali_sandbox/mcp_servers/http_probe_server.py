@@ -447,12 +447,20 @@ class ProbeComparison(BaseModel):
     ``any_material`` is the field to branch on: it is true only when at least
     one variant produced a change that survived volatile-field normalization,
     which is the precondition for treating a difference as evidence.
+
+    ``blocked`` means the comparison could not reach the application at all
+    (a redirect baseline, or an edge defense that rejected the payload). That
+    is neither a finding nor a clean result, and ``inconclusive`` is set so
+    callers report "could not test" rather than "nothing found".
     """
 
     baseline: Dict[str, Any] = Field(default_factory=dict)
     variants: List[VariantResult] = Field(default_factory=list)
     any_material: bool = False
     material_signals: List[str] = Field(default_factory=list)
+    blocked: bool = False
+    blocked_reasons: List[str] = Field(default_factory=list)
+    inconclusive: bool = False
     authz_findings: List[str] = Field(default_factory=list)
     identities_used: List[str] = Field(default_factory=list)
     total_requests: int = 0
@@ -898,6 +906,7 @@ class HttpProbeServer(BaseSecurityServer):
 
         results: List[VariantResult] = []
         material_signals: List[str] = []
+        blocked_reasons: List[str] = []
         authz_findings: List[str] = []
         identities_used: List[str] = []
         for index, variant in enumerate(variants):
@@ -929,6 +938,10 @@ class HttpProbeServer(BaseSecurityServer):
             summary = summarize_differential(difference)
             if difference.get("material"):
                 material_signals.extend(f"[{label}] {s}" for s in difference.get("signals", []))
+            elif difference.get("blocked"):
+                blocked_reasons.extend(
+                    f"[{label}] {r}" for r in (difference.get("blocked_reasons") or [])
+                )
 
             authz = _authz_signal(baseline_label, variant_identity, baseline_dict, variant_dict)
             if authz:
@@ -950,6 +963,9 @@ class HttpProbeServer(BaseSecurityServer):
             variants=results,
             any_material=bool(material_signals),
             material_signals=material_signals,
+            blocked=bool(blocked_reasons) and not material_signals,
+            blocked_reasons=blocked_reasons,
+            inconclusive=bool(blocked_reasons) and not material_signals,
             authz_findings=authz_findings,
             identities_used=identities_used,
             total_requests=1 + total_variants,

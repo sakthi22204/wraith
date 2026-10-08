@@ -38,6 +38,12 @@ class Settings(BaseSettings):
     # Leave empty (default) to run all tools without a proxy — byte-identical behavior.
     RECON_PROXY_URL: str = ""
     RECON_PROXY_CA_VOLUME: str = "mitmproxy_ca"
+
+    # The active runner's ROE rules are the enforcement copy of scope. Recon
+    # reconciles its selection scope against them before every scan so the two
+    # records cannot drift apart silently.
+    RUNNER_URL: str = "http://active_exploit_runner:8004/api/v1"
+    RUNNER_ADMIN_TOKEN: str = ""
     RECON_PROXY_CA_PATH: str = "/home/mitmproxy/.mitmproxy"  # mitmproxy image HOME
     RECON_PROXY_CA_CERT_FILE: str = "mitmproxy-ca-cert.pem"
 

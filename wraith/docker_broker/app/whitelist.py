@@ -7,6 +7,11 @@ ALLOWED_IMAGES = [
     "projectdiscovery/dnsx:latest",
     "instrumentisto/nmap:latest",
     "projectdiscovery/tlsx:latest",
+    # Vulnerability template checks. Scheduled for Docker-local targets only
+    # (recon_orchestrator AGGRESSIVE_TOOLS / not PASSIVE_REMOTE_TOOLS).
+    # Built locally from recon_orchestrator/tool_images/nuclei: the upstream
+    # ProjectDiscovery image ships no templates, so it scans nothing and exits 0.
+    "nuclei:latest",
     "lc/gau:latest",
     "gau:latest",
     "tomnomnom/waybackurls:latest",
@@ -30,6 +35,7 @@ ALLOWED_COMMANDS_PER_IMAGE = {
     "projectdiscovery/dnsx:latest": ["-d"],
     "instrumentisto/nmap:latest": ["-T4"],
     "projectdiscovery/tlsx:latest": ["-u"],
+    "nuclei:latest": ["-u"],
     "lc/gau:latest": None,
     "gau:latest": None,
     "tomnomnom/waybackurls:latest": None,

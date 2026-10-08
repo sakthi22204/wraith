@@ -27,7 +27,13 @@ class NucleiResult(BaseModel):
 
 class SQLMapResult(BaseModel):
     target: str
-    vulnerable: bool
+    # None means "sqlmap never reached a verdict" -- a run that timed out, was
+    # interrupted, or never started. It is deliberately distinct from False,
+    # which is a completed scan that looked and found no injection. Collapsing
+    # the two reports an infrastructure failure as a clean result for the
+    # target, which is the worst possible way for this tool to be wrong.
+    vulnerable: Optional[bool] = None
+    inconclusive: bool = False
     vulns: List[dict] = []
     raw_output: Optional[str] = None
 
@@ -47,5 +53,9 @@ class MetasploitModule(BaseModel):
 class MetasploitResult(BaseModel):
     module: str
     success: bool
+    # True when msfconsole produced no output at all (timeout, missing binary),
+    # so success=False means "the run never happened" rather than "the exploit
+    # did not land". Without this the two are indistinguishable.
+    inconclusive: bool = False
     session_info: Optional[dict] = None
     raw_output: Optional[str] = None

@@ -5,6 +5,7 @@ from .katana import KatanaTool
 from .dnsx import DnsxTool
 from .nmap import NmapTool
 from .tlsx import TlsxTool
+from .nuclei import NucleiTool
 from .gau import GauTool
 from .waybackurls import WaybackurlsTool
 from .ffuf import FfufTool

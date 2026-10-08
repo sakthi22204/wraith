@@ -10,14 +10,14 @@ class DockerSpawner:
     def __init__(self, broker_url: str = settings.DOCKER_BROKER_URL):
         self.broker_url = broker_url
 
-    async def spawn_container(self, image: str, cmd: List[str], timeout: int = settings.TOOL_TIMEOUT, volumes: Optional[dict] = None, extra_hosts: Optional[dict] = None, environment: Optional[dict] = None) -> str:
+    async def spawn_container(self, image: str, cmd: List[str], timeout: int = settings.TOOL_TIMEOUT, volumes: Optional[dict] = None, extra_hosts: Optional[dict] = None, environment: Optional[dict] = None, mem_limit: Optional[str] = None, cpu_quota: Optional[int] = None) -> str:
         headers = {"Authorization": f"Bearer {settings.RECON_BROKER_TOKEN}"}
         async with httpx.AsyncClient(timeout=timeout + 30, headers=headers) as client:
             spec = {
                 "image": image,
                 "command": cmd,
-                "mem_limit": settings.MEM_LIMIT,
-                "cpu_quota": settings.CPU_QUOTA,
+                "mem_limit": mem_limit or settings.MEM_LIMIT,
+                "cpu_quota": cpu_quota or settings.CPU_QUOTA,
                 "network": settings.RECON_DOCKER_NETWORK,
                 "detach": True,
                 "remove": False

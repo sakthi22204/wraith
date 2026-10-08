@@ -70,6 +70,11 @@ services:
       # service URL, supported tools (katana/httpx) route HTTP(S) through it
       # and trust its CA so the orchestrator persists decrypted evidence.
       - RECON_PROXY_URL=${RECON_PROXY_URL:-}
+      # Recon selects targets from graph scope_domains; the runner independently
+      # enforces its own ROE rules. These let recon reconcile the two before a
+      # scan starts, so the copies cannot drift apart unnoticed.
+      - RUNNER_URL=http://active_exploit_runner:8004/api/v1
+      - RUNNER_ADMIN_TOKEN=${ADMIN_API_TOKEN}
     depends_on:
       graph_api:
         condition: service_healthy
@@ -403,6 +408,16 @@ services:
       - wraith_internal
     command: ["-h"]
 
+  # Built locally, not pulled from upstream: the ProjectDiscovery image ships no
+  # templates, so a scan from it tests nothing and exits clean. See
+  # recon_orchestrator/tool_images/nuclei/Dockerfile.
+  nuclei_image:
+    build:
+      context: ./recon_orchestrator/tool_images/nuclei
+    image: nuclei:latest
+    networks:
+      - wraith_internal
+  
   # Intercepting egress sidecar. OPT-IN via compose profile
   #   docker compose --profile recon-proxy up -d
   # so a plain `docker compose up` never starts it — byte-identical footprint.

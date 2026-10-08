@@ -3,6 +3,7 @@ import socket
 import ipaddress
 from abc import ABC
 from typing import List, Optional
+from urllib.parse import urlsplit
 from ..schemas import ToolResults, HostResult, PortResult, EndpointResult
 from ..config import settings
 from ..docker_spawner import docker_spawner
@@ -15,9 +16,23 @@ def target_url(target: str) -> str:
 
 
 def host_from_domain(domain: str) -> str:
-    """Extract the bare hostname from a domain string (strip scheme, path, port)."""
-    host = domain.split("://")[-1].split("/")[0]
-    return host.split(":")[0] if ":" in host else host
+    """Extract the bare hostname from a domain string (strip scheme, path, port).
+
+    Parsed with urlsplit rather than by splitting on ``://``: archive tools
+    return lines whose path contains a whole URL, e.g.
+    ``https://tax.crypto.com/%20...https://koinly.io/``. Splitting on ``://``
+    and taking the last piece attributes that endpoint to ``koinly.io``, putting
+    an unrelated third party into the graph as if it were a discovered host.
+    urlsplit keeps the real authority and treats the rest as a path.
+    """
+    candidate = (domain or "").strip()
+    if not candidate:
+        return ""
+    try:
+        parsed = urlsplit(candidate if "//" in candidate else f"//{candidate}")
+    except ValueError:
+        return ""
+    return (parsed.hostname or "").lower()
 
 
 # A whole line that is nothing but an absolute http(s) URL. Quotes, spaces and
@@ -120,7 +135,11 @@ class ReconTool(ABC):
         # fetches -- see js_routes.JsRoutesTool for what that has to mean.
         self.image = image
 
-    def get_command(self, domain: str) -> List[str]:
+    # True for a tool whose command is built from discovered endpoints, not just
+    # from the seed target. See run() for why this is opt-in.
+    accepts_extra_urls: bool = False
+
+    def get_command(self, domain: str, extra_urls: Optional[List[str]] = None) -> List[str]:
         raise NotImplementedError(
             f"{self.name} is an in-process tool and has no container command"
         )
@@ -133,10 +152,22 @@ class ReconTool(ABC):
             f"{self.name} declares no image but implements no in-process run"
         )
 
-    async def run(self, domain: str) -> ToolResults:
+    async def run(self, domain: str, extra_urls: Optional[List[str]] = None) -> ToolResults:
+        """Run the tool. ``extra_urls`` are endpoints already discovered on
+        ``domain`` that the tool may want to aim at individually.
+
+        Only tools that opt in via ``accepts_extra_urls`` see them; every other
+        tool's command is byte-identical to what it was before.
+        """
         if self.image is None:
             return await self.run_in_process(domain)
-        cmd = self.get_command(domain)
+        # Only a tool that opted in is called with the extra argument, and only
+        # when there is something to pass. Every other tool's get_command is
+        # invoked exactly as before, so its signature stays get_command(domain).
+        if extra_urls and self.accepts_extra_urls:
+            cmd = self.get_command(domain, extra_urls)
+        else:
+            cmd = self.get_command(domain)
         merged_hosts = {}
         eh = resolve_extra_hosts(domain)
         if eh:
@@ -148,5 +179,7 @@ class ReconTool(ABC):
             extra_hosts=merged_hosts or None,
             environment=proxy_env(),
             volumes=proxy_volumes(),
+            mem_limit=getattr(self, "mem_limit", None),
+            cpu_quota=getattr(self, "cpu_quota", None),
         )
         return self.parse_output(raw_output, domain)

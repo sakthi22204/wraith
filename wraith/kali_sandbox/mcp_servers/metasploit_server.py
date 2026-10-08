@@ -56,6 +56,23 @@ class MetasploitServer(BaseSecurityServer):
 
             res = await self.run_tool(cmd, timeout=600)
 
+            # Same trap sqlmap had: a timeout or a missing binary yields empty
+            # stdout, and the marker checks below then come back False -- which
+            # reads as "the exploit did not land" when the truth is "the run never
+            # happened". Surface that as an explicit inconclusive state instead.
+            if not res["stdout"].strip():
+                return MetasploitResult(
+                    module=module,
+                    success=False,
+                    inconclusive=True,
+                    session_info={},
+                    raw_output=(
+                        res.get("error")
+                        or res.get("stderr")
+                        or "msfconsole produced no output, so it reached no verdict."
+                    ),
+                )
+
             success = "Session" in res["stdout"] or "Exploit completed" in res["stdout"]
             session_info = {}
             if "opened" in res["stdout"]:

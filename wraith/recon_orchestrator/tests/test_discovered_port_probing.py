@@ -96,6 +96,7 @@ async def test_a_discovered_port_unlocks_the_downstream_cascade():
     ]
     ffuf = _StubTool("ffuf")
     orch.ffuf = ffuf
+    orch.nuclei = _StubTool("nuclei")
 
     await _fire(orch, completed="httpx")
 

@@ -47,14 +47,39 @@ class DummyTool(ReconTool):
 @pytest.mark.asyncio
 async def test_run_passes_extra_hosts_to_spawner(monkeypatch):
     monkeypatch.setattr(socket, "gethostbyname", lambda host: "172.18.0.3")
+    # The proxy contributes its own extra_hosts entry when RECON_PROXY_URL is
+    # set, so asserting the whole dict would make this test depend on ambient
+    # .env state. This is about the *tool's* target being resolvable; the proxy
+    # merge is pinned in test_proxy.py.
+    monkeypatch.setattr("app.tools.base.proxy_extra_hosts", lambda: {})
     with patch("app.tools.base.docker_spawner.spawn_container", new_callable=AsyncMock) as mock_spawn:
         mock_spawn.return_value = ""
         await DummyTool().run("juice_shop:3000")
     mock_spawn.assert_awaited_once_with(
         "dummy:latest", ["-host", "juice_shop:3000"],
         timeout=ANY, extra_hosts={"juice_shop": "172.18.0.3"},
-        environment=ANY, volumes=ANY,
+        environment=ANY, volumes=ANY, mem_limit=None, cpu_quota=None,
     )
+
+
+@pytest.mark.asyncio
+async def test_run_merges_the_proxy_host_into_extra_hosts(monkeypatch):
+    """Go tools resolve single-label names via /etc/hosts, not Docker DNS.
+
+    With interception on, the proxy hostname has to reach the container too or
+    httpx/katana cannot reach the sidecar even though the tool's own target
+    resolved fine.
+    """
+    monkeypatch.setattr(socket, "gethostbyname", lambda host: "172.18.0.3")
+    monkeypatch.setattr("app.tools.base.proxy_extra_hosts", lambda: {"mitmproxy_sidecar": "172.19.0.16"})
+    with patch("app.tools.base.docker_spawner.spawn_container", new_callable=AsyncMock) as mock_spawn:
+        mock_spawn.return_value = ""
+        await DummyTool().run("juice_shop:3000")
+    _, kwargs = mock_spawn.call_args
+    assert kwargs["extra_hosts"] == {
+        "juice_shop": "172.18.0.3",
+        "mitmproxy_sidecar": "172.19.0.16",
+    }
 
 
 @pytest.mark.asyncio
@@ -70,6 +95,7 @@ async def test_run_passes_none_extra_hosts_when_unresolvable(monkeypatch):
     mock_spawn.assert_awaited_once_with(
         "dummy:latest", ["-host", "does-not-resolve.invalid"],
         timeout=ANY, extra_hosts=None, environment=ANY, volumes=ANY,
+        mem_limit=None, cpu_quota=None,
     )
 
 

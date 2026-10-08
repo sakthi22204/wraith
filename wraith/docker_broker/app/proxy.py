@@ -66,19 +66,45 @@ class DockerProxy:
             raise e
 
     async def wait_container(self, container_id: str, timeout: Optional[int] = None):
-        def run():
+        """Wait for a container, bounded by ``timeout`` seconds.
+
+        The Docker SDK's ``container.wait(timeout=...)`` does not actually bound
+        the call -- the daemon-side /wait endpoint can block well past it, which
+        leaves a long-running tool (nuclei over a widening route set) running
+        until the caller's own HTTP timeout abandons it mid-write. A tool that
+        is abandoned mid-run and then retried reports "0 findings" three passes
+        later, so a pass that cannot fit its budget must be stopped cleanly at
+        the deadline and have whatever it flushed returned -- partial evidence is
+        still evidence. Poll instead: return as soon as the container exits, and
+        stop it (SIGKILL) at the deadline so the caller gets an answer and does
+        not retry a scan that only needed more time than it was allowed.
+        """
+        import time as _time
+
+        deadline = _time.monotonic() + timeout if timeout else None
+
+        def snapshot():
+            container = self.client.containers.get(container_id)
+            state = container.attrs["State"]
+            return {"state": container, "status": state.get("Status"),
+                    "code": state.get("ExitCode"), "oom": state.get("OOMKilled")}
+
+        while True:
             try:
-                container = self.client.containers.get(container_id)
-                return container.wait(timeout=timeout)
+                snap = await asyncio.to_thread(snapshot)
             except docker.errors.NotFound:
                 return {"StatusCode": 0, "Error": {"Message": "Container already removed"}}
-            except docker.errors.APIError as e:
-                return {"StatusCode": 1, "Error": {"Message": str(e)}}
-            except requests.exceptions.ReadTimeout:
-                return {"StatusCode": -1, "Error": {"Message": f"Docker daemon wait timed out after {timeout}s — container may still be running"}}
-            except requests.exceptions.ConnectionError as e:
-                return {"StatusCode": -1, "Error": {"Message": f"Docker daemon connection lost: {e}"}}
-        return await asyncio.to_thread(run)
+            if snap["status"] in ("exited", "dead", "created"):
+                code = snap["code"]
+                if snap["oom"]:
+                    return {"StatusCode": int(code or 137), "Error": {"Message": "OOM killed by the container runtime"}}
+                return {"StatusCode": int(code or 0), "Error": None}
+            if deadline and _time.monotonic() >= deadline:
+                def stop():
+                    snap["state"].stop(timeout=5)
+                await asyncio.to_thread(stop)
+                return {"StatusCode": -1, "Error": {"Message": "Pass exceeded its wall-clock budget; container stopped"}}
+            await asyncio.sleep(2)
 
     async def get_logs(self, container_id: str):
         def run():
