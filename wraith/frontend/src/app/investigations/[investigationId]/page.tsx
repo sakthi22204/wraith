@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { toast } from 'sonner';
 import { Finding, GraphResponse } from '@/types/graph';
 import { startRecon, fetchReconStatus, cancelRecon, listReconSessions } from '@/lib/reconApi';
+import { fetchScopeRules, addScopeRule } from '@/lib/exploitApi';
 import { startAgentSession, fetchSessionStatus, stopAgentSession, fetchAgentSessions } from '@/lib/agentApi';
 import { fetchFindings, fetchReviewQueue, deleteProgram as deleteInvestigation, fetchGraph } from '@/lib/graphApi';
 import { fetchReport } from '@/lib/reportingApi';
@@ -123,6 +124,27 @@ export default function InvestigationDashboard() {
   }, [reconLogs, agentLogs]);
 
   // Real-time Automated Polling Handler (runs every 2s)
+
+  const ensureRoERules = async (domains: string[]) => {
+    if (!investigationId || domains.length === 0) return;
+    try {
+      const rules = await fetchScopeRules(investigationId as string);
+      const existingPatterns = new Set(rules.map((r: any) => r.pattern));
+      for (const d of domains) {
+        if (d && !existingPatterns.has(d)) {
+          try {
+            await addScopeRule(investigationId as string, d, 'allow', false);
+          } catch (err) {
+            console.error('Failed to auto-create ROE rule:', err);
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Failed to check/create ROE rules:', err);
+    }
+  };
+
+
   const loadData = async () => {
     try {
       const investigation_id = investigationId as string;

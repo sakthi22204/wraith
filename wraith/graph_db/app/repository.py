@@ -13,6 +13,7 @@ from .schema import (
     Service, ServiceCreate, Endpoint, EndpointCreate, Parameter, ParameterCreate,
     Finding, FindingCreate, FindingUpdate, CVE, CVECreate, Node, Link, GraphResponse,
     ValidationAttempt, ValidationAttemptCreate, require_validation_evidence,
+    enforce_evidence_sources,
     FindingStatus, FalsePositivePattern, FalsePositivePatternCreate,
     ReconSession, AgentSession, Investigation, InvestigationCreate
 )
@@ -341,6 +342,15 @@ class Neo4jRepository:
         if error:
             raise ValueError(error)
 
+        # Three-source rule: a validated status its source set cannot support is
+        # corrected to UNCONFIRMED. Applied to the merged node so the source set
+        # and the status are judged together, and only ever downgrades -- a
+        # verdict the runner already declined is never re-promoted here.
+        corrected = enforce_evidence_sources(merged)
+        if corrected is not None:
+            merged["status"] = corrected
+            fields["status"] = corrected
+
         # Severity is settled against the merged node, after the status gate, so
         # the floor reflects whatever evidence this write actually carries. The
         # adjudicated value replaces whatever was claimed in the patch.
@@ -368,6 +378,13 @@ class Neo4jRepository:
         if violation:
             raise ValueError(violation)
 
+        # Three-source rule at creation too, so a finding cannot be born
+        # validated on a source set that cannot support it.
+        corrected = enforce_evidence_sources(finding.model_dump())
+        if corrected is not None:
+            finding = finding.model_copy(
+                update={"status": FindingStatus(corrected)})
+
         # Same rule as update_finding: the claimed severity is clamped to what
         # the evidence on this node supports before it is ever stored.
         fields = finding.model_dump()
@@ -394,7 +411,8 @@ class Neo4jRepository:
                 f.expected_result = $expected_result, f.actual_result = $actual_result,
                 f.steps_to_reproduce = $steps_to_reproduce, f.root_cause = $root_cause,
                 f.impact = $impact, f.remediation = $remediation,
-                f.validation_stage = $validation_stage, f.probe_principal = $probe_principal
+                f.validation_stage = $validation_stage, f.probe_principal = $probe_principal,
+                f.evidence_sources = coalesce($evidence_sources, f.evidence_sources)
             MERGE (t)-[:HAS_FINDING]->(f)
             RETURN f
             """
@@ -412,7 +430,8 @@ class Neo4jRepository:
                 f.expected_result = $expected_result, f.actual_result = $actual_result,
                 f.steps_to_reproduce = $steps_to_reproduce, f.root_cause = $root_cause,
                 f.impact = $impact, f.remediation = $remediation,
-                f.validation_stage = $validation_stage, f.probe_principal = $probe_principal
+                f.validation_stage = $validation_stage, f.probe_principal = $probe_principal,
+                f.evidence_sources = coalesce($evidence_sources, f.evidence_sources)
             MERGE (t)-[:HAS_FINDING]->(f)
             RETURN f
             """
@@ -436,7 +455,8 @@ class Neo4jRepository:
                                       impact=finding.impact,
                                       remediation=finding.remediation,
                                       validation_stage=finding.validation_stage,
-                                      probe_principal=finding.probe_principal)
+                                      probe_principal=finding.probe_principal,
+                                      evidence_sources=finding.evidence_sources)
         record = _require_parent(await result.single(),
                                  "Endpoint" if finding.target_type.lower() == "endpoint" else "Parameter",
                                  finding.target_id)
@@ -451,7 +471,7 @@ class Neo4jRepository:
         SET f.corroborating_sources = f.corroborating_sources + $source_name
         WITH f
         WHERE size(f.corroborating_sources) >= 2
-          AND f.status = 'AI_VALIDATED'
+          AND f.status IN ['AI_VALIDATED', 'OBSERVATION']
         SET f.status = 'CORROBORATED'
         RETURN f
         """
@@ -476,13 +496,31 @@ class Neo4jRepository:
         return '/'.join(new_parts)
 
     async def mark_reviewed(self, finding_id: str, human_decision: str, reviewer_note: str) -> Finding:
-        status = FindingStatus.HUMAN_CONFIRMED if human_decision == "confirmed" else FindingStatus.FALSE_POSITIVE
+        """Record a human's refutation of a finding.
+
+        A review may only *refute*: confirmation in this system comes from
+        executed evidence (AI_VALIDATED) or independent corroboration
+        (CORROBORATED), never from a sign-off. There is no human validation
+        phase, so a "confirmed" decision is refused outright rather than being
+        written as HUMAN_CONFIRMED -- which would let an untested guess into a
+        report by way of a status only a human could set.
+        """
+        if human_decision == "confirmed":
+            raise ValueError(
+                "human confirmation is not a validation path; a review may only "
+                "refute (decision='false_positive')"
+            )
+        if human_decision != "false_positive":
+            raise ValueError("decision must be false_positive")
+
         query = """
         MATCH (f:Finding {id: $finding_id})
         SET f.status = $status, f.reviewer_note = $note
         RETURN f
         """
-        result = await self.session.run(query, finding_id=finding_id, status=status.value, note=reviewer_note)
+        result = await self.session.run(
+            query, finding_id=finding_id,
+            status=FindingStatus.FALSE_POSITIVE.value, note=reviewer_note)
         record = await result.single()
         if not record:
              raise ValueError("Finding not found")

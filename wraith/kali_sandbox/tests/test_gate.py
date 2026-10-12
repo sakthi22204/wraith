@@ -310,3 +310,55 @@ class TestSharedVector:
                            investigation_id="inv-1", host="example.com", ttl_seconds=60)
         assert sandbox_verify(token, "shared-secret")["host"] == "example.com"
         assert runner_verify(token, "shared-secret")["caller"] == "active_exploit_runner"
+        # A tool-bound grant round-trips the claim on both sides.
+        scoped = mint_grant("shared-secret", caller="active_exploit_runner",
+                            investigation_id="inv-1", host="example.com",
+                            ttl_seconds=60, tools=["run_nmap_scan"])
+        assert sandbox_verify(scoped, "shared-secret")["tools"] == ["run_nmap_scan"]
+        assert runner_verify(scoped, "shared-secret")["tools"] == ["run_nmap_scan"]
+
+
+class TestToolScoping:
+    """A grant names the tools it may be spent on; the caller floor re-checks it.
+
+    The agent minter is a code path, and code paths get changed. The floor here
+    is pinned so the sandbox keeps refusing an exploit_agent grant for anything
+    outside the read-only set even if the mint side is altered later.
+    """
+
+    def _check(self, tools, caller, tool):
+        from mcp_servers.gate import _check_tool
+        _check_tool(tools, caller, tool)
+
+    def test_unspecified_tool_claim_predates_scoping(self):
+        # A grant without a tools field stays unrestricted: probe-era callers
+        # predate the claim and must not start failing.
+        self._check(None, "active_exploit_runner", "http_probe")
+
+    def test_grant_names_the_only_tool_that_may_spend_it(self):
+        self._check(["run_nmap_scan"], "active_exploit_runner", "run_nmap_scan")
+
+    def test_grant_refuses_a_tool_outside_its_claim(self):
+        with pytest.raises(GateError, match="authorises"):
+            self._check(["run_nmap_scan"], "active_exploit_runner", "run_sqlmap")
+
+    def test_agent_floor_refuses_payload_tools_even_if_claimed(self):
+        # The grant claims run_sqlmap; the floor refuses it anyway, because the
+        # floor is about who can ever validly name it -- not what any given
+        # grant happens to have claimed.
+        with pytest.raises(GateError, match="may only authorise"):
+            self._check(["run_sqlmap"], "exploit_agent", "run_sqlmap")
+
+    def test_agent_floor_refuses_unlisted_read_only_tools(self):
+        # run_dalfox sends XSS payloads, so it is not in the read-only set even
+        # though it is not marked dangerous the way msf/hydra are.
+        with pytest.raises(GateError, match="may only authorise"):
+            self._check(["run_dalfox"], "exploit_agent", "run_dalfox")
+
+    def test_agent_read_only_tools_are_honoured(self):
+        for tool in ("run_nmap_scan", "run_nuclei_scan", "run_arjun",
+                     "run_corsy", "run_nikto"):
+            self._check([tool], "exploit_agent", tool)
+
+    def test_runner_is_not_subject_to_the_agent_floor(self):
+        self._check(["run_sqlmap"], "active_exploit_runner", "run_sqlmap")

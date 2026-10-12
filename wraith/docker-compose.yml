@@ -3,6 +3,7 @@ version: '3.8'
 services:
   graph_db:
     image: neo4j:5-community
+    restart: unless-stopped
     networks:
       - wraith_internal
     ports:
@@ -29,6 +30,7 @@ services:
   graph_api:
     build:
       context: ./graph_db
+    restart: unless-stopped
     networks:
       - wraith_internal
     ports:
@@ -228,6 +230,7 @@ services:
   kali_sandbox:
     build:
       context: ./kali_sandbox
+    restart: unless-stopped
     environment:
       - MSF_DATABASE_CONFIG=/opt/msf/config/database.yml
       # The sandbox verifies the runner's grant signature, and independently
@@ -259,10 +262,15 @@ services:
     environment:
       - OLLAMA_KEEP_ALIVE=30m
       - OLLAMA_CONTEXT_LENGTH=8192
+      # ollama runs as user `ollama` with HOME=/home/ollama, so its model store
+      # is $HOME/.ollama. Mounting the volume at /root/.ollama left the store on
+      # the container's writable layer: every recreate silently dropped the
+      # pulled model and agent sessions then failed with "model not installed".
+      - OLLAMA_MODELS=/home/ollama/.ollama/models
     networks:
       - wraith_internal
     volumes:
-      - ollama_data:/root/.ollama
+      - ollama_data:/home/ollama/.ollama
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
@@ -275,6 +283,7 @@ services:
   reporting:
     build:
       context: ./reporting
+    restart: unless-stopped
     ports:
       - "127.0.0.1:8006:8006"
     environment:
@@ -291,6 +300,7 @@ services:
   assessment_service:
     build:
       context: ./assessment_service
+    restart: unless-stopped
     ports:
       - "127.0.0.1:8007:8007"
     environment:
@@ -313,6 +323,7 @@ services:
         - NEXT_PUBLIC_EXPLOIT_RUNNER_URL=http://localhost:8004
         - NEXT_PUBLIC_REPORTING_URL=http://localhost:8006
         - NEXT_PUBLIC_ASSESSMENT_URL=http://localhost:8007
+    restart: unless-stopped
     environment:
       - ADMIN_API_TOKEN=${ADMIN_API_TOKEN:?ADMIN_API_TOKEN must be set; generate one, do not reuse a published default}
       - GRAPH_DB_URL=http://graph_api:8001/api/v1

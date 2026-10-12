@@ -52,7 +52,7 @@ RICH_GRAPH = {
         # so a graph whose three findings are all UNCONFIRMED scores 2.0 -- and
         # f3 exists to prove the filter reads status rather than counting nodes.
         {"id": "f1", "labels": ["Finding"], "properties": {"severity": "critical", "status": "AI_VALIDATED"}},
-        {"id": "f2", "labels": ["Finding"], "properties": {"severity": "high", "status": "HUMAN_CONFIRMED"}},
+        {"id": "f2", "labels": ["Finding"], "properties": {"severity": "high", "status": "CORROBORATED"}},
         {"id": "f3", "labels": ["Finding"], "properties": {"severity": "medium", "status": "REFUTED"}},
     ],
     "links": [
@@ -75,7 +75,7 @@ async def test_perform_assessment_computes_full_report_from_real_graph_data():
         assert resp.status_code == 200
         body = resp.json()
 
-        # Risk score: base 2.0 + critical*2.0 (validated) + high*1.5 (human-confirmed)
+        # Risk score: base 2.0 + critical*2.0 (validated) + high*1.5 (corroborated)
         # = 5.5. The medium finding is REFUTED and contributes nothing: it is
         # still inventoried in findings_summary, but a disproven bug is not risk.
         assert body["risk_score"] == pytest.approx(5.5)

@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { toast } from 'sonner';
 import { fetchPrograms as fetchInvestigations, createInvestigation, deleteProgram as deleteInvestigation } from '@/lib/graphApi';
+import { addScopeRule } from '@/lib/exploitApi';
 import { errorMessage } from '@/lib/apiError';
 import Skeleton from '@/components/Skeleton';
 import { Program as Investigation } from '@/types/graph';
@@ -34,10 +35,18 @@ export default function HomePage() {
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await createInvestigation(newInvestigation.name, newInvestigation.target);
+      const created = await createInvestigation(newInvestigation.name, newInvestigation.target);
+      // Auto-create ROE allow rule for the investigation target
+      if (created && created.id && newInvestigation.target) {
+        try {
+          await addScopeRule(created.id, newInvestigation.target.trim(), 'allow', false);
+        } catch (err) {
+          console.error('Failed to create ROE rule:', err);
+        }
+      }
       setIsModalOpen(false);
       setNewInvestigation({ name: '', target: '' });
-      toast.success('Investigation created and automatic recon started successfully');
+      toast.success('Investigation created successfully');
       loadInvestigations();
       } catch (e) {
         toast.error(errorMessage(e, 'Failed to create investigation'));

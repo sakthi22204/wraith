@@ -107,8 +107,22 @@ def _nuclei_port_claim(target: str) -> str:
 
 
 def verify_caller(tool_name: str, caller: Optional[str]):
-    if caller not in AUTHORIZED_DANGEROUS_CALLERS:
-        raise HTTPException(status_code=403, detail=f"Caller {caller} is not authorized to use {tool_name}")
+    """Coarse caller pre-check; the gate is the real boundary.
+
+    Dangerous tools (hydra, metasploit) are restricted to
+    ``AUTHORIZED_DANGEROUS_CALLERS``. Every other tool only requires an
+    identified caller, because what a caller may actually do is decided by
+    ``gate_request``: a signed grant bound to the tool, a re-read scope, and --
+    for the exploit agent -- the read-only floor in ``gate._check_tool``. This
+    used to refuse every caller but the runner, which would have turned the
+    agent's legitimate read-only calls into a 403 before the gate could judge
+    them.
+    """
+    if tool_name in DANGEROUS_TOOLS:
+        if caller not in AUTHORIZED_DANGEROUS_CALLERS:
+            raise HTTPException(status_code=403, detail=f"Caller {caller} is not authorized to use {tool_name}")
+    elif not caller:
+        raise HTTPException(status_code=403, detail=f"Caller identity required for tool {tool_name}")
 
 grant_context: ContextVar[Optional[str]] = ContextVar("grant_context", default=None)
 
@@ -217,7 +231,7 @@ def gate_request(tool_name: str, body: dict, request=None):
     try:
         context = authorization_context(
             caller=caller, grant_token=grant_token, targets=targets,
-            settings=settings, port_claim=port_claim,
+            settings=settings, port_claim=port_claim, tool=tool_name,
         )
     except GateError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail)

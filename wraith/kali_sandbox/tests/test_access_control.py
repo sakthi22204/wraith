@@ -60,7 +60,9 @@ def test_nmap_is_gated_not_safe():
     response = client.post("/tools/run_nmap_scan/call", json={"target": "127.0.0.1"})
     assert response.status_code == 403
     message = _message(response).lower()
-    assert "grant" in message or "not authorized" in message
+    # No caller identity at all is refused before the gate; a bare caller name
+    # reaches the gate and is refused for want of a grant. Either way, not safe.
+    assert "grant" in message or "not authorized" in message or "identity" in message
 
 
 def test_caller_name_does_not_substitute_for_a_grant():

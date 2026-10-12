@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { fetchScopeRules } from '@/lib/exploitApi';
+import { fetchScopeRules, addScopeRule } from '@/lib/exploitApi';
 import { errorMessage } from '@/lib/apiError';
 import { ScopeRule } from '@/types/graph';
 import Skeleton from './Skeleton';
@@ -14,6 +14,10 @@ export default function ScopeRules({ investigationId }: ScopeRulesProps) {
   const [rules, setRules] = useState<ScopeRule[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [pattern, setPattern] = useState('');
+  const [ruleType, setRuleType] = useState<'allow' | 'deny'>('allow');
+  const [allowAggressive, setAllowAggressive] = useState(false);
 
   const loadRules = async () => {
     try {
@@ -34,6 +38,24 @@ export default function ScopeRules({ investigationId }: ScopeRulesProps) {
 
   const allowRules = rules.filter(r => r.rule_type === 'allow');
   const denyRules = rules.filter(r => r.rule_type === 'deny');
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!pattern.trim() || isSubmitting) return;
+    setIsSubmitting(true);
+    try {
+      await addScopeRule(investigationId, pattern.trim(), ruleType, allowAggressive);
+      setPattern('');
+      setAllowAggressive(false);
+      setRuleType('allow');
+      await loadRules();
+    } catch (err) {
+      console.error(err);
+      setError(errorMessage(err, 'Could not add scope rule.'));
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
 
   return (
     <div className="space-y-4">
@@ -78,8 +100,47 @@ export default function ScopeRules({ investigationId }: ScopeRulesProps) {
             )}
           </div>
           <p className="text-[10px] text-slate-600 italic">
-            Read-only view. Deny rules always win; backend executor enforces scope authoritatively.
+            Deny rules always win; backend executor enforces scope authoritatively.
           </p>
+          <div className="mt-6 pt-6 border-t border-slate-800/50 space-y-3">
+            <div className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Add Scope Rule</div>
+            <form onSubmit={handleSubmit} className="space-y-3">
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={pattern}
+                  onChange={(e) => setPattern(e.target.value)}
+                  placeholder="pattern (e.g., example.com, *.example.com, 10.0.0.0/8)"
+                  className="flex-1 bg-slate-950 border border-slate-800 rounded px-2 py-1.5 text-xs font-mono text-slate-300 focus:outline-none focus:border-indigo-500/50"
+                />
+                <select
+                  value={ruleType}
+                  onChange={(e) => setRuleType(e.target.value as 'allow' | 'deny')}
+                  className="bg-slate-950 border border-slate-800 rounded px-2 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-indigo-500/50"
+                >
+                  <option value="allow">allow</option>
+                  <option value="deny">deny</option>
+                </select>
+              </div>
+              <label className="flex items-center gap-2 text-xs text-slate-400">
+                <input
+                  type="checkbox"
+                  checked={allowAggressive}
+                  onChange={(e) => setAllowAggressive(e.target.checked)}
+                  className="rounded border-slate-700 bg-slate-950"
+                />
+                Allow aggressive scanning
+              </label>
+              <button
+                type="submit"
+                disabled={isSubmitting || !pattern.trim()}
+                className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-500 text-white px-3 py-1.5 rounded text-xs font-bold transition-all"
+              >
+                {isSubmitting ? 'Adding...' : 'Add Rule'}
+              </button>
+            </form>
+          </div>
+
         </div>
       )}
     </div>

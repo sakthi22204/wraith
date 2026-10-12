@@ -129,13 +129,23 @@ def test_a_proven_finding_counts_as_confirmed_in_graph_vocabulary():
     assert report.risk_score > 2.0
 
 
-def test_human_confirmed_and_corroborated_also_count():
-    for status in ("HUMAN_CONFIRMED", "CORROBORATED", "CONFIRMED"):
+def test_corroborated_also_counts():
+    for status in ("AI_VALIDATED", "CORROBORATED"):
         graph = _graph([
             _endpoint("http://t:3000/rest/x"),
             _finding(status),
         ])
         assert AssessmentEngine.generate_report("inv", graph).coverage.findings_confirmed == 1
+
+
+def test_human_confirmed_is_not_a_validated_status():
+    # No human review phase: confirmation comes from executed evidence or
+    # corroboration, so a sign-off status carries no weight.
+    graph = _graph([
+        _endpoint("http://t:3000/rest/x"),
+        _finding("HUMAN_CONFIRMED"),
+    ])
+    assert AssessmentEngine.generate_report("inv", graph).coverage.findings_confirmed == 0
 
 
 def test_a_false_positive_is_not_a_confirmed_finding():
@@ -271,10 +281,12 @@ class TestRiskCountsOnlyProvenFindings:
 
         assert report.risk_score == 2.0
 
-    def test_a_human_confirmed_finding_does_raise_risk(self):
+    def test_a_human_confirmed_finding_does_not_raise_risk(self):
+        # There is no human validation phase, so a sign-off status is a lead,
+        # not proof, and must not move the score.
         graph = _graph([_finding("HUMAN_CONFIRMED")])
 
-        assert AssessmentEngine.generate_report("inv", graph).risk_score == 3.5
+        assert AssessmentEngine.generate_report("inv", graph).risk_score == 2.0
 
     def test_only_the_proven_ones_are_weighted(self):
         """A graph holding both a real bug and a disproven one must score the

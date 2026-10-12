@@ -11,9 +11,13 @@ from .mapping.cvss_calculator import cvss_calculator
 # submits to a program, so the bar for calling something a vulnerability is set
 # by what the graph actually recorded, not by what a scanner proposed.
 #
-# "CONFIRMED" is not in the enum but is normalised to HUMAN_CONFIRMED there, so
-# legacy rows carry it and it has to be honoured here too.
-CONFIRMED_STATUSES = {"AI_VALIDATED", "CORROBORATED", "HUMAN_CONFIRMED", "CONFIRMED"}
+# HUMAN_CONFIRMED is deliberately absent. Confirmation in this system comes from
+# executed evidence (AI_VALIDATED) or from independent corroboration
+# (CORROBORATED); there is no human review phase, and a status that could only
+# be minted by one must not make an untested guess reportable. Legacy rows that
+# still carry HUMAN_CONFIRMED fall through to the evidence check below, exactly
+# like any other status.
+CONFIRMED_STATUSES = {"AI_VALIDATED", "CORROBORATED"}
 
 
 def normalize_status(status: Any) -> str:
@@ -25,7 +29,8 @@ def is_confirmed(finding: Dict[str, Any]) -> bool:
 
     Two independent signals count, because either alone is misleading:
 
-      * the graph's own status, set by a human or a corroborating pass; and
+      * the graph's own status, set by an executed validation or a corroborating
+        pass; and
       * validation evidence on the finding -- a request that was sent and a
         response that came back. The second catches a finding whose status was
         never written but which does carry a real exchange.
@@ -33,12 +38,16 @@ def is_confirmed(finding: Dict[str, Any]) -> bool:
     A finding with neither is a hypothesis. It is not a weak vulnerability, it
     is an untested guess, and the report must not present it as the former.
     Statuses DUPLICATE and FALSE_POSITIVE are confirmed *negative* verdicts and
-    are filtered out before this is called, but they are rejected here too so
-    the helper is safe to use on its own.
+    OBSERVATION is a negative signal (a missing control, not a proven bug); all
+    are rejected before the evidence check, and are rejected here too so the
+    helper is safe to use on its own.
     """
     if normalize_status(finding.get("status")) in CONFIRMED_STATUSES:
         return True
-    if normalize_status(finding.get("status")) in {"FALSE_POSITIVE", "DUPLICATE"}:
+    if normalize_status(finding.get("status")) in {"FALSE_POSITIVE", "DUPLICATE", "OBSERVATION"}:
+        # A negative observation carries an executed exchange (the probe that met
+        # no limiter, the response missing a header) but is not a confirmed
+        # vulnerability, so it must not fall through to the evidence check below.
         return False
     return bool(finding.get("poc_request")) and bool(finding.get("poc_response"))
 

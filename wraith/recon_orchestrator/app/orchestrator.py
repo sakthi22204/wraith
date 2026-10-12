@@ -846,6 +846,35 @@ class ReconOrchestrator:
                 return True
         return False
 
+    async def _ensure_roe_rules(self, investigation_id: str, scope_domains: list):
+        try:
+            roe_rules = await fetch_roe_rules(
+                settings.RUNNER_URL,
+                investigation_id,
+                token=settings.RUNNER_ADMIN_TOKEN,
+            )
+            existing = set(r.get("pattern") for r in roe_rules if r.get("pattern"))
+            for d in scope_domains:
+                if d and d not in existing:
+                    try:
+                        await self._create_roe_rule(investigation_id, d, "allow", False)
+                    except Exception as e:
+                        print(f"Failed to create ROE rule for {d}: {e}")
+        except Exception as e:
+            print(f"Failed to ensure ROE rules: {e}")
+
+    async def _create_roe_rule(self, investigation_id: str, pattern: str, rule_type: str, allow_aggressive: bool):
+        import httpx
+        url = f"{settings.RUNNER_URL.rstrip('/')}/roe/scope"
+        headers = {"Authorization": f"Bearer {settings.RUNNER_ADMIN_TOKEN}", "Content-Type": "application/json"}
+        async with httpx.AsyncClient(timeout=10) as client:
+            await client.post(url, headers=headers, json={
+                "investigation_id": investigation_id,
+                "pattern": pattern,
+                "rule_type": rule_type,
+                "allow_aggressive": allow_aggressive
+            })
+
     async def start_session(self, request: ReconRequest) -> dict:
         # Validate scope before accepting
         try:
@@ -853,6 +882,12 @@ class ReconOrchestrator:
             normalized_scope = [self.normalize_domain(d) for d in scope_domains]
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Could not fetch program scope: {e}")
+
+        # Ensure ROE rules exist for scope domains (auto-sync)
+        try:
+            await self._ensure_roe_rules(request.investigation_id, scope_domains)
+        except Exception:
+            pass
 
         # Reconcile the selection record (graph scope_domains) against the
         # enforcement record (the runner's ROE rules) before anything is

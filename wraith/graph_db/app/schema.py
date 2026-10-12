@@ -5,6 +5,12 @@ from enum import Enum
 
 class FindingStatus(str, Enum):
     UNCONFIRMED = "UNCONFIRMED"
+    #: A negative signal was observed -- a missing control (rate limit not
+    #: enforced, a security header absent) -- but no vulnerability was
+    #: exercised. Distinct from UNCONFIRMED, which is a positive signal seen
+    #: but not yet validated. Mixing the two loses which of the two states a
+    #: finding is actually in.
+    OBSERVATION = "OBSERVATION"
     AI_VALIDATED = "AI_VALIDATED"
     CORROBORATED = "CORROBORATED"
     HUMAN_CONFIRMED = "HUMAN_CONFIRMED"
@@ -145,6 +151,14 @@ class FindingBase(BaseModel):
     # reach than one that needed a session, and the poc_request alone does not
     # reliably say which it was, so the fact is recorded rather than inferred.
     probe_principal: Optional[str] = None
+    # Three-source confirmation. The independent sources that back this finding:
+    # "agent_probe" (P, a criterion the AI agent authored), "exploitation"
+    # (E, an executed exploit) and "mcp_tool_result" (M, a sandbox scanner's
+    # result; "mcp_tool_result_named" when it explicitly named this vuln_type).
+    # Stored rather than recomputed so the derived status is queryable and the
+    # provenance is auditable. A validated status asserted on a source set that
+    # cannot support it is refused; see enforce_evidence_sources().
+    evidence_sources: Optional[List[str]] = None
 
 
 class ValidationAttemptBase(BaseModel):
@@ -212,6 +226,58 @@ def require_validation_evidence(data: dict) -> Optional[str]:
     return None
 
 
+#: The independent sources of evidence a finding can rest on.
+EVIDENCE_AGENT_PROBE = "agent_probe"
+EVIDENCE_EXPLOITATION = "exploitation"
+EVIDENCE_MCP_TOOL = "mcp_tool_result"
+EVIDENCE_MCP_TOOL_NAMED = "mcp_tool_result_named"
+
+
+def _sources_support_validation(evidence_sources) -> bool:
+    """Whether a set of sources is enough to call a finding validated.
+
+    A single source is never enough: an agent's claim (P) is not proof, and a
+    scanner hit (M) is a guess the target happened to answer. Two independent
+    sources are required -- an agent probe (P) with an executed exploit (E) or a
+    tool result (M), or an exploit (E) with a tool that explicitly named the
+    issue (M-named). The last case is the only one where M alone can complete
+    the pair, because a scanner that says "SQL injection here" has identified
+    the vulnerability rather than merely flagged the endpoint.
+    """
+    s = set(evidence_sources or [])
+    if EVIDENCE_AGENT_PROBE in s and (
+        EVIDENCE_EXPLOITATION in s or EVIDENCE_MCP_TOOL in s
+    ):
+        return True
+    return EVIDENCE_EXPLOITATION in s and EVIDENCE_MCP_TOOL_NAMED in s
+
+
+def enforce_evidence_sources(merged: dict) -> Optional[str]:
+    """Correct a validated status that its source set cannot support.
+
+    Returns the status the finding should carry instead, or ``None`` when the
+    patch is fine. Only *downgrades* -- a source set can revoke a validation
+    claim but can never grant one, so a verdict the runner already declined
+    (e.g. a differential bug proven only by reachability) is never re-promoted
+    here.
+
+    A patch that carries no ``evidence_sources`` is left alone: callers that do
+    not participate in the three-source model keep their existing behaviour.
+    """
+    sources = merged.get("evidence_sources")
+    if sources is None:
+        return None
+
+    status = merged.get("status")
+    if not isinstance(status, str):
+        status = getattr(status, "value", None)
+    if status not in VALIDATED_STATUSES:
+        return None
+    if _sources_support_validation(sources):
+        return None
+    return FindingStatus.UNCONFIRMED.value
+
+
 class FindingCreate(FindingBase):
     discovered_at: datetime = Field(default_factory=datetime.utcnow)
     target_id: str
@@ -237,7 +303,13 @@ class FindingUpdate(BaseModel):
     launder a finding into a validated state.
     """
     title: Optional[str] = None
-    status: Optional[str] = None
+    # Typed as the enum, not ``str``: the write path used to accept any string
+    # and hand it straight to Neo4j, so a single PATCH could store a status the
+    # read model's enum has no member for -- every later GET then raised a
+    # ValidationError (500) instead of returning the finding. Coercing here
+    # rejects an unknown status at the boundary (422) rather than poisoning the
+    # node.
+    status: Optional[FindingStatus] = None
     severity: Optional[str] = None
     # A label, not a score -- same as FindingBase. This was declared float while
     # the base was str, so a create stored "0.8" and an update to the same node
@@ -258,6 +330,7 @@ class FindingUpdate(BaseModel):
     impact: Optional[str] = None
     remediation: Optional[str] = None
     probe_principal: Optional[str] = None
+    evidence_sources: Optional[List[str]] = None
 
 class FalsePositivePatternBase(BaseModel):
     vuln_type: str

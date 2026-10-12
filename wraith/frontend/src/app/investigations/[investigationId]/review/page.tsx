@@ -31,7 +31,10 @@ export default function ReviewQueuePage() {
     loadQueue();
   }, [investigationId]);
 
-  const handleReview = async (decision: 'confirmed' | 'false_positive') => {
+  // A review can only refute a finding. Confirmation in this system comes from
+  // executed evidence or independent corroboration, neither of which a reviewer
+  // can assert here, so there is deliberately no "confirm" action.
+  const handleReview = async (decision: 'false_positive') => {
     if (!selectedFinding) return;
     try {
       await reviewFinding(selectedFinding.id, decision, note);
@@ -50,7 +53,7 @@ export default function ReviewQueuePage() {
         <div>
           <Link href={`/investigations/${investigationId}`} className="text-indigo-400 text-sm font-bold hover:underline mb-2 inline-block">← Back to Dashboard</Link>
           <h1 className="text-4xl font-bold tracking-tight">Review Queue</h1>
-          <p className="text-slate-400">Verify low-confidence findings for investigation: <span className="font-mono">{investigationId}</span></p>
+          <p className="text-slate-400">Refute low-confidence findings for investigation: <span className="font-mono">{investigationId}</span></p>
         </div>
       </div>
 
@@ -137,12 +140,6 @@ export default function ReviewQueuePage() {
                 </div>
               </div>
               <div className="p-6 bg-slate-900 border-t border-slate-800 flex space-x-4">
-                <button
-                  onClick={() => handleReview('confirmed')}
-                  className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 rounded-xl transition-colors shadow-lg shadow-emerald-900/20"
-                >
-                  Confirm Finding
-                </button>
                 <button
                   onClick={() => handleReview('false_positive')}
                   className="flex-1 bg-red-600 hover:bg-red-500 text-white font-bold py-3 rounded-xl transition-colors shadow-lg shadow-red-900/20"

@@ -34,6 +34,18 @@ KILLSWITCH_KEY = "global:killswitch"
 # spent one, which is the safe direction.
 NONCE_KEY_PREFIX = "gate:spent_nonce"
 
+# Tools the exploit agent may authorise with a grant it mints itself. The
+# agent's dispatch layer only issues grants for these, and this floor is
+# re-checked here rather than trusted from the mint: a compromise that turns
+# the agent into an arbitrary grant-minter still cannot widen this list,
+# because the sandbox refuses to honour an exploit_agent grant for anything
+# else. Everything that sends exploit payloads (dalfox, xsstrike, jwt_tool,
+# commix, ghauri, sqlmap, hydra, msf) stays behind the runner's
+# approve-to-dispatch, where a human approves each submission.
+EXPLOIT_AGENT_READ_ONLY_TOOLS = frozenset({
+    "run_nmap_scan", "run_nuclei_scan", "run_arjun", "run_corsy", "run_nikto",
+})
+
 
 class GateError(Exception):
     """Refused before any packet was sent. Carries an HTTP status."""
@@ -397,6 +409,26 @@ def _check_destination(url: str, *, granted_host: str, rules: List[Dict[str, str
             f"'{investigation_id}'", 403)
 
 
+def _check_tool(grant_tools: Optional[List[str]], caller: str, tool: Optional[str]) -> None:
+    """The tool a grant authorises, checked against the call it is spent on.
+
+    A grant carrying a ``tools`` list may only be spent on those tools; a grant
+    without one predates the claim and stays unrestricted. Either way the caller
+    floor applies: ``exploit_agent`` grants are only honoured for the read-only
+    set, so a compromised agent cannot widen a grant it has already minted.
+    """
+    if caller == "exploit_agent":
+        if tool not in EXPLOIT_AGENT_READ_ONLY_TOOLS:
+            raise GateError(
+                f"caller 'exploit_agent' may only authorise "
+                f"{sorted(EXPLOIT_AGENT_READ_ONLY_TOOLS)}; got '{
+                    tool}'; refusing to send", 403)
+    if grant_tools and tool not in grant_tools:
+        raise GateError(
+            f"grant authorises {sorted(grant_tools)}; the call is for '{tool}'; "
+            f"refusing to send", 403)
+
+
 def authorization_context(
     *,
     caller: Optional[str],
@@ -404,6 +436,7 @@ def authorization_context(
     targets: List[str],
     settings,
     port_claim: Optional[str] = None,
+    tool: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Run every gate for a set of destinations and return the reusable context.
 
@@ -421,6 +454,8 @@ def authorization_context(
     if payload.get("caller") != caller:
         raise GateError(
             f"grant was issued to '{payload.get('caller')}' but the caller claims '{caller}'", 403)
+
+    _check_tool(payload.get("tools"), caller, tool)
 
     investigation_id = payload.get("inv")
     granted_host = (payload.get("host") or "").lower()
@@ -496,6 +531,7 @@ def enforce(
     targets: List[str],
     settings,
     port_claim: Optional[str] = None,
+    tool: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Run every gate for a set of destination URLs. Raises GateError to refuse.
 
@@ -509,6 +545,10 @@ def enforce(
     which is the exact over-grant the authority binding exists to prevent. The
     claim is compared against the grant's own ``ports`` field instead, so the
     authority stays meaningful: a grant for ``1-1000`` cannot be spent on 22.
+
+    ``tool`` names the sandbox tool the grant will be spent on. It stays
+    optional so pre-tool-scoping callers keep working, and so an SSE call with
+    no grant at all is still refused the same way it always was.
     """
     return authorization_context(
         caller=caller,
@@ -516,4 +556,5 @@ def enforce(
         targets=targets,
         settings=settings,
         port_claim=port_claim,
+        tool=tool,
     )

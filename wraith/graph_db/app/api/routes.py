@@ -407,13 +407,16 @@ async def link_cve(finding_id: str, cve: CVECreate, repo: Neo4jRepository = Depe
 async def review_finding(finding_id: str, request: ReviewRequest, repo: Neo4jRepository = Depends(get_repo)):
     """Record a human review decision.
 
-    Guarded because this is the human-in-the-loop step. Unauthenticated it is
-    just a way to confirm your own injected finding, or to mark a real one as a
-    false positive. The browser reaches it through the frontend's own
-    /api/findings/{id}/review route, which attaches the token server-side.
+    Guarded because a review changes a finding's status. A review may only
+    *refute*: confirmation comes from executed evidence or corroboration, and
+    there is no human validation phase, so "confirmed" is rejected here rather
+    than being turned into a validated status.
     """
-    if request.decision not in ["confirmed", "false_positive"]:
-         raise HTTPException(status_code=400, detail="decision must be confirmed or false_positive")
+    if request.decision != "false_positive":
+         raise HTTPException(
+             status_code=400,
+             detail="decision must be false_positive; there is no human confirmation path",
+         )
     return await repo.mark_reviewed(finding_id, request.decision, request.note)
 
 @router.post("/findings/{finding_id}/corroborate", response_model=Finding,

@@ -36,11 +36,12 @@ export async function POST(
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
 
-  // Same allowlist graph_db applies. Checking it here too means the browser gets
-  // a 400 with a useful message instead of a passthrough of a rejected request.
-  if (decision !== 'confirmed' && decision !== 'false_positive') {
+  // A review may only refute. Confirmation comes from executed evidence or
+  // corroboration, never from a sign-off, so 'confirmed' is rejected here too
+  // rather than being forwarded to a graph_db route that would refuse it anyway.
+  if (decision !== 'false_positive') {
     return NextResponse.json(
-      { error: 'decision must be confirmed or false_positive' },
+      { error: 'decision must be false_positive; there is no human confirmation path' },
       { status: 400 }
     );
   }

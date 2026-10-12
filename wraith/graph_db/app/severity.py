@@ -62,11 +62,18 @@ _TIERS = {
     "Information Exposure": 3,
     "Weak JWT Handling": 3,
     "Business Logic Flaw": 3,
-    "Missing Rate Limiting": 3,
     "Race Condition / TOCTOU": 3,
     "WebSocket Authentication Bypass": 3,
     "Mass Assignment": 3,
     # T2 -- configuration and browser-facing weaknesses.
+    #
+    # Missing Rate Limiting sits here, not at T3, because its proof is a
+    # *negative observation*: a limiter did not trigger. That is a real weakness
+    # but not a demonstrated consequence, so even the anonymous bonus lifts it
+    # only to "high" -- never "critical". A positive behavioural observation
+    # (an injected query returning data) keeps its T3/T4 weight; the distinction
+    # is the family, not a blanket cap on the rung.
+    "Missing Rate Limiting": 2,
     "Missing Security Headers": 2,
     "CORS Misconfiguration": 2,
     "Host Header Injection": 2,

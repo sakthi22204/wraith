@@ -5,7 +5,11 @@ from typing import List, Dict, Any, Set
 # The graph's statuses that mean "someone proved this". Anything else -- still
 # UNCONFIRMED, actively REFUTED, or left INCONCLUSIVE -- is a lead, not a
 # result, and must not carry weight in a score.
-VALIDATED_STATUSES = frozenset({"AI_VALIDATED", "CORROBORATED", "HUMAN_CONFIRMED"})
+#
+# HUMAN_CONFIRMED is excluded: there is no human review phase, and an executed
+# proof (AI_VALIDATED) or independent corroboration (CORROBORATED) is the whole
+# vocabulary of confirmation.
+VALIDATED_STATUSES = frozenset({"AI_VALIDATED", "CORROBORATED"})
 from .schemas import (
     AssessmentCoverage,
     AssessmentReport,
@@ -27,12 +31,10 @@ CONTENT_DERIVED_SOURCES = {
 
 
 # Finding states that count as a confirmed vulnerability, in the graph's own
-# vocabulary. AI_VALIDATED is where an executed proof lands; HUMAN_CONFIRMED is
-# the legacy spelling and what a human sign-off produces; CORROBORATED is a
-# second independent source agreeing.
-_CONFIRMED_STATUSES = frozenset(
-    {"AI_VALIDATED", "HUMAN_CONFIRMED", "CORROBORATED", "CONFIRMED"}
-)
+# vocabulary. AI_VALIDATED is where an executed proof lands; CORROBORATED is a
+# second independent source agreeing. HUMAN_CONFIRMED is deliberately absent --
+# confirmation comes from evidence, not from a sign-off.
+_CONFIRMED_STATUSES = frozenset({"AI_VALIDATED", "CORROBORATED"})
 
 # Validation outcomes that mean a request was actually sent and graded. The
 # BLOCKED_* outcomes are refusals -- scope, killswitch, rate limit or an
@@ -286,9 +288,8 @@ class AssessmentEngine:
         ]
         # The graph's FindingStatus vocabulary, not the validation runner's
         # outcome vocabulary. A graded validation that lands CONFIRMED is
-        # written as AI_VALIDATED, and the legacy "CONFIRMED" string maps to
-        # HUMAN_CONFIRMED. Counting only the runner's word would report zero
-        # confirmed findings for an investigation that has them.
+        # written as AI_VALIDATED. Counting only the runner's word would report
+        # zero confirmed findings for an investigation that has them.
         confirmed = _CONFIRMED_STATUSES
         families = sorted({
             str((f.get("properties") or {}).get("vuln_type", "") or "").strip()

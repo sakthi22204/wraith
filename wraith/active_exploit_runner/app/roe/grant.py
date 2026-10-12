@@ -42,6 +42,7 @@ def mint_grant(
     ports: str | list | None = None,
     cost: int = 1,
     ttl_seconds: int = DEFAULT_TTL_SECONDS,
+    tools: list | tuple | None = None,
 ) -> str:
     """Issue a grant binding one caller to one ``host:port`` for a short window.
 
@@ -51,6 +52,12 @@ def mint_grant(
     tool that dials a port the caller chose cannot be authorised by ``host``
     alone -- nmap's own default is ``1-1000``, so a grant saying
     ``juice_shop:80`` would silently authorise a thousand ports on that host.
+
+    ``tools`` names the sandbox tools this grant may authorise, so a grant is
+    spent on the tool it was issued for rather than on any tool that happens to
+    reach the same host. Sorted so two orders produce byte-identical payloads.
+    An absent entry means "any tool", kept for callers that predate the claim;
+    every new mint site names the tools it issues.
     """
     if not secret:
         raise ValueError("gate secret is not configured; refusing to mint a grant")
@@ -68,6 +75,8 @@ def mint_grant(
         # [443, 80] produce byte-identical payloads. Without that, two correct
         # callers would produce different signatures for the same grant.
         payload["ports"] = normalize_port_claim(ports)
+    if tools:
+        payload["tools"] = sorted(str(t) for t in tools)
     body = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     return f"{_b64e(body)}.{_b64e(hmac.new(secret.encode(), body, hashlib.sha256).digest())}"
 

@@ -94,6 +94,13 @@ class TestFloorFromEvidence:
         node = _finding(vuln_type="Missing Security Headers")
         assert severity_floor(node) == "high"
 
+    def test_missing_rate_limiting_stops_at_high_not_critical(self):
+        """A missing control is a negative observation, not a demonstrated
+        consequence. Even unauthenticated, the evidence-derived floor stops at
+        high; the top of the scale is reserved for proven impact."""
+        node = _finding(vuln_type="Missing Rate Limiting")
+        assert severity_floor(node) == "high"
+
     def test_authenticated_lower_tier_keeps_its_tier(self):
         node = _finding(vuln_type="Missing Security Headers",
                         probe_principal="reviewer")
