@@ -18,6 +18,13 @@ services:
       - NEO4J_AUTH=neo4j/${NEO4J_PASSWORD:?NEO4J_PASSWORD must be set; generate one, do not reuse a published default}
       - NEO4J_PLUGINS=["apoc"]
       - NEO4J_dbms_security_procedures_unrestricted=apoc.*
+      # Uncapped, Neo4j claims 2-4GB by default and is the largest single
+      # consumer on a 16GB host. Cap heap + page cache and the container at 2GB
+      # so the data layer cannot starve the workload services.
+      - NEO4J_server_memory_heap_initial__size=512m
+      - NEO4J_server_memory_heap_max__size=1g
+      - NEO4J_server_memory_pagecache_size=512m
+    mem_limit: 2g
     volumes:
       - neo4j_data:/data
     healthcheck:
