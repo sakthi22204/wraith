@@ -15,10 +15,5 @@ node_modules/
 *.db
 wraith-logs.txt
 
-# The corporate TLS-inspection root this network MITMs with. It is specific to
-# one machine and must not be published; ollama/Dockerfile expects it to be
-# supplied locally.
-ollama/certs/
-
 # Generated scan/report output; not part of the source tree.
 reports/
