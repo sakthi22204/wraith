@@ -6,6 +6,7 @@ import asyncio
 import random
 from datetime import datetime
 from typing import List, Optional, Dict, Any
+from urllib.parse import urlparse
 from neo4j import AsyncSession
 import neo4j.exceptions
 from .schema import (
@@ -18,6 +19,26 @@ from .schema import (
     ReconSession, AgentSession, Investigation, InvestigationCreate
 )
 from .severity import adjudicate_severity
+
+
+def scope_host(target: str) -> str:
+    """Reduce a target to the bare host used for scope matching.
+
+    Operators type a target as either a domain (``example.com``) or a URL
+    (``http://juice_shop:3000/path``). Every downstream consumer matches scope
+    by hostname only -- recon's ``normalize_domain`` strips the scheme/path, and
+    the runner compares against ``urlparse().hostname`` -- so storing the raw
+    string as a scope entry makes anything with a scheme, port, or path match
+    nothing. Normalize once, here, so the stored scope is always a bare host.
+    """
+    value = (target or "").strip()
+    if not value:
+        return value
+    candidate = value if "://" in value else f"//{value}"
+    host = urlparse(candidate).hostname
+    if host:
+        return host.lower()
+    return value.split("/")[0].split(":")[0].lower()
 
 class ParentNotFoundError(ValueError):
     """Raised when an upsert's MATCH target (host/port/endpoint) does not exist.
@@ -152,7 +173,7 @@ class Neo4jRepository:
         RETURN i
         """
         result = await self.session.run(query, id=i_id, name=name, target=investigation.target,
-                                      scope_domains=[investigation.target], created_at=now,
+                                      scope_domains=[scope_host(investigation.target)], created_at=now,
                                       platform=investigation.platform or "automatic",
                                       aggressive=investigation.aggressive)
         record = await result.single()
