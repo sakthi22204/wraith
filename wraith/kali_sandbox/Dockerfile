@@ -36,17 +36,28 @@ RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt
 # "inconclusive", so a changed upstream is a verdict that says "nothing", never
 # a verdict that says "clean".
 #
-# jwt_tool: ticarpi/jwt_tool. Python 3, stdlib + termcolor.
-RUN git clone --depth 1 https://github.com/ticarpi/jwt_tool.git /opt/jwt_tool \
+# jwt_tool: ticarpi/jwt_tool. Python 3, stdlib + termcolor. The clones get the
+# same 3-attempt retry the recon tool images use: a single flaky fetch under
+# concurrent rebuild load must not fail the whole build.
+RUN for i in 1 2 3; do \
+        git clone --depth 1 https://github.com/ticarpi/jwt_tool.git /opt/jwt_tool && break \
+        || { [ "$i" -lt 3 ] && sleep 5 || exit 1; }; \
+    done \
     && pip3 install --no-cache-dir --break-system-packages termcolor requests
 
 # Corsy: s0md3v/Corsy. Python 3 port needs requests and urllib3.
-RUN git clone --depth 1 https://github.com/s0md3v/Corsy.git /opt/Corsy \
+RUN for i in 1 2 3; do \
+        git clone --depth 1 https://github.com/s0md3v/Corsy.git /opt/Corsy && break \
+        || { [ "$i" -lt 3 ] && sleep 5 || exit 1; }; \
+    done \
     && pip3 install --no-cache-dir --break-system-packages requests urllib3
 
 # ghauri: r0oth3x49/ghauri (SQLi testing). Pip-installed from the checkout so
 # the `ghauri` console entrypoint lands on PATH.
-RUN git clone --depth 1 https://github.com/r0oth3x49/ghauri.git /opt/ghauri \
+RUN for i in 1 2 3; do \
+        git clone --depth 1 https://github.com/r0oth3x49/ghauri.git /opt/ghauri && break \
+        || { [ "$i" -lt 3 ] && sleep 5 || exit 1; }; \
+    done \
     && (test ! -f /opt/ghauri/requirements.txt \
         || pip3 install --no-cache-dir --break-system-packages -r /opt/ghauri/requirements.txt) \
     && pip3 install --no-cache-dir --break-system-packages /opt/ghauri
