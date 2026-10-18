@@ -34,6 +34,12 @@ class ProgramBase(BaseModel):
     name: str
     platform: str
     scope_domains: List[str] = []
+    # Explicit authorization for active traffic (aggressive recon scanners and
+    # exploit payload tools) against the investigation's hosts. Defaults True:
+    # an investigation exists to be tested, so the operator opts out rather than
+    # in. It is the authoritative record the runner's scope rules are seeded
+    # from; the runner refuses aggressive tools unless the covering rule said so.
+    aggressive: bool = True
 
 class ProgramCreate(ProgramBase):
     pass
@@ -47,6 +53,7 @@ class InvestigationBase(BaseModel):
     name: str
     target: str
     platform: Optional[str] = "automatic"
+    aggressive: bool = True
 
 class InvestigationCreate(InvestigationBase):
     pass

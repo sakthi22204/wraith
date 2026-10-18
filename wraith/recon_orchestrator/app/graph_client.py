@@ -55,10 +55,13 @@ class GraphClient:
         response.raise_for_status()
         return response.json()
 
-    async def get_program_scope(self, program_id: str):
-        response = await self._client.get(f"/investigations/{program_id}")
+    async def get_investigation(self, investigation_id: str):
+        response = await self._client.get(f"/investigations/{investigation_id}")
         response.raise_for_status()
-        data = response.json()
+        return response.json()
+
+    async def get_program_scope(self, program_id: str):
+        data = await self.get_investigation(program_id)
         return data.get("scope_domains", [])
 
     async def get_investigation_scope(self, investigation_id: str):

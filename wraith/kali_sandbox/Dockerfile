@@ -51,11 +51,27 @@ RUN git clone --depth 1 https://github.com/r0oth3x49/ghauri.git /opt/ghauri \
         || pip3 install --no-cache-dir --break-system-packages -r /opt/ghauri/requirements.txt) \
     && pip3 install --no-cache-dir --break-system-packages /opt/ghauri
 
+# Grant nmap the file capabilities it needs for SYN (raw-socket) scans. The
+# sandbox runs as the unprivileged `wraith` user, and Docker drops
+# NET_RAW/NET_ADMIN from the default capability set, so a plain `cap_add` is not
+# enough on its own: a non-root process only gets a capability into its
+# *effective* set via file capabilities on the binary. The caps go on
+# /usr/lib/nmap/nmap (the real binary), not the /usr/bin/nmap wrapper script —
+# file capabilities do not carry across the wrapper's `exec`, so capping the
+# script would grant them to the sh interpreter and drop them again on exec.
+# This is its own layer, placed before `COPY . .`, so it reuses the cached
+# heavy toolchain layers above and is not invalidated by source edits below.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libcap2-bin \
+    && rm -rf /var/lib/apt/lists/* \
+    && setcap cap_net_raw,cap_net_admin+ep /usr/lib/nmap/nmap
+
 COPY . .
 
 # Default command starts the main MCP server
 
   # Runs as a non-root user. This is the highest-risk container in the stack.
   RUN useradd --create-home --uid 10002 --shell /usr/sbin/nologin wraith
+
   USER wraith
 CMD ["python3", "-m", "mcp_servers.main"]

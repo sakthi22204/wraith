@@ -846,20 +846,45 @@ class ReconOrchestrator:
                 return True
         return False
 
+    async def _investigation_aggressive(self, investigation_id: str) -> bool:
+        """The investigation's explicit active-traffic authorization.
+
+        The graph record is the source of truth; the ROE rule copies it. If the
+        record cannot be read we default to the model default (True), which is
+        what graph_db would have returned for a record that predates the field.
+        """
+        try:
+            investigation = await graph_client.get_investigation(investigation_id)
+            if isinstance(investigation, dict):
+                return bool(investigation.get("aggressive", True))
+        except Exception as e:
+            print(f"Could not read aggressive flag for {investigation_id}: {e}")
+        return True
+
     async def _ensure_roe_rules(self, investigation_id: str, scope_domains: list):
         try:
+            aggressive = await self._investigation_aggressive(investigation_id)
             roe_rules = await fetch_roe_rules(
                 settings.RUNNER_URL,
                 investigation_id,
                 token=settings.RUNNER_ADMIN_TOKEN,
             )
-            existing = set(r.get("pattern") for r in roe_rules if r.get("pattern"))
+            existing = {
+                r.get("pattern"): bool(r.get("allow_aggressive"))
+                for r in roe_rules
+                if r.get("pattern")
+            }
             for d in scope_domains:
-                if d and d not in existing:
-                    try:
-                        await self._create_roe_rule(investigation_id, d, "allow", False)
-                    except Exception as e:
-                        print(f"Failed to create ROE rule for {d}: {e}")
+                if not d:
+                    continue
+                # Upsert: also (re)post when the rule exists but its aggressive
+                # flag disagrees, so toggling the investigation propagates.
+                if d in existing and existing[d] == aggressive:
+                    continue
+                try:
+                    await self._create_roe_rule(investigation_id, d, "allow", aggressive)
+                except Exception as e:
+                    print(f"Failed to create ROE rule for {d}: {e}")
         except Exception as e:
             print(f"Failed to ensure ROE rules: {e}")
 

@@ -184,7 +184,7 @@ class WebToolsServer(BaseSecurityServer):
             self.validate_url(url)
             return await self._scan(
                 "dalfox", url,
-                ["dalfox", "url", url, "--silence", "--no-color"],
+                ["dalfox", "scan", url, "--silence", "--no-color"],
                 DALFOX_TIMEOUT_SECONDS, parse_dalfox)
 
         @self.mcp.tool()

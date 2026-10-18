@@ -134,6 +134,30 @@ def is_in_scope(rules: List[Dict[str, str]], target: str) -> bool:
     return best_spec is not None and not best_is_deny
 
 
+def is_in_scope_aggressive(rules: List[Dict[str, str]], target: str) -> bool:
+    """Whether the most specific ALLOW covering ``target`` permits aggressive traffic.
+
+    Mirrors :func:`is_in_scope`'s specificity ordering, so the rule that decided
+    scope also decides the aggressive flag. DENY rules are ignored (scope already
+    refused them); a tie between ALLOW rules resolves conservatively (all must
+    opt in); no matching ALLOW -> False. This is the sandbox's independent copy of
+    the runner's check, read from the same rules table.
+    """
+    best_spec, best_aggressive = None, False
+    for rule in rules:
+        if str(rule.get("rule_type", "")).lower().endswith("deny"):
+            continue
+        if not _match(rule["pattern"], target):
+            continue
+        spec = _specificity(rule["pattern"])
+        aggressive = bool(rule.get("allow_aggressive", False))
+        if best_spec is None or spec > best_spec:
+            best_spec, best_aggressive = spec, aggressive
+        elif spec == best_spec:
+            best_aggressive = best_aggressive and aggressive
+    return best_spec is not None and best_aggressive
+
+
 def host_of(url: str) -> str:
     """The bare hostname of a destination, or "" if none can be read.
 
@@ -293,7 +317,7 @@ def killswitch_active(redis_url: str) -> bool:
         raise GateError(f"killswitch state unavailable ({type(exc).__name__}); refusing", 500) from exc
 
 
-def load_scope_rules(database_url: str, investigation_id: str) -> List[Dict[str, str]]:
+def load_scope_rules(database_url: str, investigation_id: str) -> List[Dict[str, Any]]:
     if not database_url:
         raise GateError("no database configured; cannot confirm scope", 500)
     try:
@@ -301,10 +325,13 @@ def load_scope_rules(database_url: str, investigation_id: str) -> List[Dict[str,
         engine = create_engine(database_url, pool_pre_ping=True)
         with engine.connect() as conn:
             rows = conn.execute(
-                text("SELECT pattern, rule_type FROM scope_rules WHERE investigation_id = :inv"),
+                text("SELECT pattern, rule_type, allow_aggressive FROM scope_rules WHERE investigation_id = :inv"),
                 {"inv": investigation_id},
             ).fetchall()
-        return [{"pattern": r[0], "rule_type": r[1]} for r in rows]
+        return [
+            {"pattern": r[0], "rule_type": r[1], "allow_aggressive": bool(r[2])}
+            for r in rows
+        ]
     except GateError:
         raise
     except Exception as exc:  # noqa: BLE001
@@ -357,7 +384,8 @@ def spend_nonce(token: str, settings, *, now: Optional[float] = None) -> bool:
 
 def _check_destination(url: str, *, granted_host: str, rules: List[Dict[str, str]],
                        investigation_id: str, port_claim: Optional[str] = None,
-                       granted_ports: Optional[set] = None) -> None:
+                       granted_ports: Optional[set] = None,
+                       require_aggressive: bool = False) -> None:
     """Every condition a single destination has to clear. Raises to refuse.
 
     ``port_claim`` is the set of ports the *request* will dial;
@@ -408,6 +436,15 @@ def _check_destination(url: str, *, granted_host: str, rules: List[Dict[str, str
             f"host '{host}' does not match any allow rule for investigation "
             f"'{investigation_id}'", 403)
 
+    # A host that is simply in scope is not authorised for active traffic. This
+    # is the sandbox's own copy of the runner's aggressive gate: even a valid
+    # grant cannot make the sandbox send a scan when the investigation's rule
+    # did not opt in.
+    if require_aggressive and not is_in_scope_aggressive(rules, host):
+        raise GateError(
+            f"host '{host}' is in scope but its allow rule does not authorize "
+            f"aggressive scanning for investigation '{investigation_id}'", 403)
+
 
 def _check_tool(grant_tools: Optional[List[str]], caller: str, tool: Optional[str]) -> None:
     """The tool a grant authorises, checked against the call it is spent on.
@@ -437,6 +474,7 @@ def authorization_context(
     settings,
     port_claim: Optional[str] = None,
     tool: Optional[str] = None,
+    require_aggressive: Optional[bool] = None,
 ) -> Dict[str, Any]:
     """Run every gate for a set of destinations and return the reusable context.
 
@@ -488,10 +526,18 @@ def authorization_context(
     # same grant against a corrected body.
     spend_nonce(grant_token, settings)
 
+    # A caller that named a tool reaches this gate only for a gated, network-
+    # sending tool (``gate_request`` filters on ``GATED_NETWORK_TOOLS`` before
+    # calling), so a named tool means the aggressive check applies. An explicit
+    # override exists for callers that know better.
+    if require_aggressive is None:
+        require_aggressive = tool is not None
+
     for url in targets:
         _check_destination(url, granted_host=granted_host, rules=rules,
                            investigation_id=investigation_id, port_claim=port_claim,
-                           granted_ports=granted_ports)
+                           granted_ports=granted_ports,
+                           require_aggressive=require_aggressive)
 
     return {
         "investigation_id": investigation_id,
@@ -500,6 +546,7 @@ def authorization_context(
         "granted_ports": sorted(granted_ports) if granted_ports else None,
         "port_claim": port_claim,
         "rules": rules,
+        "require_aggressive": require_aggressive,
         "cost": int(payload.get("cost", 1)),
         "expires_at": payload.get("exp"),
     }
@@ -521,6 +568,7 @@ def revalidate_hop(context: Dict[str, Any], url: str) -> None:
         investigation_id=context["investigation_id"],
         port_claim=context.get("port_claim"),
         granted_ports=set(granted_ports) if granted_ports else None,
+        require_aggressive=bool(context.get("require_aggressive", False)),
     )
 
 

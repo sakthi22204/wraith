@@ -238,6 +238,13 @@ services:
     build:
       context: ./kali_sandbox
     restart: unless-stopped
+    # Docker drops NET_RAW/NET_ADMIN by default. nmap needs them for SYN
+    # (raw-socket) scans; the binary itself carries matching file capabilities
+    # (see the Dockerfile) because the sandbox runs as the unprivileged
+    # `wraith` user, which does not inherit an effective set from cap_add.
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
     environment:
       - MSF_DATABASE_CONFIG=/opt/msf/config/database.yml
       # The sandbox verifies the runner's grant signature, and independently
