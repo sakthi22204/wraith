@@ -12,40 +12,33 @@
 #    the broker-spawned container and spends the tool's whole budget on the fetch
 #    before scanning anything. Baking them in removes both failure modes.
 #
-# The binary comes from the upstream release tarball rather than `go build`.
+# The binary is copied out of the official upstream image rather than downloaded
+# from the GitHub release zip. The release asset is served from a separate CDN
+# (release-assets.githubusercontent.com) that is reachable from some networks
+# and not others; the git-clone tool images still build while this one fails,
+# which is exactly the signature of that CDN being blocked. Docker Hub is the
+# transport we already depend on for every base image, so copying the binary
+# from it is the reliable path. The copied file is the same binary upstream
+# publishes as its supported build (statically linked, so it runs on bookworm).
+#
 # nuclei v3.11 declares `go 1.26` in its go.mod, and the official golang images
 # set GOTOOLCHAIN=local, so building from source needs a builder that does not
 # exist here yet -- the same class of failure the ffuf image already hit once.
-# The release artifact is also what upstream publishes as the supported build.
+ARG NUCLEI_VERSION=v3.11.1
+FROM projectdiscovery/nuclei:${NUCLEI_VERSION} AS nuclei_bin
+
 FROM debian:bookworm-slim
 
-ARG NUCLEI_VERSION=v3.11.1
 ARG NUCLEI_TEMPLATES_REF=v10.5.0
-ARG TARGETARCH=amd64
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates curl git unzip \
+        ca-certificates git \
     && rm -rf /var/lib/apt/lists/*
 
-# The release download and the templates git clone below hit the network and can
-# fail transiently when the recon phase builds many tool images concurrently;
-# retry each before failing the build.
-RUN for i in 1 2 3; do \
-        arch="${TARGETARCH}"; \
-        case "${TARGETARCH}" in \
-            amd64|arm64) ;; \
-            *) echo "unsupported arch: ${TARGETARCH}" >&2; exit 1 ;; \
-        esac; \
-        ver="${NUCLEI_VERSION#v}"; \
-        if curl -fsSL -o /tmp/nuclei.zip \
-            "https://github.com/projectdiscovery/nuclei/releases/download/${NUCLEI_VERSION}/nuclei_${ver}_linux_${arch}.zip" \
-           && unzip -o -q /tmp/nuclei.zip nuclei -d /tmp \
-           && install -m 0755 /tmp/nuclei /usr/local/bin/nuclei \
-           && rm -rf /tmp/nuclei /tmp/nuclei.zip; then break; fi; \
-        [ "$i" -lt 3 ] && sleep 5 || exit 1; \
-    done
+COPY --from=nuclei_bin /usr/local/bin/nuclei /usr/local/bin/nuclei
 
-# Installed where nuclei's own lookup expects them, so no -ut is needed at run time.
+# The templates git clone hits github.com and can fail transiently when the recon
+# phase builds many tool images concurrently; retry before failing the build.
 RUN for i in 1 2 3; do \
         git clone --depth 1 --branch ${NUCLEI_TEMPLATES_REF} \
             https://github.com/projectdiscovery/nuclei-templates.git /root/nuclei-templates \
