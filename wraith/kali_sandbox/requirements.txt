@@ -1,5 +1,11 @@
-mcp<2.0.0
-pydantic>=2.0.0
+# Pinned to a known-good pair. `mcp` reaches into `pydantic._internal` (it
+# imports eval_type_backport in func_metadata), so an unpinned `mcp<2` +
+# `pydantic>=2` lets a fresh build resolve a combination where that internal
+# symbol is gone and the sandbox dies at import with
+# "cannot import name 'eval_type_backport'". These two are the versions the
+# image is tested against; bump them together, not independently.
+mcp==1.30.0
+pydantic==2.13.5
 httpx>=0.24.0
 fastapi>=0.100.0
 uvicorn>=0.23.0
