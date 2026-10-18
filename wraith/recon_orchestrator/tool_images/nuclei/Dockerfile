@@ -27,22 +27,30 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl git unzip \
     && rm -rf /var/lib/apt/lists/*
 
-RUN set -eux; \
-    case "${TARGETARCH}" in \
-        amd64) arch=amd64 ;; \
-        arm64) arch=arm64 ;; \
-        *) echo "unsupported arch: ${TARGETARCH}" >&2; exit 1 ;; \
-    esac; \
-    ver="${NUCLEI_VERSION#v}"; \
-    curl -fsSL -o /tmp/nuclei.zip \
-        "https://github.com/projectdiscovery/nuclei/releases/download/${NUCLEI_VERSION}/nuclei_${ver}_linux_${arch}.zip"; \
-    unzip -o -q /tmp/nuclei.zip nuclei -d /tmp; \
-    install -m 0755 /tmp/nuclei /usr/local/bin/nuclei; \
-    rm -rf /tmp/nuclei /tmp/nuclei.zip
+# The release download and the templates git clone below hit the network and can
+# fail transiently when the recon phase builds many tool images concurrently;
+# retry each before failing the build.
+RUN for i in 1 2 3; do \
+        arch="${TARGETARCH}"; \
+        case "${TARGETARCH}" in \
+            amd64|arm64) ;; \
+            *) echo "unsupported arch: ${TARGETARCH}" >&2; exit 1 ;; \
+        esac; \
+        ver="${NUCLEI_VERSION#v}"; \
+        if curl -fsSL -o /tmp/nuclei.zip \
+            "https://github.com/projectdiscovery/nuclei/releases/download/${NUCLEI_VERSION}/nuclei_${ver}_linux_${arch}.zip" \
+           && unzip -o -q /tmp/nuclei.zip nuclei -d /tmp \
+           && install -m 0755 /tmp/nuclei /usr/local/bin/nuclei \
+           && rm -rf /tmp/nuclei /tmp/nuclei.zip; then break; fi; \
+        [ "$i" -lt 3 ] && sleep 5 || exit 1; \
+    done
 
 # Installed where nuclei's own lookup expects them, so no -ut is needed at run time.
-RUN git clone --depth 1 --branch ${NUCLEI_TEMPLATES_REF} \
-        https://github.com/projectdiscovery/nuclei-templates.git /root/nuclei-templates \
-    && rm -rf /root/nuclei-templates/.git
+RUN for i in 1 2 3; do \
+        git clone --depth 1 --branch ${NUCLEI_TEMPLATES_REF} \
+            https://github.com/projectdiscovery/nuclei-templates.git /root/nuclei-templates \
+            && rm -rf /root/nuclei-templates/.git && break || \
+        { [ "$i" -lt 3 ] && sleep 5 || exit 1; }; \
+    done
 
 ENTRYPOINT ["nuclei"]

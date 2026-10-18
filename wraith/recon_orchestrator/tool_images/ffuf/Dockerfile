@@ -8,7 +8,12 @@ FROM golang:1.21-bookworm AS builder
 # v2.3.0 declares go 1.20, so it builds here -- and pinning means the next
 # upstream go bump cannot break this image again.
 ARG FFUF_VERSION=v2.3.0
-RUN git clone --depth 1 --branch ${FFUF_VERSION} https://github.com/ffuf/ffuf.git /ffuf
+# git clone can fail transiently when the recon phase builds many tool images
+# concurrently; retry before failing the build.
+RUN for i in 1 2 3; do \
+      git clone --depth 1 --branch ${FFUF_VERSION} https://github.com/ffuf/ffuf.git /ffuf && break || \
+      { [ "$i" -lt 3 ] && sleep 5 || exit 1; }; \
+    done
 
 WORKDIR /ffuf
 
