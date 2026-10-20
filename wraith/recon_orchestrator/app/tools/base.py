@@ -6,7 +6,11 @@ from typing import List, Optional
 from urllib.parse import urlsplit
 from ..schemas import ToolResults, HostResult, PortResult, EndpointResult
 from ..config import settings
-from ..docker_spawner import docker_spawner
+from ..docker_spawner import (
+    ToolDeadlineReached,
+    ToolOOMKilled,
+    docker_spawner,
+)
 from .proxy import proxy_env, proxy_volumes, proxy_extra_hosts
 
 
@@ -152,19 +156,24 @@ class ReconTool(ABC):
             f"{self.name} declares no image but implements no in-process run"
         )
 
-    async def run(self, domain: str, extra_urls: Optional[List[str]] = None) -> ToolResults:
+    async def run(self, domain: str, extra_urls: Optional[List[str]] = None,
+                  force_extra: bool = False) -> ToolResults:
         """Run the tool. ``extra_urls`` are endpoints already discovered on
         ``domain`` that the tool may want to aim at individually.
 
         Only tools that opt in via ``accepts_extra_urls`` see them; every other
-        tool's command is byte-identical to what it was before.
+        tool's command is byte-identical to what it was before. The exception
+        is ``force_extra``, which a caller sets for a batch run whose whole
+        purpose is the extra list (httpx re-aimed at discovered ports) -- the
+        tool then consumes it without having to declare it for every run.
         """
         if self.image is None:
             return await self.run_in_process(domain)
-        # Only a tool that opted in is called with the extra argument, and only
-        # when there is something to pass. Every other tool's get_command is
-        # invoked exactly as before, so its signature stays get_command(domain).
-        if extra_urls and self.accepts_extra_urls:
+        # Only a tool that opted in (or was explicitly forced) is called with
+        # the extra argument, and only when there is something to pass. Every
+        # other tool's get_command is invoked exactly as before, so its
+        # signature stays get_command(domain).
+        if extra_urls and (force_extra or self.accepts_extra_urls):
             cmd = self.get_command(domain, extra_urls)
         else:
             cmd = self.get_command(domain)
@@ -173,13 +182,41 @@ class ReconTool(ABC):
         if eh:
             merged_hosts.update(eh)
         merged_hosts.update(proxy_extra_hosts())
-        raw_output = await docker_spawner.spawn_container(
-            self.image, cmd,
-            timeout=self.timeout or settings.TOOL_TIMEOUT,
-            extra_hosts=merged_hosts or None,
-            environment=proxy_env(),
-            volumes=proxy_volumes(),
-            mem_limit=getattr(self, "mem_limit", None),
-            cpu_quota=getattr(self, "cpu_quota", None),
-        )
+        try:
+            raw_output = await docker_spawner.spawn_container(
+                self.image, cmd,
+                timeout=self.timeout or settings.TOOL_TIMEOUT,
+                extra_hosts=merged_hosts or None,
+                environment=proxy_env(),
+                volumes=proxy_volumes(),
+                mem_limit=getattr(self, "mem_limit", None),
+                cpu_quota=getattr(self, "cpu_quota", None),
+            )
+        except ToolDeadlineReached as e:
+            return self._aborted(e.logs, domain, timed_out=True)
+        except ToolOOMKilled as e:
+            return self._aborted(e.logs, domain, timed_out=False)
         return self.parse_output(raw_output, domain)
+
+    def _aborted(self, logs: str, domain: str, timed_out: bool) -> ToolResults:
+        """Parse what an aborted container flushed, and say why it stopped.
+
+        The partial output is evidence: a deadline-stopped scan that found
+        three things before the cut-off still found three things. The flag is
+        what lets the orchestrator mark the attempt TIMED_OUT (or OOM-failed)
+        instead of retrying a budget -- or a memory limit -- that will not fit
+        the same command any better the second time.
+        """
+        results = self.parse_output(logs, domain)
+        if timed_out:
+            results.timed_out = True
+            results.notes.append(
+                f"{self.name} was stopped at its wall-clock budget; "
+                f"partial output kept"
+            )
+        else:
+            results.oom_killed = True
+            results.notes.append(
+                f"{self.name} was killed for exceeding its memory limit"
+            )
+        return results

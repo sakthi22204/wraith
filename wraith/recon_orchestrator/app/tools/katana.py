@@ -5,24 +5,35 @@ from .proxy import add_proxy_flags
 from ..schemas import ToolResults, EndpointResult
 
 class KatanaTool(ReconTool):
-    # Deep crawl: budget must exceed katana's own -crawl-duration cap plus
-    # time to wind down and emit JSON, or the spawner abandons the container.
-    timeout = 900
+    # Bounded crawl: the wall-clock budget must exceed -crawl-duration plus time
+    # to wind down and emit JSON, or the spawner abandons the container. The
+    # crawl itself is capped at 180s -- a recon session that lets one tool sit
+    # for 10 minutes on every target turns the whole run into a crawl queue,
+    # and the routes worth having (API paths, parameterised endpoints) show up
+    # in the first minutes of a pass.
+    timeout = 300
     # katana self-terminates so it never outlives its budget (and leak an
     # orphaned container when a large site is crawled at a low CPU quota).
-    crawl_duration = "600s"
+    crawl_duration = "180s"
+    # Two vCPUs, like the other stateful tools: at the shared 0.5-CPU default a
+    # crawl spends most of its 300s budget preempted rather than crawling.
+    cpu_quota = 100000
 
     def __init__(self):
         super().__init__(name="katana", image="projectdiscovery/katana:latest")
 
     def get_command(self, domain: str) -> List[str]:
         # -u domain, -j for JSON output (katana uses -j not -json)
-        # -crawl-duration bounds the run; -proxy routes egress through the
-        # intercepting sidecar when enabled (Go tools resolve the single-label
-        # sidecar host via extra_hosts).
+        # -crawl-duration bounds the run; -depth bounds how deep the crawl
+        # descends (3: seed pages, their links, and one level past those --
+        # enough for API routes without turning a marketing site into a
+        # full-site mirror); -proxy routes egress through the intercepting
+        # sidecar when enabled (Go tools resolve the single-label sidecar host
+        # via extra_hosts).
         return add_proxy_flags(
             ["-u", target_url(domain), "-j", "-silent",
-             "-crawl-duration", self.crawl_duration],
+             "-crawl-duration", self.crawl_duration,
+             "-depth", "3"],
             "-proxy",
         )
 

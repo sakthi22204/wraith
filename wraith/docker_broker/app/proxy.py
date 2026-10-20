@@ -89,21 +89,30 @@ class DockerProxy:
             return {"state": container, "status": state.get("Status"),
                     "code": state.get("ExitCode"), "oom": state.get("OOMKilled")}
 
+        # TimedOut / OOMKilled are carried alongside StatusCode so the caller can
+        # tell an aborted scan (stop it, keep the partial output, do not retry a
+        # budget that will not fit) from a tool that simply exited non-zero.
+        # StatusCode alone cannot: an OOM-kill and a tool's own exit 1 both
+        # arrive as numbers, and only one of them means "never retry this".
         while True:
             try:
                 snap = await asyncio.to_thread(snapshot)
             except docker.errors.NotFound:
-                return {"StatusCode": 0, "Error": {"Message": "Container already removed"}}
+                return {"StatusCode": 0, "Error": {"Message": "Container already removed"},
+                        "TimedOut": False, "OOMKilled": False}
             if snap["status"] in ("exited", "dead", "created"):
                 code = snap["code"]
                 if snap["oom"]:
-                    return {"StatusCode": int(code or 137), "Error": {"Message": "OOM killed by the container runtime"}}
-                return {"StatusCode": int(code or 0), "Error": None}
+                    return {"StatusCode": int(code or 137), "Error": {"Message": "OOM killed by the container runtime"},
+                            "TimedOut": False, "OOMKilled": True}
+                return {"StatusCode": int(code or 0), "Error": None,
+                        "TimedOut": False, "OOMKilled": False}
             if deadline and _time.monotonic() >= deadline:
                 def stop():
                     snap["state"].stop(timeout=5)
                 await asyncio.to_thread(stop)
-                return {"StatusCode": -1, "Error": {"Message": "Pass exceeded its wall-clock budget; container stopped"}}
+                return {"StatusCode": -1, "Error": {"Message": "Pass exceeded its wall-clock budget; container stopped"},
+                        "TimedOut": True, "OOMKilled": False}
             await asyncio.sleep(2)
 
     async def get_logs(self, container_id: str):

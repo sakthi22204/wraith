@@ -15,6 +15,8 @@ when the covering ROE allow rule is registered with ``allow_aggressive=True``.
 Without that explicit authorization the scanner is never dispatched (the default
 for every program), and with it the remote host scans exactly like a local one.
 """
+import asyncio
+
 import pytest
 
 from app.orchestrator import ReconOrchestrator, _authority_of
@@ -389,4 +391,160 @@ async def test_a_new_authority_gets_its_own_scan():
     assert any(k.startswith("nuclei:http://juice_shop:3000:") for k in launched)
     assert any(k.startswith("nuclei:http://juice_shop:3001:") for k in launched), (
         f"the second authority was never scanned: {sorted(launched)}"
+    )
+
+
+# -- passes coalesce instead of stacking --------------------------------------
+#
+# The trigger fires once per completed tool, and four tools can widen the
+# surface while the pass they scheduled is still waiting on the per-target
+# lock. Without coalescing each of those firings queued another full pass:
+# the session's status table grew a ghost entry per firing (counted in the
+# progress denominator for the whole run, never updated, swept to SKIPPED at
+# the end), and the scans themselves stacked behind the lock one budget at a
+# time. One pass per target at a time, always carrying the latest route set.
+
+
+class _Fire:
+    """A completed-tool name for the trigger, without a real tool behind it."""
+
+    def __init__(self, name):
+        self.name = name
+
+
+async def _fire_raw(orc, completed, queued, tasks, domain="juice_shop:3000"):
+    """One trigger pass, without awaiting what it launched."""
+    await orc._evaluate_conditional_triggers(
+        session_id="s1", investigation_id="i1", domain=domain,
+        completed_tool=_Fire(completed), queued_keys=queued, running_tasks=tasks,
+    )
+
+
+@pytest.mark.asyncio
+async def test_triggers_firing_while_a_pass_is_queued_schedule_one_run():
+    orc = orchestrator_with(
+        EndpointResult(host="juice_shop", url="http://juice_shop:3000/api",
+                       method="GET", source_tool="httpx"),
+    )
+
+    queued, tasks = set(), []
+    await _fire_raw(orc, "httpx", queued, tasks)
+    scheduled_after_first_fire = len(tasks)
+
+    # katana reports a parameterised route before the queued pass has started.
+    orc.results["s1"].endpoints.append(
+        EndpointResult(host="juice_shop",
+                       url="http://juice_shop:3000/rest/products/search?q=",
+                       method="GET", source_tool="katana")
+    )
+    await _fire_raw(orc, "katana", queued, tasks)
+
+    assert len(tasks) == scheduled_after_first_fire, (
+        "a second nuclei pass was stacked behind one that had not even started"
+    )
+    # The route-count key is still recorded, so a *later* widening (after this
+    # pass has run) schedules the next one rather than colliding with it.
+    assert any(k.startswith("nuclei:http://juice_shop:3000:") for k in queued)
+
+    for t in tasks:
+        await t
+
+    assert len(orc.nuclei.targets) == 1, (
+        f"{len(orc.nuclei.targets)} nuclei runs happened for one queued pass"
+    )
+    handed = {u for _, urls in orc.nuclei.targets for u in urls}
+    assert "http://juice_shop:3000/rest/products/search?q=" in handed, (
+        "coalescing dropped the routes that widened while the pass was queued"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_widening_during_a_running_pass_schedules_exactly_one_catchup():
+    """A queued pass is folded into the pass that will run; a widening that
+    arrives while a pass is RUNNING gets one catch-up -- and a third widening
+    while that catch-up waits is folded into it, not scheduled again."""
+    orc = orchestrator_with(
+        EndpointResult(host="juice_shop", url="http://juice_shop:3000/api",
+                       method="GET", source_tool="httpx"),
+    )
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    class _BlockingNuclei:
+        name = "nuclei"
+        accepts_extra_urls = True
+        # The lock is what makes "RUNNING" a real state here: without it the
+        # catch-up would start immediately and the very window this test is
+        # about (a pass running while new routes arrive) would not exist.
+        serialize_per_target = True
+
+        def __init__(self):
+            self.targets = []
+
+        async def run(self, domain, extra_urls=None):
+            self.targets.append((domain, tuple(extra_urls or ())))
+            started.set()
+            await release.wait()
+            return ToolResults()
+
+    orc.nuclei = _BlockingNuclei()
+
+    queued, tasks = set(), []
+    await _fire_raw(orc, "httpx", queued, tasks)
+    await asyncio.wait_for(started.wait(), timeout=5)
+    # The pass is RUNNING now: its status is what gates rescheduling.
+
+    def widen(url, source):
+        orc.results["s1"].endpoints.append(
+            EndpointResult(host="juice_shop", url=url, method="GET",
+                           source_tool=source))
+
+    widen("http://juice_shop:3000/rest/products/search?q=", "js_routes")
+    before_catchup = len(tasks)
+    await _fire_raw(orc, "js_routes", queued, tasks)
+    assert len(tasks) == before_catchup + 1, (
+        "a widening during a running pass must schedule one catch-up"
+    )
+
+    widen("http://juice_shop:3000/swagger", "ffuf")
+    await _fire_raw(orc, "ffuf", queued, tasks)
+    assert len(tasks) == before_catchup + 1, (
+        "a third widening stacked a second catch-up behind the first"
+    )
+
+    release.set()
+    for t in tasks:
+        await t
+
+    assert len(orc.nuclei.targets) == 2, (
+        f"expected the original pass plus one catch-up, got {len(orc.nuclei.targets)}"
+    )
+    catchup_routes = set(orc.nuclei.targets[1][1])
+    assert "http://juice_shop:3000/rest/products/search?q=" in catchup_routes
+    assert "http://juice_shop:3000/swagger" in catchup_routes, (
+        "the catch-up did not carry the routes that widened while it waited"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_status_table_gets_one_unsuffixed_entry_per_scan_target():
+    """queued_keys keeps the route count; the status table must not. A
+    suffixed status entry is never touched again by _run_tool_body (which
+    writes f"{tool}:{domain}"), so it stays WAITING forever, is reported as
+    "never ran" at session end, and sits in the progress denominator -- the
+    reason progress crawled below 100% on every multi-pass scan."""
+    orc = orchestrator_with(
+        EndpointResult(host="juice_shop", url="http://juice_shop:3000/api",
+                       method="GET", source_tool="httpx"),
+    )
+
+    await trigger(orc, completed="httpx")
+
+    statuses = orc.sessions["s1"].tool_statuses
+    assert statuses.get("nuclei:http://juice_shop:3000") is not None, (
+        "the scan target has no status entry at all"
+    )
+    assert not any(k.startswith("nuclei:http://juice_shop:3000:") for k in statuses), (
+        f"route-counted ghost entries in the status table: {sorted(statuses)}"
     )

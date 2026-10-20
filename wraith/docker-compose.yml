@@ -84,6 +84,12 @@ services:
       # scan starts, so the copies cannot drift apart unnoticed.
       - RUNNER_URL=http://active_exploit_runner:8004/api/v1
       - RUNNER_ADMIN_TOKEN=${ADMIN_API_TOKEN}
+      # Tool container budgets, tunable without an image rebuild. TOOL_TIMEOUT
+      # is the per-tool wall clock; CPU_QUOTA/MEM_LIMIT (cgroup v1 units:
+      # 100000 = one full CPU) cap every tool container the broker starts.
+      - TOOL_TIMEOUT=${RECON_TOOL_TIMEOUT:-300}
+      - CPU_QUOTA=${RECON_CPU_QUOTA:-50000}
+      - MEM_LIMIT=${RECON_MEM_LIMIT:-512m}
     depends_on:
       graph_api:
         condition: service_healthy

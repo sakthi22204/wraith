@@ -8,7 +8,9 @@ off httpx endpoints (katana, ffuf, linkfinder, kiterunner, trufflehog), the
 entire HTTP half of recon silently produced nothing while reporting success.
 
 The port list comes from naabu, which has already touched those ports, so
-re-aiming httpx at them widens nothing; it only fixes the aim.
+re-aiming httpx at them widens nothing; it only fixes the aim. One batched
+pass covers every discovered port -- httpx takes a comma-joined -u list --
+instead of one container per port paying image startup for a single probe.
 """
 
 import pytest
@@ -18,14 +20,21 @@ from app.schemas import EndpointResult, PortResult, ReconSessionStatus, ToolResu
 
 
 class _StubTool:
-    """Stands in for a ReconTool; records every target it is handed."""
+    """Stands in for a ReconTool; records every target it is handed.
+
+    Both halves matter: the domain the run was invoked on, and the extra URL
+    list that is the whole point of the port batch.
+    """
 
     def __init__(self, name):
         self.name = name
         self.targets = []
+        self.extra_url_batches = []
 
-    async def run(self, domain):
+    async def run(self, domain, extra_urls=None, force_extra=False):
         self.targets.append(domain)
+        if extra_urls:
+            self.extra_url_batches.append(tuple(extra_urls))
         return ToolResults()
 
 
@@ -46,13 +55,14 @@ def _open(port, host="juice_shop", protocol="tcp", state="open"):
                       state=state, source_tool="naabu")
 
 
-async def _fire(orch, domain="juice_shop", completed="naabu"):
+async def _fire(orch, domain="juice_shop", completed="naabu", queued=None):
     """Run the trigger pass for `completed` and await whatever it launched."""
 
     class _Done:
         name = completed
 
-    queued, tasks = set(), []
+    queued = set() if queued is None else queued
+    tasks = []
     await orch._evaluate_conditional_triggers(
         session_id="s1", investigation_id="i1", domain=domain,
         completed_tool=_Done(), queued_keys=queued, running_tasks=tasks,
@@ -68,22 +78,27 @@ async def test_an_open_port_is_probed_and_not_merely_recorded():
 
     await _fire(orch)
 
-    assert "juice_shop:3000" in orch.httpx_probe.targets, (
+    probed = [u for batch in orch.httpx_probe.extra_url_batches for u in batch]
+    assert "http://juice_shop:3000" in probed, (
         "the discovered port was never probed -- httpx only saw the bare host, "
         "so a service on anything but 80/443 is invisible to recon"
     )
 
 
 @pytest.mark.asyncio
-async def test_the_portless_run_still_happens():
-    """The original bare-host probe is kept, not replaced."""
-    orch = _orchestrator_with_results([_open(3000)])
+async def test_the_port_batch_runs_once_on_the_bare_host():
+    """The batch is one run against the seed domain carrying every port URL;
+    the original bare-host probe at session start is kept, not replaced."""
+    orch = _orchestrator_with_results([_open(3000), _open(8080)])
 
     await _fire(orch)
 
-    # queued already contains httpx:juice_shop (the initial wave); the new
-    # entry is the port-scoped one, and both are recorded as separate keys.
-    assert "juice_shop:3000" in orch.httpx_probe.targets
+    assert orch.httpx_probe.targets == ["juice_shop"], (
+        "the port batch must run once, on the seed domain"
+    )
+    assert orch.httpx_probe.extra_url_batches == [
+        ("http://juice_shop:3000", "http://juice_shop:8080")
+    ], "the discovered ports must reach httpx as one comma-joined batch"
 
 
 @pytest.mark.asyncio
@@ -120,7 +135,7 @@ async def test_closed_and_udp_ports_are_not_probed():
 
 
 @pytest.mark.asyncio
-async def test_a_port_is_not_scheduled_twice():
+async def test_the_port_batch_is_not_scheduled_twice():
     orch = _orchestrator_with_results([_open(3000)])
 
     class _Done:
@@ -135,6 +150,10 @@ async def test_a_port_is_not_scheduled_twice():
         for t in tasks:
             await t
 
-    assert orch.httpx_probe.targets.count("juice_shop:3000") == 1, (
-        "the same port was queued twice and probed twice"
+    assert len(orch.httpx_probe.targets) == 1, (
+        f"the port batch was queued {len(orch.httpx_probe.targets)} times and "
+        "probed more than once"
     )
+    assert orch.httpx_probe.extra_url_batches == [
+        ("http://juice_shop:3000",)
+    ], "the same port was probed twice"

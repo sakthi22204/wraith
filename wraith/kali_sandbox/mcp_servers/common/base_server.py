@@ -57,8 +57,27 @@ class BaseSecurityServer:
         return url
 
     def split_host_port(self, target: str) -> tuple[str, Optional[str]]:
-        host, sep, port = target.partition(":")
-        return host, (port if sep else None)
+        """Split a dial target into host and optional port.
+
+        Targets reach the sandbox in URL form (`http://host:3000/path`) as
+        often as bare `host:port`, because the executor normalises every
+        destination to a URL. A split on the first colon of a URL therefore
+        returns `http` as the host and `//host:3000` as the "port" -- nmap
+        reads that as an illegal port specification and refuses to scan.
+        Isolate the authority first, then take the last colon.
+        """
+        rest = target.split("://", 1)[-1].split("/", 1)[0]
+        if rest.startswith("["):
+            end = rest.find("]")
+            if end != -1:
+                host = rest[:end + 1]
+                if rest[end + 1:end + 2] == ":" and rest[end + 2:].isdigit():
+                    return host, rest[end + 2:]
+                return host, None
+        host, sep, port = rest.rpartition(":")
+        if sep and port.isdigit() and ":" not in host:
+            return host, port
+        return rest, None
 
     def verify_caller(self, tool_name: str, caller: Optional[str]):
         # All tools now require verification to be safe,

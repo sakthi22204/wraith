@@ -43,6 +43,13 @@ class ToolResults(BaseModel):
     # it silently, and "fuzzed, found nothing" is indistinguishable from
     # "never ran".
     notes: List[str] = []
+    # How the container exited. A deadline stop means the scan ran and was
+    # cut off -- keep the partial output, do not retry the same budget. An
+    # OOM kill means the same command against the same limit fails again.
+    # Both are set by ReconTool.run from the spawner's abort exceptions, so
+    # the orchestrator can decide without inspecting logs.
+    timed_out: bool = False
+    oom_killed: bool = False
 
 class ReconSessionStatus(BaseModel):
     session_id: str

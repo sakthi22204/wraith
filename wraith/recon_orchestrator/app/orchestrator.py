@@ -153,6 +153,16 @@ class ReconOrchestrator:
         self._target_locks: Dict[str, asyncio.Lock] = {}
         self._scanned_urls: Dict[str, set] = {}
 
+        # Passes that have been scheduled but have not started yet, keyed
+        # `session:tool:target`. See the nuclei trigger: every tool that widens
+        # the surface schedules another pass while the previous one may still
+        # be running, and without this the passes stack -- each one waiting on
+        # the per-target lock, each one added to the session's status table as
+        # a ghost entry the progress bar counts forever. A pending pass is
+        # coalesced (its route set is folded into the pass that will run), and
+        # the key is discarded when the pass actually starts.
+        self._pending_passes: set = set()
+
     @staticmethod
     def _is_local_target(domain: str) -> bool:
         host = domain.rsplit(":", 1)[0]
@@ -188,7 +198,7 @@ class ReconOrchestrator:
         try:
             await graph_client.update_recon_session(session_id, "running")
         except Exception as e:
-            print(f"Failed to update recon session {session_id} to running: {e}")
+            print(f"Failed to update recon session {session_id} to running: {type(e).__name__}: {e}")
 
         graph_session_id = None
         # Register session in graph_db
@@ -196,7 +206,7 @@ class ReconOrchestrator:
             graph_session = await graph_client.create_scan_session(investigation_id)
             graph_session_id = graph_session["id"]
         except Exception as e:
-            print(f"Failed to register session in graph_db for session {session_id}: {e}")
+            print(f"Failed to register session in graph_db for session {session_id}: {type(e).__name__}: {e}")
 
         # Core base tools run initially.
         # dnsx and tlsx belong here: both are passive (DNS queries and a single
@@ -337,7 +347,7 @@ class ReconOrchestrator:
             try:
                 await graph_client.update_scan_session(graph_session_id, session.status)
             except Exception as e:
-                print(f"Failed to update session status in graph_db: {e}")
+                print(f"Failed to update session status in graph_db: {type(e).__name__}: {e}")
 
         # Final update to ReconSession in graph_db
         max_attempts = 3
@@ -359,10 +369,10 @@ class ReconOrchestrator:
                 if attempt == max_attempts:
                     import logging
                     logging.getLogger("recon_orchestrator").error(
-                        f"CRITICAL ERROR: Failed to update recon session {session_id} in graph_db after {max_attempts} attempts: {e}"
+                        f"CRITICAL ERROR: Failed to update recon session {session_id} in graph_db after {max_attempts} attempts: {type(e).__name__}: {e}"
                     )
                 else:
-                    print(f"Failed to update recon session {session_id} in graph_db on attempt {attempt}/{max_attempts}: {e}. Retrying in {delay}s...")
+                    print(f"Failed to update recon session {session_id} in graph_db on attempt {attempt}/{max_attempts}: {type(e).__name__}: {e}. Retrying in {delay}s...")
                     await asyncio.sleep(delay)
                     delay *= 2
 
@@ -393,9 +403,17 @@ class ReconOrchestrator:
         # to a local one, and a local one is never gated.
         aggressive_ok = self._aggressive_allowed(session_id, domain)
 
-        async def launch_tool(tool, domain):
+        async def launch_tool(tool, domain, extra_urls=None):
             tool_key = f"{tool.name}:{domain}"
-            t = asyncio.create_task(self._run_tool(session_id, investigation_id, domain, tool))
+            # Only pass the override through when there is one: the base
+            # dispatch (and any test double standing in for _run_tool) is
+            # called with the four arguments it has always had.
+            run_kwargs = (
+                {"extra_urls_override": extra_urls} if extra_urls is not None else {}
+            )
+            t = asyncio.create_task(
+                self._run_tool(session_id, investigation_id, domain, tool, **run_kwargs)
+            )
             try:
                 success = await t
                 if success:
@@ -495,23 +513,38 @@ class ReconOrchestrator:
             #
             # The port list is naabu's, so this cannot widen the scan beyond
             # what the port scan already touched; it only re-aims the probe.
+            #
+            # One batched pass over all of them, not one container per port: a
+            # host with eight open ports used to start eight containers, each
+            # paying image startup, broker round-trips and a semaphore slot for
+            # a single probe. httpx takes a comma-joined -u list, so one run
+            # probes every port for one startup cost.
             http_ports = sorted({
                 p.number for p in results.ports
                 if p.state == "open" and p.protocol == "tcp"
             })
-            for port in http_ports:
-                port_target = f"{domain}:{port}"
-                port_key = f"httpx:{port_target}"
-                if port_key in queued_keys:
-                    continue
-                queued_keys.add(port_key)
-                session.tool_statuses[port_key] = ToolStatus.WAITING
-                session.logs.append(
-                    f"[{datetime.utcnow().strftime('%H:%M:%S')}] "
-                    f"Open port {port} on {domain}. Scheduling httpx on {port_target}."
-                )
-                task_launch = asyncio.create_task(launch_tool(self.httpx_probe, port_target))
-                running_tasks.append(task_launch)
+            port_urls = [target_url(f"{domain}:{p}") for p in http_ports]
+            if port_urls:
+                port_batch_key = f"httpx:{domain}:ports"
+                if port_batch_key not in queued_keys:
+                    queued_keys.add(port_batch_key)
+                    # httpx:{domain} is also the base bare-host probe's status;
+                    # a pass that is already running must not be demoted to
+                    # WAITING by this one being queued behind it.
+                    if session.tool_statuses.get(f"httpx:{domain}") not in (
+                        ToolStatus.RUNNING, ToolStatus.RETRYING
+                    ):
+                        session.tool_statuses[f"httpx:{domain}"] = ToolStatus.WAITING
+                    session.logs.append(
+                        f"[{datetime.utcnow().strftime('%H:%M:%S')}] "
+                        f"Open port(s) {', '.join(str(p) for p in http_ports)} on "
+                        f"{domain}. Scheduling one httpx pass over "
+                        f"{len(port_urls)} port URL(s)."
+                    )
+                    task_launch = asyncio.create_task(
+                        launch_tool(self.httpx_probe, domain, extra_urls=port_urls)
+                    )
+                    running_tasks.append(task_launch)
 
             # Trigger tlsx on TLS ports
             has_tls_ports = any(p.number in [443, 8443] or p.protocol == "https" for p in results.ports)
@@ -581,11 +614,41 @@ class ReconOrchestrator:
             for target in vuln_targets:
                 for tool in [self.nuclei]:
                     route_count = len(scan_routes.get(target) or [])
+                    # queued_keys keeps the route count in the key: it is what
+                    # lets each later widening of the surface schedule its own
+                    # pass (test: an unchanged surface is not scanned again,
+                    # a widened one is).
                     tool_key = f"{tool.name}:{target}:{route_count}"
                     if tool_key in queued_keys:
                         continue
                     queued_keys.add(tool_key)
-                    session.tool_statuses[tool_key] = ToolStatus.WAITING
+
+                    # The status table is keyed WITHOUT the route count.
+                    # _run_tool_body writes f"{tool.name}:{domain}", so a
+                    # suffixed entry here was a ghost: never updated again,
+                    # left WAITING, swept to SKIPPED at session end, and
+                    # counted in the progress denominator for the whole run --
+                    # so progress crawled and the session log claimed scans
+                    # that were never scheduled.
+                    status_key = f"{tool.name}:{target}"
+                    pending_key = f"{session_id}:{tool.name}:{target}"
+
+                    # Coalesce: if a pass for this target has been scheduled
+                    # but has not started yet, fold these routes into it rather
+                    # than stacking another one behind the per-target lock.
+                    # Its route set is computed when it acquires the lock, so
+                    # it scans everything known by then -- never fewer routes.
+                    if pending_key in self._pending_passes:
+                        continue
+                    self._pending_passes.add(pending_key)
+
+                    # Do not demote a pass that is already running (or waiting
+                    # to retry) back to WAITING just because a reschedule was
+                    # queued behind it.
+                    if session.tool_statuses.get(status_key) not in (
+                        ToolStatus.RUNNING, ToolStatus.RETRYING
+                    ):
+                        session.tool_statuses[status_key] = ToolStatus.WAITING
                     session.logs.append(
                         f"[{datetime.utcnow().strftime('%H:%M:%S')}] "
                         f"HTTP surface confirmed on {target}. Scheduling {tool.name} "
@@ -612,28 +675,44 @@ class ReconOrchestrator:
                     task_launch = asyncio.create_task(launch_tool(tool, domain))
                     running_tasks.append(task_launch)
 
-    async def _run_tool(self, session_id: str, investigation_id: str, domain: str, tool):
+    async def _run_tool(self, session_id: str, investigation_id: str, domain: str, tool,
+                        extra_urls_override=None):
         run_key = f"{session_id}:{domain}"
-        if not getattr(tool, "serialize_per_target", False):
-            return await self._run_tool_body(session_id, investigation_id, domain, tool, run_key)
+        if getattr(tool, "serialize_per_target", False):
+            # A scanner that fans out across every discovered URL is safe once and
+            # unsafe when several passes overlap. The conditional trigger schedules
+            # a fresh pass every time the route set widens, so katana, js_routes,
+            # ffuf and linkfinder can each start one while the previous scan is
+            # still running: six concurrent nuclei processes against one local
+            # container took Juice Shop from 220MiB to its 6GiB limit, and once the
+            # target stopped answering every scan in flight reported "0 findings" --
+            # a scanner that cannot reach its target reports a clean bill of health.
+            #
+            # Key the lock on the host, not the domain string: `juice_shop` (base
+            # dispatch) and `http://juice_shop:3000` (triggered, port-scoped) are the
+            # same box and the same scan surface, and separately-locked runs would
+            # overlap against the very container whose memory we are protecting.
+            lock_key = f"{session_id}:{(host_from_domain(domain) or domain).lower()}"
+            lock = self._target_locks.setdefault(lock_key, asyncio.Lock())
+            async with lock:
+                success, results = await self._run_tool_body(
+                    session_id, investigation_id, domain, tool, run_key,
+                    extra_urls_override=extra_urls_override)
+        else:
+            success, results = await self._run_tool_body(
+                session_id, investigation_id, domain, tool, run_key,
+                extra_urls_override=extra_urls_override)
 
-        # A scanner that fans out across every discovered URL is safe once and
-        # unsafe when several passes overlap. The conditional trigger schedules
-        # a fresh pass every time the route set widens, so katana, js_routes,
-        # ffuf and linkfinder can each start one while the previous scan is
-        # still running: six concurrent nuclei processes against one local
-        # container took Juice Shop from 220MiB to its 6GiB limit, and once the
-        # target stopped answering every scan in flight reported "0 findings" --
-        # a scanner that cannot reach its target reports a clean bill of health.
-        #
-        # Key the lock on the host, not the domain string: `juice_shop` (base
-        # dispatch) and `http://juice_shop:3000` (triggered, port-scoped) are the
-        # same box and the same scan surface, and separately-locked runs would
-        # overlap against the very container whose memory we are protecting.
-        lock_key = f"{session_id}:{(host_from_domain(domain) or domain).lower()}"
-        lock = self._target_locks.setdefault(lock_key, asyncio.Lock())
-        async with lock:
-            return await self._run_tool_body(session_id, investigation_id, domain, tool, run_key)
+        # The graph push happens here, not in the body: the merge into the
+        # session's results has to stay inside the semaphore and the per-target
+        # lock (the next pass computes its route set from that merge), but tens
+        # of thousands of Cypher round-trips do not need to hold either while
+        # they run. A failed push is noted, not fatal -- the session still holds
+        # the results, and a graph outage must not turn a completed scan into a
+        # failed one.
+        if results is not None:
+            await self._push_to_graph_safe(session_id, investigation_id, results)
+        return success
 
     def _planned_targets(self, tool, session_id: str, domain: str):
         """The URLs an incremental pass should still cover, or None if it does not dedupe.
@@ -648,9 +727,55 @@ class ReconOrchestrator:
         already = self._scanned_urls.get(f"{session_id}:{domain}", set())
         return [u for u in tool._targets(domain, extra) if u not in already]
 
-    async def _run_tool_body(self, session_id: str, investigation_id: str, domain: str, tool, run_key: str):
+    def _merge_results(self, session_id: str, results: ToolResults):
+        """Fold a tool's results into the session's, deduplicated.
+
+        Repeated passes over a widening surface re-see what earlier passes
+        already reported (the seed URL, the first crawl's routes), and the
+        session's lists are what become the final counts, the graph push and
+        every downstream trigger's input -- so duplicates would inflate all
+        three. Keyed the way a re-see happens: a host by value, a port by
+        where it listens, an endpoint by what answered at it.
+        """
+        acc = self.results.setdefault(session_id, ToolResults())
+
+        seen_hosts = {h.value for h in acc.hosts}
+        for host in results.hosts:
+            if host.value not in seen_hosts:
+                seen_hosts.add(host.value)
+                acc.hosts.append(host)
+
+        seen_ports = {(p.host, p.number, p.protocol) for p in acc.ports}
+        for port in results.ports:
+            key = (port.host, port.number, port.protocol)
+            if key not in seen_ports:
+                seen_ports.add(key)
+                acc.ports.append(port)
+
+        seen_endpoints = {(e.host, e.url, e.method) for e in acc.endpoints}
+        for endpoint in results.endpoints:
+            key = (endpoint.host, endpoint.url, endpoint.method)
+            if key not in seen_endpoints:
+                seen_endpoints.add(key)
+                acc.endpoints.append(endpoint)
+
+    async def _run_tool_body(self, session_id: str, investigation_id: str, domain: str, tool,
+                             run_key: str, extra_urls_override=None):
+        """Run one pass of ``tool``. Returns ``(success, results)``.
+
+        ``results`` is what the caller should push to the graph (None when
+        there is nothing to push); the merge into the session's own results
+        happens here, inside the semaphore and the per-target lock, so the
+        next pass's route set is complete before it computes it.
+        """
         session = self.sessions[session_id]
         tool_key = f"{tool.name}:{domain}"
+
+        # This pass has started, so the trigger may schedule a catch-up behind
+        # it: from here on the pass itself (its RUNNING status) is what gates
+        # rescheduling, not the queued marker.
+        self._pending_passes.discard(f"{session_id}:{tool.name}:{domain}")
+
         planned = self._planned_targets(tool, session_id, domain)
 
         # Same session, same target, nothing new to look at: the earlier run(s)
@@ -665,13 +790,19 @@ class ReconOrchestrator:
                 f"earlier pass this session; nothing to scan."
             )
             session.tool_statuses[tool_key] = ToolStatus.COMPLETED
-            return True
+            return True, None
         extra_urls = planned if planned is not None else None
 
         async with self.semaphore:
             session.current_tool = tool.name
-            max_attempts = 3
+            # Retry budget follows the tool's own wall clock. A tool that gets
+            # 600s or more has already spent a quarter of an hour on one
+            # attempt; a third attempt of a budget that large is a session
+            # killer, not resilience. Short-running probes keep the third.
+            budget = getattr(tool, "timeout", None) or settings.TOOL_TIMEOUT
+            max_attempts = 2 if budget >= 600 else 3
             success = False
+            final_results = None
 
             for attempt in range(1, max_attempts + 1):
                 timestamp = datetime.utcnow().strftime("%H:%M:%S")
@@ -691,24 +822,46 @@ class ReconOrchestrator:
                     # A deduplicated tool gets only the URLs it has not seen
                     # yet, so a rescan after the surface widened costs a scan of
                     # the new routes, not a replay of the whole template set.
-                    if getattr(tool, "accepts_extra_urls", False):
+                    if extra_urls_override is not None:
+                        # A batch re-aim (httpx at the discovered ports): the
+                        # extra list is the whole point of this run, so it is
+                        # forced through even for a tool that does not
+                        # ordinarily consume extra URLs.
+                        results = await tool.run(
+                            domain, extra_urls=extra_urls_override, force_extra=True)
+                    elif getattr(tool, "accepts_extra_urls", False):
                         results = await tool.run(
                             domain,
                             extra_urls=(self._known_urls(session_id, domain)
                                         if extra_urls is None else extra_urls))
                     else:
                         results = await tool.run(domain)
+
+                    # How the container exited decides what this attempt means.
+                    # A deadline stop kept the partial output and will hit the
+                    # same budget again on any retry, so the attempt is final:
+                    # TIMED_OUT, with the evidence it produced. An OOM kill is
+                    # final too -- the same command against the same limit dies
+                    # the same way -- but there is no partial success to report
+                    # downstream, so it is a failure. Neither is retried.
+                    timed_out = bool(getattr(results, "timed_out", False))
+                    oom_killed = bool(getattr(results, "oom_killed", False))
+
                     timestamp_done = datetime.utcnow().strftime("%H:%M:%S")
-                    session.logs.append(f"[{timestamp_done}] {tool.name} completed successfully on {domain}")
+                    if timed_out:
+                        session.logs.append(
+                            f"[{timestamp_done}] {tool.name} stopped at its budget on "
+                            f"{domain}; keeping partial output (Attempt {attempt}/{max_attempts})"
+                        )
+                    elif oom_killed:
+                        session.logs.append(
+                            f"[{timestamp_done}] {tool.name} was OOM-killed on {domain} "
+                            f"(Attempt {attempt}/{max_attempts})"
+                        )
+                    else:
+                        session.logs.append(f"[{timestamp_done}] {tool.name} completed successfully on {domain}")
 
-                    await self._push_to_graph(investigation_id, results)
-
-                    # Store results for the session
-                    if session_id not in self.results:
-                        self.results[session_id] = ToolResults()
-                    self.results[session_id].hosts.extend(results.hosts)
-                    self.results[session_id].ports.extend(results.ports)
-                    self.results[session_id].endpoints.extend(results.endpoints)
+                    self._merge_results(session_id, results)
                     for note in getattr(results, "notes", []) or []:
                         # A parser that drops results has to say so, or
                         # "fuzzed and found nothing" is indistinguishable from
@@ -718,9 +871,18 @@ class ReconOrchestrator:
                             f"{tool.name} on {domain}: {note}"
                         )
 
-                    session.tool_statuses[tool_key] = ToolStatus.COMPLETED
                     if planned:
                         self._scanned_urls.setdefault(run_key, set()).update(planned)
+
+                    final_results = results
+                    if oom_killed:
+                        session.tool_statuses[tool_key] = ToolStatus.FAILED
+                        break  # success stays False; no retry of a dying limit
+                    if timed_out:
+                        session.tool_statuses[tool_key] = ToolStatus.TIMED_OUT
+                        success = True
+                        break
+                    session.tool_statuses[tool_key] = ToolStatus.COMPLETED
                     success = True
                     break
                 except asyncio.TimeoutError:
@@ -734,7 +896,7 @@ class ReconOrchestrator:
                     if attempt < max_attempts:
                         await asyncio.sleep(1) # wait 1s before retry
 
-            if not success:
+            if not success and final_results is None:
                 timestamp_failed = datetime.utcnow().strftime("%H:%M:%S")
                 session.logs.append(f"[{timestamp_failed}] {tool.name} failed on {domain} after {max_attempts} attempts.")
                 session.tool_statuses[tool_key] = ToolStatus.FAILED
@@ -749,7 +911,32 @@ class ReconOrchestrator:
                            if s in [ToolStatus.COMPLETED, ToolStatus.SKIPPED, ToolStatus.TIMED_OUT, ToolStatus.FAILED])
             session.progress = (completed / len(session.tool_statuses)) * 100.0
 
-            return success
+            return success, final_results
+
+    async def _push_to_graph_safe(self, session_id: str, investigation_id: str, results: ToolResults):
+        """Push a pass's results with retries; never raises.
+
+        The session already holds the results either way, so an unreachable
+        graph costs persistence, not evidence -- which is why an ultimate
+        failure is a session log line rather than a failed tool run.
+        """
+        delay = 2.0
+        for attempt in range(1, 4):
+            try:
+                await self._push_to_graph(investigation_id, results)
+                return
+            except Exception as e:
+                if attempt == 3:
+                    self.sessions[session_id].logs.append(
+                        f"[{datetime.utcnow().strftime('%H:%M:%S')}] graph push failed "
+                        f"after {attempt} attempts; results are kept in the session but "
+                        f"were not persisted to the graph: {type(e).__name__}: {e}"
+                    )
+                    print(f"Failed to push results for session {session_id} to graph after {attempt} attempts: {type(e).__name__}: {e}")
+                else:
+                    print(f"Failed to push results for session {session_id} to graph on attempt {attempt}/3: {type(e).__name__}: {e}. Retrying in {delay}s...")
+                    await asyncio.sleep(delay)
+                    delay *= 2
 
     async def _push_to_graph(self, investigation_id: str, results: ToolResults):
         # A single recon run yields tens of thousands of endpoints spread over a
@@ -759,25 +946,78 @@ class ReconOrchestrator:
         # upsert_host is idempotent on host value (it posts only {"value": ...}),
         # so resolving each distinct host once and reusing its node id is exactly
         # equivalent, just without the repeat traffic.
-        host_ids: Dict[str, str] = {}
+        #
+        # The distinct set is built synchronously, in first-seen order (hosts,
+        # then port hosts, then endpoint hosts, each keeping the source_tool of
+        # its first appearance -- the same attribution the sequential loop gave
+        # the first upsert of a value), then resolved concurrently behind a
+        # small local gate so a thousand-host batch does not open a thousand
+        # parallel queries against Neo4j.
+        sources: Dict[str, str] = {}
 
-        async def host_id_for(host: str, source_tool: str) -> str:
-            if host not in host_ids:
-                host_obj = await graph_client.upsert_host(
-                    investigation_id, HostResult(value=host, source_tool=source_tool))
-                host_ids[host] = host_obj["id"]
-            return host_ids[host]
+        def claim(value: str, source_tool: str):
+            if value not in sources:
+                sources[value] = source_tool
 
         for host in results.hosts:
-            await host_id_for(host.value, host.source_tool)
-
+            claim(host.value, host.source_tool)
         for port in results.ports:
-            hid = await host_id_for(port.host, port.source_tool)
-            await graph_client.upsert_port(hid, port)
-
+            claim(port.host, port.source_tool)
         for endpoint in results.endpoints:
-            hid = await host_id_for(endpoint.host, endpoint.source_tool)
-            await graph_client.upsert_endpoint(hid, endpoint)
+            claim(endpoint.host, endpoint.source_tool)
+
+        host_ids: Dict[str, str] = {}
+        gate = asyncio.Semaphore(20)
+
+        async def resolve_host(value: str):
+            async with gate:
+                host_obj = await graph_client.upsert_host(
+                    investigation_id, HostResult(value=value, source_tool=sources[value]))
+                host_ids[value] = host_obj["id"]
+
+        if sources:
+            await asyncio.gather(*(resolve_host(v) for v in sources))
+
+        # Ports and endpoints are written after every host id exists, in
+        # parallel, deduplicated within the batch: a widened-surface pass
+        # re-reports routes earlier passes already wrote, and upserting them
+        # again is the same round-trip cost as the first time for no change.
+        # The write jobs are kept as data and turned into coroutines chunk by
+        # chunk, so a 50k-endpoint batch does not allocate 50k coroutine frames
+        # or queue 50k tasks at once -- only a bounded window is ever in flight.
+        def unique(items, key_of):
+            seen = set()
+            out = []
+            for item in items:
+                key = key_of(item)
+                if key not in seen:
+                    seen.add(key)
+                    out.append(item)
+            return out
+
+        port_jobs = [
+            (host_ids[port.host], port)
+            for port in unique(results.ports, lambda p: (p.host, p.number, p.protocol))
+        ]
+        endpoint_jobs = [
+            (host_ids[endpoint.host], endpoint)
+            for endpoint in unique(results.endpoints,
+                                   lambda e: (e.host, e.url, e.method))
+        ]
+
+        async def write_all(jobs, upsert):
+            outcomes = []
+            for i in range(0, len(jobs), 200):
+                chunk = [upsert(*job) for job in jobs[i:i + 200]]
+                outcomes.extend(await asyncio.gather(*chunk, return_exceptions=True))
+            return outcomes
+
+        port_outcomes, endpoint_outcomes = await asyncio.gather(
+            write_all(port_jobs, graph_client.upsert_port),
+            write_all(endpoint_jobs, graph_client.upsert_endpoint))
+        for outcome in port_outcomes + endpoint_outcomes:
+            if isinstance(outcome, BaseException):
+                raise outcome
 
     async def cancel_session(self, session_id: str):
         if session_id in self.running_tasks:
@@ -1021,7 +1261,7 @@ class ReconOrchestrator:
         try:
             await graph_client.create_recon_session(session_id, request.investigation_id, normalized_requested, "accepted")
         except Exception as e:
-            print(f"Warning: Failed to persist recon session {session_id} to graph_db: {e}")
+            print(f"Warning: Failed to persist recon session {session_id} to graph_db: {type(e).__name__}: {e}")
 
         # Make the ROE aggressive allowance (if any) visible to run_session and
         # the conditional triggers, which key off _aggressive_allowed.

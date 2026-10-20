@@ -7,7 +7,15 @@ class GraphClient:
     def __init__(self, base_url: str = settings.GRAPH_DB_URL):
         self.base_url = base_url
         headers = {"Authorization": f"Bearer {settings.ADMIN_API_TOKEN}"}
-        self._client = httpx.AsyncClient(base_url=base_url, headers=headers)
+        # The default 5s read timeout is tighter than graph_api's write path:
+        # a scan-session insert takes 2-3s, and the final PATCH carrying the
+        # full tool_results exceeded 5s on every attempt, so the session's
+        # terminal status never persisted. Reads stay fast via connect=10.
+        self._client = httpx.AsyncClient(
+            base_url=base_url,
+            headers=headers,
+            timeout=httpx.Timeout(30.0, connect=10.0),
+        )
 
     async def close(self):
         await self._client.aclose()
