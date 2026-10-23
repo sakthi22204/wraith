@@ -1,13 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 import os
 import json
-from typing import List, Optional
+from typing import List, Literal, Optional
 from pydantic import BaseModel
 from ..schema import (
     Program, ProgramCreate, Host, HostCreate, Port, PortCreate,
     Service, ServiceCreate, Endpoint, EndpointCreate, Parameter, ParameterCreate,
     Finding, FindingCreate, FindingUpdate, CVECreate, GraphResponse, FalsePositivePattern,
-    ReconSession, AgentSession, Investigation, InvestigationCreate,
+    ReconSession, AgentSession, Investigation, InvestigationCreate, InvestigationUpdate,
     ValidationAttempt, ValidationAttemptCreate
 )
 from ..client import neo4j_client
@@ -73,6 +73,15 @@ async def list_investigations(repo: Neo4jRepository = Depends(get_repo)):
 @router.get("/investigations/{investigation_id}", response_model=Investigation)
 async def get_investigation(investigation_id: str, repo: Neo4jRepository = Depends(get_repo)):
     investigation = await repo.get_investigation(investigation_id)
+    if not investigation:
+        raise HTTPException(status_code=404, detail="Investigation not found")
+    return investigation
+
+@router.patch("/investigations/{investigation_id}", dependencies=[Depends(require_admin_token)], response_model=Investigation)
+async def update_investigation(investigation_id: str, request: InvestigationUpdate, repo: Neo4jRepository = Depends(get_repo)):
+    if request.engagement_mode is None:
+        raise HTTPException(status_code=400, detail="No supported field supplied")
+    investigation = await repo.update_investigation_mode(investigation_id, request.engagement_mode)
     if not investigation:
         raise HTTPException(status_code=404, detail="Investigation not found")
     return investigation
@@ -254,11 +263,11 @@ def _parse_list_param(value: Optional[str]) -> Optional[List[str]]:
     return [value]
 
 @router.post("/agent-sessions", dependencies=[Depends(require_admin_token)], response_model=AgentSession)
-async def create_agent_session(session_id: str, status: str, investigation_id: Optional[str] = None, program_id: Optional[str] = None, iteration_count: int = 0, tools_used: Optional[str] = None, reasoning_log: Optional[str] = None, repo: Neo4jRepository = Depends(get_repo)):
+async def create_agent_session(session_id: str, status: str, investigation_id: Optional[str] = None, program_id: Optional[str] = None, iteration_count: int = 0, tools_used: Optional[str] = None, reasoning_log: Optional[str] = None, engagement_mode: Optional[Literal["wapt", "redteam", "both"]] = None, repo: Neo4jRepository = Depends(get_repo)):
     inv_id = investigation_id or program_id
     if not inv_id:
         raise HTTPException(status_code=400, detail="investigation_id or program_id is required")
-    return await repo.create_agent_session(session_id, inv_id, status, iteration_count, _parse_list_param(tools_used) or [], _parse_list_param(reasoning_log) or [])
+    return await repo.create_agent_session(session_id, inv_id, status, iteration_count, _parse_list_param(tools_used) or [], _parse_list_param(reasoning_log) or [], engagement_mode)
 
 @router.patch("/agent-sessions/{session_id}", dependencies=[Depends(require_admin_token)], response_model=AgentSession)
 async def update_agent_session(session_id: str, request: AgentSessionUpdate, repo: Neo4jRepository = Depends(get_repo)):

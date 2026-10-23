@@ -1,7 +1,12 @@
 from pydantic import BaseModel, Field, AliasChoices, computed_field
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 from enum import Enum
+
+# Which advisory skill set an investigation runs under. This is deliberately
+# separate from `aggressive`: it selects methodology context and the report
+# profile, and never widens scope or relaxes a runner gate.
+EngagementMode = Literal["wapt", "redteam", "both"]
 
 class FindingStatus(str, Enum):
     UNCONFIRMED = "UNCONFIRMED"
@@ -54,9 +59,16 @@ class InvestigationBase(BaseModel):
     target: str
     platform: Optional[str] = "automatic"
     aggressive: bool = True
+    # `wapt` loads application-assessment methodology; `redteam` adds perimeter
+    # and identity skills; `both` is the union. Older records have no property
+    # and read as the default here, so no migration is required.
+    engagement_mode: EngagementMode = "wapt"
 
 class InvestigationCreate(InvestigationBase):
     pass
+
+class InvestigationUpdate(BaseModel):
+    engagement_mode: Optional[EngagementMode] = None
 
 class Investigation(InvestigationBase):
     id: str
@@ -410,6 +422,10 @@ class AgentSessionBase(BaseModel):
     iteration_count: int = 0
     tools_used: List[str] = []
     reasoning_log: List[str] = []
+    # The resolved mode is copied onto the session so a report can say what
+    # context produced it even if the investigation is re-moded later. Old
+    # sessions have no property and read as None.
+    engagement_mode: Optional[EngagementMode] = None
 
 class AgentSessionCreate(AgentSessionBase):
     pass

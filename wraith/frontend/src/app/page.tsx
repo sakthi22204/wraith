@@ -7,7 +7,7 @@ import { fetchPrograms as fetchInvestigations, createInvestigation, deleteProgra
 import { addScopeRule } from '@/lib/exploitApi';
 import { errorMessage } from '@/lib/apiError';
 import Skeleton from '@/components/Skeleton';
-import { Program as Investigation } from '@/types/graph';
+import { EngagementMode, Program as Investigation } from '@/types/graph';
 
 export default function HomePage() {
   const [investigations, setInvestigations] = useState<Investigation[]>([]);
@@ -15,7 +15,11 @@ export default function HomePage() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [investigationToDelete, setInvestigationToDelete] = useState<Investigation | null>(null);
-  const [newInvestigation, setNewInvestigation] = useState({ name: '', target: '' });
+  const [newInvestigation, setNewInvestigation] = useState<{
+    name: string;
+    target: string;
+    engagementMode: EngagementMode;
+  }>({ name: '', target: '', engagementMode: 'wapt' });
 
   const loadInvestigations = async () => {
     try {
@@ -35,7 +39,11 @@ export default function HomePage() {
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const created = await createInvestigation(newInvestigation.name, newInvestigation.target);
+      const created = await createInvestigation(
+        newInvestigation.name,
+        newInvestigation.target,
+        newInvestigation.engagementMode
+      );
       // Auto-create ROE allow rule for the investigation target
       if (created && created.id && newInvestigation.target) {
         try {
@@ -45,7 +53,7 @@ export default function HomePage() {
         }
       }
       setIsModalOpen(false);
-      setNewInvestigation({ name: '', target: '' });
+      setNewInvestigation({ name: '', target: '', engagementMode: 'wapt' });
       toast.success('Investigation created successfully');
       loadInvestigations();
       } catch (e) {
@@ -118,6 +126,15 @@ export default function HomePage() {
                   <div className="flex items-center space-x-2">
                     <div className="bg-indigo-900/30 text-indigo-400 text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded">
                       Investigation
+                    </div>
+                    <div
+                      className={`text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded ${
+                        (inv.engagement_mode || 'wapt') === 'wapt'
+                          ? 'bg-slate-800 text-slate-300'
+                          : 'bg-amber-900/30 text-amber-400'
+                      }`}
+                    >
+                      {inv.engagement_mode || 'wapt'}
                     </div>
                     <div className="flex items-center">
                       <div className="w-2 h-2 bg-emerald-500 rounded-full shadow-[0_0_8px_rgba(16,185,129,0.6)] animate-pulse"></div>
@@ -195,6 +212,21 @@ export default function HomePage() {
                   onChange={e => setNewInvestigation({...newInvestigation, name: e.target.value})}
                   placeholder="e.g. Acme Corp Assessment"
                 />
+              </div>
+              <div>
+                <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Engagement Mode</label>
+                <select
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white outline-none focus:border-indigo-500"
+                  value={newInvestigation.engagementMode}
+                  onChange={e => setNewInvestigation({...newInvestigation, engagementMode: e.target.value as EngagementMode})}
+                >
+                  <option value="wapt">WAPT — application assessment</option>
+                  <option value="redteam">Red team — adds perimeter and identity</option>
+                  <option value="both">Both</option>
+                </select>
+                <p className="text-[11px] text-slate-500 mt-1">
+                  Selects advisory methodology and the report profile. It does not change authorized scope.
+                </p>
               </div>
               <button type="submit" className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded-xl transition-all shadow-lg shadow-indigo-600/20 active:scale-95">
                 Start Investigation

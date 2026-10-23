@@ -4,11 +4,11 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { toast } from 'sonner';
-import { Finding, GraphResponse } from '@/types/graph';
+import { EngagementMode, Finding, GraphResponse } from '@/types/graph';
 import { startRecon, fetchReconStatus, cancelRecon, listReconSessions } from '@/lib/reconApi';
 import { fetchScopeRules, addScopeRule } from '@/lib/exploitApi';
 import { startAgentSession, fetchSessionStatus, stopAgentSession, fetchAgentSessions } from '@/lib/agentApi';
-import { fetchFindings, fetchReviewQueue, deleteProgram as deleteInvestigation, fetchGraph } from '@/lib/graphApi';
+import { fetchFindings, fetchReviewQueue, deleteProgram as deleteInvestigation, fetchGraph, updateInvestigationMode } from '@/lib/graphApi';
 import { fetchReport } from '@/lib/reportingApi';
 import SeverityBadge from '@/components/SeverityBadge';
 import ActiveExploitApproval from '@/components/ActiveExploitApproval';
@@ -44,6 +44,10 @@ export default function InvestigationDashboard() {
   // Shown in the header instead of the bare UUID: on a dashboard full of
   // investigations the id says nothing about what is actually being tested.
   const [investigationLabel, setInvestigationLabel] = useState<string | null>(null);
+  // Advisory mode shown in the header. The server still resolves the mode from
+  // the investigation record when a session starts; this is display + edit.
+  const [engagementMode, setEngagementMode] = useState<EngagementMode>('wapt');
+  const [isUpdatingMode, setIsUpdatingMode] = useState(false);
   
     // Recon Session Real-time States
   const [activeReconId, setActiveReconId] = useState<string | null>(null);
@@ -166,6 +170,9 @@ export default function InvestigationDashboard() {
               const name = typeof inv?.name === 'string' ? inv.name : null;
               const target = typeof inv?.target === 'string' ? inv.target : null;
               setInvestigationLabel(target ?? name);
+              if (inv?.engagement_mode === 'wapt' || inv?.engagement_mode === 'redteam' || inv?.engagement_mode === 'both') {
+                setEngagementMode(inv.engagement_mode);
+              }
             }
           } catch {
             // Network error — keep polling, don't set notFound
@@ -315,6 +322,21 @@ export default function InvestigationDashboard() {
     }
   };
 
+  const handleModeChange = async (mode: EngagementMode) => {
+    const previous = engagementMode;
+    setEngagementMode(mode);
+    setIsUpdatingMode(true);
+    try {
+      await updateInvestigationMode(investigationId as string, mode);
+      toast.success(`Engagement mode set to ${mode}`);
+    } catch (e) {
+      setEngagementMode(previous);
+      toast.error(errorMessage(e, 'Failed to update engagement mode'));
+    } finally {
+      setIsUpdatingMode(false);
+    }
+  };
+
   const handleStartAgent = async () => {
     // Previously this sent an empty target_scope, which the panel proxy rejects
     // with 400 and the catch below turned into a bare "Failed to start agent".
@@ -416,10 +438,31 @@ export default function InvestigationDashboard() {
             <span className="text-xs bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 px-2.5 py-1 rounded-full uppercase font-mono font-bold tracking-widest">
               {getCurrentPhase()} Phase
             </span>
+            <span
+              className={`text-xs border px-2.5 py-1 rounded-full uppercase font-mono font-bold tracking-widest ${
+                engagementMode === 'wapt'
+                  ? 'bg-slate-800/60 text-slate-300 border-slate-700'
+                  : 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+              }`}
+            >
+              {engagementMode}
+            </span>
           </h1>
           <p className="text-slate-400 font-mono text-xs mt-1">{investigationId}</p>
         </div>
         <div className="flex flex-wrap gap-2 items-center">
+           <select
+             aria-label="Engagement mode"
+             disabled={isUpdatingMode}
+             value={engagementMode}
+             onChange={e => handleModeChange(e.target.value as EngagementMode)}
+             className="bg-slate-800 border border-slate-700 text-white px-3 py-2 rounded-lg text-sm font-bold disabled:opacity-50"
+             title="Selects advisory methodology and report profile. Does not change authorized scope."
+           >
+             <option value="wapt">WAPT</option>
+             <option value="redteam">Red Team</option>
+             <option value="both">Both</option>
+           </select>
            <Link href={`/investigations/${investigationId}/assessment`} className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-lg text-sm font-bold transition-all flex items-center active:scale-95 shadow-md">
              View Assessment
            </Link>

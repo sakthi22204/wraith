@@ -75,7 +75,7 @@ def stubbed_generator(monkeypatch):
         def model_dump(self):
             return {"investigation_id": "inv-1", "findings": []}
 
-    async def fake_generate(investigation_id):
+    async def fake_generate(investigation_id, *args, **kwargs):
         return FakeReport()
 
     monkeypatch.setattr(

@@ -17,6 +17,8 @@ export interface GraphResponse {
 
 export type Severity = 'info' | 'low' | 'medium' | 'high' | 'critical';
 
+export type EngagementMode = 'wapt' | 'redteam' | 'both';
+
 export interface Program {
   id: string;
   name: string;
@@ -24,6 +26,7 @@ export interface Program {
   scope_domains: string[];
   created_at: string;
   target?: string;
+  engagement_mode?: EngagementMode;
 }
 
 export interface Finding {

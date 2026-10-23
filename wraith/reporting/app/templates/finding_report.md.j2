@@ -4,12 +4,21 @@
 {% if summary_line %}
 *{{ summary_line }}*
 {% endif %}
+{% if report_profile %}
+**Report profile:** {{ report_profile }}{% if submission_guidance %} — {{ submission_guidance.reader }}{% endif %}
+{% endif %}
+{% if evidence_warnings %}
+
+> **Evidence incomplete for {{ evidence_warnings|length }} confirmed finding(s).**
+> They remain in the report, but are not submittable until the captured
+> request/response and expected/actual pair are attached.
+{% endif %}
 
 ## Summary Table
-| Title | Severity | CVSS | Validation |
-|-------|----------|------|------------|
+| Title | Severity | CVSS | Validation | Submittable |
+|-------|----------|------|------------|-------------|
 {% for f in findings -%}
-| {{ f.title }} | {{ f.severity }} | {{ f.cvss_score }} | {{ f.validation_state or 'UNVALIDATED' }} |
+| {{ f.title }} | {{ f.severity }} | {{ f.cvss_score }} | {{ f.validation_state or 'UNVALIDATED' }} | {{ 'yes' if f.submittable else 'no' }} |
 {% endfor %}
 {% if executive_summary and executive_summary.unvalidated_count %}
 
@@ -59,6 +68,11 @@ was found, or nothing was looked at. This section says which.
 {% for f in findings %}
 {% if f.validation_state == 'CONFIRMED' -%}
 # Finding: {{ f.title }}
+{% if not f.submittable %}
+
+> **Not submittable yet.** Confirmed, but the evidence manifest is incomplete:
+> {{ f.evidence_gaps | join(', ') }}.
+{% endif %}
 {% else -%}
 # Unvalidated Hypothesis: {{ f.title }}
 

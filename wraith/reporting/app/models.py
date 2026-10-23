@@ -25,6 +25,11 @@ class ReportFinding(BaseModel):
     # the presence of a real request/response exchange, so a consumer never has
     # to re-derive it and cannot accidentally treat a hypothesis as a finding.
     validation_state: Optional[str] = None
+    # A confirmed finding is not automatically a submittable one: the captured
+    # request/response and the expected/actual pair are what let a triager
+    # replay it. ``evidence_gaps`` names what is missing.
+    submittable: bool = False
+    evidence_gaps: List[str] = Field(default_factory=list)
     discovery_metadata: dict # tool, timestamp, program
     risk_rating: Optional[dict] = None
     timeline: Optional[list] = []
@@ -43,6 +48,13 @@ class ProgramReport(BaseModel):
     # What the assessment was able to look at. Optional because the assessment
     # service may be unreachable; a report renders without it.
     coverage: Optional[dict] = None
+    # Selected from the investigation's engagement_mode or an explicit request.
+    report_profile: Optional[str] = None
+    submission_guidance: Optional[dict] = None
+    # Confirmed findings whose evidence is incomplete. They stay in the report
+    # marked unsubmittable rather than disappearing; a missing capture is an
+    # evidence problem, not a reason to hide a confirmed issue.
+    evidence_warnings: List[dict] = Field(default_factory=list)
 
     @computed_field
     @property

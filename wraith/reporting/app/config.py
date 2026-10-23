@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     ACTIVE_EXPLOIT_RUNNER_URL: str = "http://active_exploit_runner:8004/api/v1"
     ASSESSMENT_URL: str = "http://assessment_service:8007"
     OUTPUT_DIR: str = "/tmp/reports"
+    # auto derives the profile from the investigation's engagement_mode.
+    REPORT_PROFILE: str = "auto"
     # No working default. Report generation reads the graph and drives the
     # runner; a published token is not a credential.
     ADMIN_API_TOKEN: str = ""
@@ -41,9 +43,15 @@ def validate_startup_secrets(settings) -> None:
                 f"{field} is set to a value published in this repository "
                 f"({value!r}); generate a real secret and inject it"
             )
+    profile = (getattr(settings, "REPORT_PROFILE", "") or "auto").strip().lower()
+    if profile not in {"auto", "bugcrowd", "hackerone", "redteam"}:
+        problems.append(
+            f"REPORT_PROFILE is {profile!r}; expected auto, bugcrowd, "
+            f"hackerone or redteam"
+        )
     if problems:
         raise RuntimeError(
-            "Refusing to start reporting with insecure secrets: "
+            "Refusing to start reporting with insecure settings: "
             + "; ".join(problems)
         )
 

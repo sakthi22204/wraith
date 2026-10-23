@@ -1,4 +1,1 @@
 venv/
-
-# SQLite artifacts written by test runs into the repo root.
-*.db

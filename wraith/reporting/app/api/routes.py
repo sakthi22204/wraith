@@ -65,8 +65,12 @@ async def get_finding_report(investigation_id: str, finding_id: str, format: str
         return Response(content=md_out, media_type="text/markdown")
 
 @router.get("/reports/{investigation_id}", dependencies=[Depends(require_admin_token)])
-async def get_investigation_report(investigation_id: str, format: str = Query("markdown", pattern="^(markdown|pdf|html|json)$")):
-    report = await generator.generate_program_report(investigation_id)
+async def get_investigation_report(
+    investigation_id: str,
+    format: str = Query("markdown", pattern="^(markdown|pdf|html|json)$"),
+    profile: str = Query("auto", pattern="^(auto|bugcrowd|hackerone|redteam)$"),
+):
+    report = await generator.generate_program_report(investigation_id, profile=profile)
     report_data = report.model_dump()
 
     if format == "pdf":
@@ -93,5 +97,9 @@ async def get_program_finding_report_alias(program_id: str, finding_id: str, for
     return await get_finding_report(program_id, finding_id, format)
 
 @router.get("/reports/program/{program_id}", dependencies=[Depends(require_admin_token)])
-async def get_program_report_alias(program_id: str, format: str = Query("markdown", pattern="^(markdown|pdf|html|json)$")):
-    return await get_investigation_report(program_id, format)
+async def get_program_report_alias(
+    program_id: str,
+    format: str = Query("markdown", pattern="^(markdown|pdf|html|json)$"),
+    profile: str = Query("auto", pattern="^(auto|bugcrowd|hackerone|redteam)$"),
+):
+    return await get_investigation_report(program_id, format, profile)

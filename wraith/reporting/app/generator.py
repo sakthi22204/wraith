@@ -1,11 +1,12 @@
 from datetime import datetime
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from .models import ReportFinding, ProgramReport
 from .clients.graph_db_client import graph_db_client
 from .clients.assessment_client import assessment_client
 from .clients.audit_client import audit_client
 from .mapping.cwe_mapping import get_mapping
 from .mapping.cvss_calculator import cvss_calculator
+from .profiles import evidence_gaps, guidance_for, resolve_profile
 
 # Mirrors graph_db.app.schema.FindingStatus. A report is the artefact a human
 # submits to a program, so the bar for calling something a vulnerability is set
@@ -180,6 +181,11 @@ class ReportGenerator:
         # is the strongest evidence, but a graph status set by a human counts
         # too, so this is the same test the executive summary uses.
         validation_state = "CONFIRMED" if is_confirmed(finding) else "UNVALIDATED"
+        gaps = evidence_gaps(finding) if validation_state == "CONFIRMED" else []
+        submittable = (
+            validation_state == "CONFIRMED"
+            and not gaps
+        )
         # Credentials and tokens are masked at capture time in the sandbox; the
         # block below is a second layer so nothing sensitive reaches a rendered
         # report even if a capture predates the redaction change.
@@ -370,6 +376,8 @@ class ReportGenerator:
             actual_result=actual_result,
             validation_stage=validation_stage,
             validation_state=validation_state,
+            submittable=submittable,
+            evidence_gaps=gaps,
             discovery_metadata=discovery_metadata,
             risk_rating=risk_rating,
             timeline=timeline,
@@ -377,8 +385,15 @@ class ReportGenerator:
             support_resources=support_resources
         )
 
-    async def generate_program_report(self, program_id: str) -> ProgramReport:
+    async def generate_program_report(self, program_id: str, profile: Optional[str] = None) -> ProgramReport:
         program_data = await graph_db_client.get_program(program_id)
+        # An explicit request wins; otherwise the investigation's mode picks the
+        # reader. The profile changes structure, never eligibility.
+        report_profile = resolve_profile(
+            profile,
+            (program_data or {}).get("engagement_mode"),
+        )
+        submission_guidance = guidance_for(report_profile)
         findings_raw = await graph_db_client.get_findings_for_program(program_id)
         coverage = await assessment_client.get_coverage(program_id)
 
@@ -503,6 +518,16 @@ class ReportGenerator:
             "paths_summary": paths_ascii[:5]
         }
 
+        evidence_warnings = [
+            {
+                "finding": f.title,
+                "gaps": f.evidence_gaps,
+                "message": "confirmed but not submittable until the evidence is attached",
+            }
+            for f in findings
+            if f.validation_state == "CONFIRMED" and f.evidence_gaps
+        ]
+
         # Program Support Resources
         program_support_resources = [
             {"channel": "Wraith Product Security", "contact": "prodsec@wraith.io"},
@@ -520,6 +545,9 @@ class ReportGenerator:
             attack_graph=program_attack_graph,
             support_resources=program_support_resources,
             coverage=coverage,
+            report_profile=report_profile,
+            submission_guidance=submission_guidance,
+            evidence_warnings=evidence_warnings,
         )
 
 generator = ReportGenerator()

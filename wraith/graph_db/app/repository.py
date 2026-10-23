@@ -169,14 +169,34 @@ class Neo4jRepository:
         name = investigation.name.strip() if investigation.name else f"Investigation of {investigation.target}"
         query = """
         MERGE (i:Investigation {id: $id})
-        ON CREATE SET i.name = $name, i.target = $target, i.scope_domains = $scope_domains, i.created_at = $created_at, i.platform = $platform, i.aggressive = $aggressive
+        ON CREATE SET i.name = $name, i.target = $target, i.scope_domains = $scope_domains, i.created_at = $created_at, i.platform = $platform, i.aggressive = $aggressive, i.engagement_mode = $engagement_mode
         RETURN i
         """
         result = await self.session.run(query, id=i_id, name=name, target=investigation.target,
                                       scope_domains=[scope_host(investigation.target)], created_at=now,
                                       platform=investigation.platform or "automatic",
-                                      aggressive=investigation.aggressive)
+                                      aggressive=investigation.aggressive,
+                                      engagement_mode=investigation.engagement_mode)
         record = await result.single()
+        return Investigation(**record["i"])
+
+    @retry_on_transient_error()
+    async def update_investigation_mode(self, investigation_id: str, engagement_mode: str) -> Optional[Investigation]:
+        """Change only the advisory mode; scope and aggressive are untouched.
+
+        Deliberately not a general update: ROE scope is a separate, audited
+        resource, and a PATCH that could edit both would make an accidental
+        widening of an authorized target one typo away.
+        """
+        query = """
+        MATCH (i:Investigation {id: $id})
+        SET i.engagement_mode = $engagement_mode
+        RETURN i
+        """
+        result = await self.session.run(query, id=investigation_id, engagement_mode=engagement_mode)
+        record = await result.single()
+        if not record:
+            return None
         return Investigation(**record["i"])
 
     @retry_on_transient_error()
@@ -873,24 +893,24 @@ class Neo4jRepository:
 
         return count1 + count2
 
-    async def create_agent_session(self, session_id: str, investigation_id: str, status: str, iteration_count: int = 0, tools_used: List[str] = [], reasoning_log: List[str] = []) -> AgentSession:
+    async def create_agent_session(self, session_id: str, investigation_id: str, status: str, iteration_count: int = 0, tools_used: List[str] = [], reasoning_log: List[str] = [], engagement_mode: Optional[str] = None) -> AgentSession:
         now = datetime.utcnow().isoformat() + "Z"
         query = """
         MATCH (i:Investigation {id: $investigation_id})
         MERGE (s:AgentSession {id: $id})
-        ON CREATE SET s.investigation_id = $investigation_id, s.status = $status, s.started_at = $now, s.iteration_count = $iteration_count, s.tools_used = $tools_used, s.reasoning_log = $reasoning_log
+        ON CREATE SET s.investigation_id = $investigation_id, s.status = $status, s.started_at = $now, s.iteration_count = $iteration_count, s.tools_used = $tools_used, s.reasoning_log = $reasoning_log, s.engagement_mode = $engagement_mode
         MERGE (i)-[:HAD_AGENT_SESSION]->(s)
         RETURN s
         """
-        result = await self.session.run(query, id=session_id, investigation_id=investigation_id, status=status, now=now, iteration_count=iteration_count, tools_used=tools_used, reasoning_log=reasoning_log)
+        result = await self.session.run(query, id=session_id, investigation_id=investigation_id, status=status, now=now, iteration_count=iteration_count, tools_used=tools_used, reasoning_log=reasoning_log, engagement_mode=engagement_mode)
         record = await result.single()
         if record is None:
             fallback_query = """
             MERGE (s:AgentSession {id: $id})
-            ON CREATE SET s.investigation_id = $investigation_id, s.status = $status, s.started_at = $now, s.iteration_count = $iteration_count, s.tools_used = $tools_used, s.reasoning_log = $reasoning_log
+            ON CREATE SET s.investigation_id = $investigation_id, s.status = $status, s.started_at = $now, s.iteration_count = $iteration_count, s.tools_used = $tools_used, s.reasoning_log = $reasoning_log, s.engagement_mode = $engagement_mode
             RETURN s
             """
-            result = await self.session.run(fallback_query, id=session_id, investigation_id=investigation_id, status=status, now=now, iteration_count=iteration_count, tools_used=tools_used, reasoning_log=reasoning_log)
+            result = await self.session.run(fallback_query, id=session_id, investigation_id=investigation_id, status=status, now=now, iteration_count=iteration_count, tools_used=tools_used, reasoning_log=reasoning_log, engagement_mode=engagement_mode)
             record = await result.single()
         return AgentSession(**record["s"])
 

@@ -1,4 +1,62 @@
 import { NextResponse } from 'next/server';
+import { describeApiError } from '@/lib/apiError';
+
+export async function PATCH(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  // Only the advisory mode is writable here. Scope and aggressiveness have
+  // their own audited routes; a general PATCH would put an accidental scope
+  // widening one typo away.
+  const { id } = await params;
+  const adminToken = process.env.ADMIN_API_TOKEN;
+  const graphDbUrl = process.env.GRAPH_DB_URL || 'http://graph_api:8001';
+  const baseUrl = graphDbUrl.endsWith('/api/v1') ? graphDbUrl : `${graphDbUrl}/api/v1`;
+
+  let engagementMode: unknown;
+  try {
+    ({ engagement_mode: engagementMode } = await request.json());
+  } catch {
+    return NextResponse.json({ error: describeApiError(400), status: 400 }, { status: 400 });
+  }
+
+  if (
+    engagementMode !== 'wapt' &&
+    engagementMode !== 'redteam' &&
+    engagementMode !== 'both'
+  ) {
+    return NextResponse.json(
+      { error: "engagement_mode must be 'wapt', 'redteam', or 'both'", status: 400 },
+      { status: 400 }
+    );
+  }
+
+  try {
+    const response = await fetch(`${baseUrl}/investigations/${id}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${adminToken}`,
+      },
+      body: JSON.stringify({ engagement_mode: engagementMode }),
+    });
+
+    if (!response.ok) {
+      const detail = await response.text();
+      console.error(
+        `[api/investigations/:id] graph_db PATCH -> ${response.status}: ${detail}`
+      );
+      return NextResponse.json(
+        { error: describeApiError(response.status), status: response.status },
+        { status: response.status }
+      );
+    }
+
+    return NextResponse.json(await response.json());
+  } catch (error: any) {
+    return NextResponse.json({ error: describeApiError(502), status: 502 }, { status: 502 });
+  }
+}
 
 export async function DELETE(
   request: Request,

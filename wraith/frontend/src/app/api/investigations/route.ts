@@ -27,8 +27,9 @@ export async function POST(request: Request) {
   let name: unknown;
   let target: unknown;
   let platform: unknown;
+  let engagementMode: unknown;
   try {
-    ({ name, target, platform } = await request.json());
+    ({ name, target, platform, engagement_mode: engagementMode } = await request.json());
   } catch {
     return NextResponse.json({ error: describeApiError(400), status: 400 }, { status: 400 });
   }
@@ -53,6 +54,18 @@ export async function POST(request: Request) {
       { status: 400 }
     );
   }
+  if (
+    engagementMode !== undefined &&
+    engagementMode !== null &&
+    engagementMode !== 'wapt' &&
+    engagementMode !== 'redteam' &&
+    engagementMode !== 'both'
+  ) {
+    return NextResponse.json(
+      { error: "engagement_mode must be 'wapt', 'redteam', or 'both'", status: 400 },
+      { status: 400 }
+    );
+  }
 
   try {
     const response = await fetch(`${baseUrl}/investigations`, {
@@ -66,6 +79,9 @@ export async function POST(request: Request) {
         target: target.trim(),
         ...(typeof platform === 'string' && platform.trim()
           ? { platform: platform.trim() }
+          : {}),
+        ...(typeof engagementMode === 'string' && engagementMode
+          ? { engagement_mode: engagementMode }
           : {}),
       }),
     });
