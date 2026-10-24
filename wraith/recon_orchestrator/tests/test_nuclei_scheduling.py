@@ -548,3 +548,53 @@ async def test_the_status_table_gets_one_unsuffixed_entry_per_scan_target():
     assert not any(k.startswith("nuclei:http://juice_shop:3000:") for k in statuses), (
         f"route-counted ghost entries in the status table: {sorted(statuses)}"
     )
+
+
+def test_a_match_is_recorded_as_a_finding_not_only_an_endpoint():
+    """nuclei matches reached the graph as Endpoints and notes, and the
+    investigation's findings view came back empty on an application the scanner
+    had flagged. A match is a Finding attached to the endpoint it was matched
+    at, carrying the template, severity and title."""
+    tool = NucleiTool()
+    results = tool.parse_output(
+        '{"template-id":"sqli","info":{"name":"SQL Injection",'
+        '"severity":"high","description":"Boolean-based blind"},"matched-at":"http://juice_shop:3000/r?q=1"}\n',
+        domain="juice_shop:3000",
+    )
+    assert len(results.findings) == 1
+    finding = results.findings[0]
+    assert finding.url == "http://juice_shop:3000/r?q=1"
+    assert finding.host == "juice_shop"
+    assert finding.method == "GET"
+    assert finding.vuln_type == "sqli"
+    assert finding.template_id == "sqli"
+    assert finding.severity == "high"
+    assert finding.title == "SQL Injection"
+    assert finding.description == "Boolean-based blind"
+    assert "sqli" in (finding.evidence or "")
+
+
+@pytest.mark.asyncio
+async def test_a_scan_pass_is_not_handed_routes_from_another_port():
+    """A pass keyed on :3000 must scan :3000, not :3001.
+
+    The original hang: a false endpoint on the bare host (port 80) created a
+    `http://juice_shop` authority, and `_known_urls` matched only on hostname --
+    so that dead-port pass was handed the entire :3000 surface and burned its
+    budget timing out against port 80. Passes are now narrowed to the authority
+    they were keyed on."""
+    orc = orchestrator_with(
+        EndpointResult(host="juice_shop", url="http://juice_shop:3000/api",
+                       method="GET", source_tool="httpx"),
+        EndpointResult(host="juice_shop", url="http://juice_shop:3001/admin",
+                       method="GET", source_tool="httpx"),
+    )
+
+    await trigger(orc, completed="httpx")
+
+    by_target = {}
+    for target, urls in orc.nuclei.targets:
+        by_target.setdefault(target, set()).update(urls)
+
+    assert "http://juice_shop:3001/admin" not in by_target.get("http://juice_shop:3000", set())
+    assert "http://juice_shop:3000/api" not in by_target.get("http://juice_shop:3001", set())

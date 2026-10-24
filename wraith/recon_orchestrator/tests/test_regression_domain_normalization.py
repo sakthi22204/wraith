@@ -83,3 +83,33 @@ async def test_local_target_skips_external_archive_tools():
     assert statuses["gau:juice_shop:3000"] == ToolStatus.SKIPPED
     assert statuses["waybackurls:juice_shop:3000"] == ToolStatus.SKIPPED
     assert statuses["cloud_enum:juice_shop:3000"] == ToolStatus.SKIPPED
+
+
+@pytest.mark.asyncio
+async def test_port_qualified_target_is_in_scope_of_a_bare_host_rule():
+    """The graph stores a bare host in ``scope_domains`` (scope_host strips the
+    port), while a local investigation may name ``juice_shop:3000`` -- the port
+    the app answers on. The runner authorizes on the destination host, so the
+    bare rule already covers every port; recon's door check has to ask the same
+    question or it rejects a fully authorized target before any tool runs.
+    This is the exact 400 the Juice Shop E2E hit."""
+    orchestrator = ReconOrchestrator()
+    mock_graph = AsyncMock()
+    mock_graph.get_program_scope.return_value = ["juice_shop"]
+    mock_graph.create_scan_session.return_value = {"id": "scan-1"}
+    mock_graph.list_recon_sessions.return_value = []
+    mock_graph.update_recon_session.return_value = None
+
+    for tool in orchestrator.tools:
+        tool.run = AsyncMock(return_value=ToolResults())
+
+    with patch("app.orchestrator.graph_client", mock_graph):
+        result = await orchestrator.start_session(
+            ReconRequest(program_id="local", domains=["juice_shop:3000"])
+        )
+        session_id = result["session_id"]
+
+    # Accepted, and the port is preserved in the status keys: it names the
+    # service to scan, not just the host.
+    assert orchestrator.sessions[session_id].status in ("accepted", "running", "completed")
+    assert any(k.endswith(":juice_shop:3000") for k in orchestrator.sessions[session_id].tool_statuses)

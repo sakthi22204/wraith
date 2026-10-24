@@ -28,7 +28,7 @@ from .tools.cloud_enum import CloudEnumTool
 from .tools.js_routes import JsRoutesTool
 from .tools.base import host_from_domain, target_url
 from .graph_client import graph_client
-from .scope_sync import ScopeReconciliationError, fetch_roe_rules, reconcile
+from .scope_sync import ScopeReconciliationError, _scope_host, fetch_roe_rules, reconcile
 from .config import settings
 
 
@@ -376,12 +376,41 @@ class ReconOrchestrator:
                     await asyncio.sleep(delay)
                     delay *= 2
 
-    def _known_urls(self, session_id: str, domain: str) -> List[str]:
+    @staticmethod
+    def _explicit_authority(domain: str) -> str:
+        """``scheme://host:port`` only when the caller named a port, else "".
+
+        A bare ``juice_shop`` target means "the service on the default port" to
+        tools that want the whole host (linkfinder reads every bundle on it),
+        so it must not be narrowed. A target that *is* an authority
+        (``http://juice_shop:3000``) names one port, and a scan aimed there must
+        not receive routes discovered on a different one.
+        """
+        try:
+            parsed = urlsplit(target_url(domain))
+        except ValueError:
+            return ""
+        try:
+            port = parsed.port
+        except ValueError:
+            return ""
+        if not parsed.hostname or port is None:
+            return ""
+        return f"{parsed.scheme}://{parsed.netloc}"
+
+    def _known_urls(self, session_id: str, domain: str, authority: str = "") -> List[str]:
         """Discovered endpoint URLs on this domain, for tools that aim at them.
 
         Filtered to the seed's own host. linkfinder and js_routes extract full
         URLs out of JavaScript bundles, including third-party ones, and a
         scanner handed those would send traffic outside the target's scope.
+
+        ``authority`` narrows the result to one ``scheme://host:port``. The
+        trigger leaves it empty when it enumerates the authorities worth
+        scanning (every port on the host must be visible, or a service on 3000
+        is never found), but each scan pass sets it: a pass keyed on :3000 must
+        not receive routes discovered on :3001, and a pass whose seed is a dead
+        default port must not drag a live non-default port into its timeout.
         """
         seed_host = (host_from_domain(target_url(domain)) or "").lower()
         out: List[str] = []
@@ -390,6 +419,8 @@ class ReconOrchestrator:
             if not url.lower().startswith(("http://", "https://")):
                 continue
             if seed_host and (host_from_domain(url) or "").lower() != seed_host:
+                continue
+            if authority and _authority_of(url) != authority:
                 continue
             out.append(url)
         return out
@@ -723,7 +754,10 @@ class ReconOrchestrator:
         """
         if not getattr(tool, "dedupe_scanned_urls", False) or not hasattr(tool, "_targets"):
             return None
-        extra = self._known_urls(session_id, domain) if getattr(tool, "accepts_extra_urls", False) else None
+        extra = (
+            self._known_urls(session_id, domain, self._explicit_authority(domain))
+            if getattr(tool, "accepts_extra_urls", False) else None
+        )
         already = self._scanned_urls.get(f"{session_id}:{domain}", set())
         return [u for u in tool._targets(domain, extra) if u not in already]
 
@@ -758,6 +792,15 @@ class ReconOrchestrator:
             if key not in seen_endpoints:
                 seen_endpoints.add(key)
                 acc.endpoints.append(endpoint)
+
+        # A widening pass re-matches the same template at the same URL, so key
+        # on the pair that identifies the issue rather than the whole object.
+        seen_findings = {(f.url, f.template_id) for f in acc.findings}
+        for finding in results.findings:
+            key = (finding.url, finding.template_id)
+            if key not in seen_findings:
+                seen_findings.add(key)
+                acc.findings.append(finding)
 
     async def _run_tool_body(self, session_id: str, investigation_id: str, domain: str, tool,
                              run_key: str, extra_urls_override=None):
@@ -832,7 +875,9 @@ class ReconOrchestrator:
                     elif getattr(tool, "accepts_extra_urls", False):
                         results = await tool.run(
                             domain,
-                            extra_urls=(self._known_urls(session_id, domain)
+                            extra_urls=(self._known_urls(
+                                            session_id, domain,
+                                            self._explicit_authority(domain))
                                         if extra_urls is None else extra_urls))
                     else:
                         results = await tool.run(domain)
@@ -1012,12 +1057,64 @@ class ReconOrchestrator:
                 outcomes.extend(await asyncio.gather(*chunk, return_exceptions=True))
             return outcomes
 
+        # Endpoint ids are needed to attach findings, so this variant keeps the
+        # (job, outcome) pairing that write_all discards. gather preserves the
+        # order of its awaitables, so zipping each chunk back is exact.
+        endpoint_ids: Dict[tuple, str] = {}
+
+        async def write_endpoints(jobs):
+            outcomes = []
+            for i in range(0, len(jobs), 200):
+                chunk = jobs[i:i + 200]
+                chunk_outcomes = await asyncio.gather(
+                    *(graph_client.upsert_endpoint(*job) for job in chunk),
+                    return_exceptions=True)
+                for (_, endpoint), outcome in zip(chunk, chunk_outcomes):
+                    if isinstance(outcome, dict) and outcome.get("id"):
+                        endpoint_ids[(endpoint.host, endpoint.url, endpoint.method)] = outcome["id"]
+                outcomes.extend(chunk_outcomes)
+            return outcomes
+
         port_outcomes, endpoint_outcomes = await asyncio.gather(
             write_all(port_jobs, graph_client.upsert_port),
-            write_all(endpoint_jobs, graph_client.upsert_endpoint))
+            write_endpoints(endpoint_jobs))
         for outcome in port_outcomes + endpoint_outcomes:
             if isinstance(outcome, BaseException):
                 raise outcome
+
+        # Findings last: each is attached to the endpoint it was matched at, so
+        # that endpoint must already exist. A match whose URL is not in this
+        # batch's endpoint set (the endpoint upsert failed, or the finding came
+        # from a tool that reports findings without endpoints) is skipped
+        # rather than invented as a free-floating node.
+        finding_jobs = []
+        for finding in unique(results.findings,
+                              lambda f: (f.url, f.template_id)):
+            endpoint_id = endpoint_ids.get((finding.host, finding.url, finding.method))
+            if endpoint_id:
+                finding_jobs.append((endpoint_id, finding))
+
+        if finding_jobs:
+            async def write_finding(endpoint_id, finding):
+                return await graph_client.create_finding(endpoint_id, "endpoint", {
+                    "title": finding.title or finding.template_id,
+                    "vuln_type": finding.vuln_type,
+                    "severity": finding.severity,
+                    "confidence": "MEDIUM",
+                    "status": "UNCONFIRMED",
+                    "description": finding.description or finding.title or finding.template_id,
+                    "evidence": finding.evidence,
+                    "evidence_sources": ["mcp_tool_result"],
+                })
+
+            for i in range(0, len(finding_jobs), 200):
+                chunk = finding_jobs[i:i + 200]
+                outcomes = await asyncio.gather(
+                    *(write_finding(endpoint_id, finding) for endpoint_id, finding in chunk),
+                    return_exceptions=True)
+                for outcome in outcomes:
+                    if isinstance(outcome, BaseException):
+                        raise outcome
 
     async def cancel_session(self, session_id: str):
         if session_id in self.running_tasks:
@@ -1211,7 +1308,16 @@ class ReconOrchestrator:
             seen.add(norm_domain)
             normalized_requested.append(norm_domain)
 
-            is_in_scope = self._scope_matches_any(norm_domain, normalized_scope)
+            # The runner decides scope on the destination host, so a bare
+            # `juice_shop` rule authorizes `juice_shop:3000`. Ask the matcher the
+            # same question the reconciler and the runner ask -- with ports
+            # reduced -- or a legitimately in-scope service on a non-default
+            # port is rejected at the door. The session still keeps the port in
+            # `normalized_requested`, because that is which service to scan.
+            is_in_scope = self._scope_matches_any(
+                _scope_host(norm_domain),
+                [_scope_host(s) for s in normalized_scope],
+            )
             if not is_in_scope:
                 out_of_scope.append(domain)
 

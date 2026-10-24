@@ -96,11 +96,26 @@ class TestToolsKeepTheHost:
         assert results.endpoints[1].method == "POST"
 
     def test_gittools_attributes_the_exposed_repo(self):
-        results = GittoolsTool().parse_output("git directory is exposed", TARGET)
+        # Finder's match line is the evidence; the banner around it is noise.
+        results = GittoolsTool().parse_output(f"[*] Found: {TARGET}", TARGET)
         assert results.endpoints[0].url == f"http://{TARGET}/.git/"
 
     def test_gittools_reports_nothing_when_nothing_was_found(self):
         assert GittoolsTool().parse_output("no exposed git found", TARGET).endpoints == []
+
+    def test_gittools_banner_is_not_a_finding(self):
+        """The banner mentions "git" on every run, including runs that found
+        nothing. Matching it invented `/.git/` on a dead port and sent nuclei
+        into a 30-minute timeout against a service that was never listening."""
+        banner = (
+            "###########\n"
+            "# Finder is part of https://github.com/internetwache/GitTools\n"
+            "# Developed and maintained by @gehaxelt\n"
+            "###########\n"
+            "Scanning...\n"
+            "Finished\n"
+        )
+        assert GittoolsTool().parse_output(banner, TARGET).endpoints == []
 
     def test_linkfinder_anchors_a_target_path(self):
         results = LinkfinderTool().parse_output("/assets/app.js\n", TARGET)
@@ -276,7 +291,7 @@ class TestNoEndpointLacksAHost:
         (GauTool(), f"http://{TARGET}/x"),
         (WaybackurlsTool(), f"http://{TARGET}/x"),
         (KiterunnerTool(), json.dumps({"path": "/x"})),
-        (GittoolsTool(), "exposed"),
+        (GittoolsTool(), f"[*] Found: {TARGET}"),
         (LinkfinderTool(), "/x"),
         (SecretfinderTool(), f"[ + ] URL: http://{TARGET}/static/app.js\ngoogle_api\t->\tAIza1\n"),
         (TrufflehogTool(), json.dumps({

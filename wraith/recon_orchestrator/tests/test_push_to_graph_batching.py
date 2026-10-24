@@ -98,3 +98,72 @@ async def test_endpoint_ids_point_at_correct_host(fake_graph):
     assert mapping["https://a.example/1"] == mapping["https://a.example/3"]
     assert mapping["https://b.example/2"] != mapping["https://a.example/1"]
     assert len(fake_graph.host_calls) == 2
+
+class _FindingGraph(_FakeGraph):
+    def __init__(self):
+        super().__init__()
+        self.finding_calls = []
+
+    async def upsert_endpoint(self, host_id, endpoint):
+        self.endpoint_calls.append((host_id, endpoint.url))
+        # Mirror graph_api: an upsert returns the endpoint, including its id.
+        return {"id": f"ep-{endpoint.url}"}
+
+    async def create_finding(self, target_id, target_type, finding_data):
+        self.finding_calls.append((target_id, target_type, finding_data))
+        return {"id": "f-1"}
+
+
+@pytest.mark.asyncio
+async def test_nuclei_findings_are_attached_to_their_endpoint(monkeypatch):
+    from app.schemas import FindingResult
+
+    g = _FindingGraph()
+    monkeypatch.setattr(orch, "graph_client", g)
+
+    url = "http://juice_shop:3000/rest/products/search?q=1"
+    results = ToolResults(
+        endpoints=[_endpoint("juice_shop", url)],
+        findings=[FindingResult(
+            host="juice_shop", url=url, method="GET", source_tool="nuclei",
+            vuln_type="sqli", severity="high", title="SQL Injection",
+            description="Boolean-based blind", template_id="sqli",
+            evidence="nuclei template 'sqli' matched at " + url,
+        )],
+    )
+
+    await orch.ReconOrchestrator.__new__(orch.ReconOrchestrator)._push_to_graph(
+        "inv-f", results)
+
+    assert len(g.finding_calls) == 1
+    target_id, target_type, data = g.finding_calls[0]
+    assert target_id == f"ep-{url}"
+    assert target_type == "endpoint"
+    assert data["vuln_type"] == "sqli"
+    assert data["status"] == "UNCONFIRMED"
+    assert data["severity"] == "high"
+    assert data["evidence_sources"] == ["mcp_tool_result"]
+
+
+@pytest.mark.asyncio
+async def test_a_finding_without_an_endpoint_is_not_invented(monkeypatch):
+    """A Finding is attached to an Endpoint; creating one with no target would
+    make a free-floating node the report cannot resolve."""
+    from app.schemas import FindingResult
+
+    g = _FindingGraph()
+    monkeypatch.setattr(orch, "graph_client", g)
+
+    results = ToolResults(
+        endpoints=[_endpoint("juice_shop", "http://juice_shop:3000/api")],
+        findings=[FindingResult(
+            host="juice_shop", url="http://juice_shop:3000/other",
+            method="GET", source_tool="nuclei", vuln_type="x",
+            severity="info", title="X", template_id="x",
+        )],
+    )
+
+    await orch.ReconOrchestrator.__new__(orch.ReconOrchestrator)._push_to_graph(
+        "inv-g", results)
+
+    assert g.finding_calls == []

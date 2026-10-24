@@ -142,7 +142,7 @@ def test_trufflehog_parser():
 
 def test_gittools_parser():
     tool = GittoolsTool()
-    output = 'Exposed .git directory found!'
+    output = '[*] Found: example.com'
     res = tool.parse_output(output, "example.com")
     assert len(res.endpoints) == 1
     assert res.endpoints[0].url == "http://example.com/.git/"

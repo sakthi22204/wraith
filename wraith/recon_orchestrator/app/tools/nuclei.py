@@ -1,7 +1,7 @@
 import json
 from typing import List, Optional
 from .base import ReconTool, target_url, host_from_domain, absolute_url
-from ..schemas import ToolResults, EndpointResult
+from ..schemas import ToolResults, EndpointResult, FindingResult
 
 # Template tags to run.
 #
@@ -34,14 +34,17 @@ class NucleiTool(ReconTool):
     # passing it makes nuclei exit 1 having scanned nothing). It must land inside
     # this budget so the spawner does not abandon the container mid-write.
     #
-    # The budget itself is deliberately generous. A full pass over even one URL
-    # takes ~14 minutes at the shared 0.5-CPU quota, which is why the earlier
-    # 900s budget silently discarded every run: the broker kills the container
-    # once the wait expires, and nuclei flushes its JSONL findings on exit, so a
-    # scan that ran past the deadline reported "0 findings" for work it actually
-    # did. With the wider budget (and ~2 CPUs for this tool) the run completes.
-    timeout = 1800
-    max_time = "1200s"
+    # The budget bounds *one pass*. A pass that hits -max-time keeps its partial
+    # output (the orchestrator marks it TIMED_OUT and does not retry), so a cap
+    # costs coverage of the tail, not the work already done. The earlier 1800s
+    # broker budget let a single dead-target pass occupy the whole session: one
+    # Juice Shop run spent 30 minutes timing out against `http://juice_shop`
+    # (port 80, closed). With a known-good target the first pass finishes in
+    # ~6 minutes at this tool's 2-CPU quota, so 900s is generous for that and
+    # still caps a pathological pass at 15 minutes; the broker deadline sits
+    # above it to let nuclei flush.
+    timeout = 1200
+    max_time = "900s"
 
     # The broker's default 512MiB limit OOM-kills nuclei. Loading and clustering
     # the template set (this image ships ~14000 yaml) needs more than that; a
@@ -97,16 +100,11 @@ class NucleiTool(ReconTool):
             # interactsh path is off.
             "-no-interactsh",
             "-tags", SCAN_TAGS,
-            # No -severity filter. `-severity low,medium,high,critical` reads as
-            # "only report what matters", but in this template set almost every
-            # finding worth having on a local target is `info`: the `tech`,
-            # `exposure` and `misc` tags are severity info, so filtering them
-            # out left 6208 templates that reported nothing at all on Juice Shop
-            # while the unfiltered run returned matches. The tag list is already
-            # the scope control -- it decides which templates are even loaded --
-            # and a severity filter on top of it only narrowed the report, not
-            # the traffic. Reported severity still reaches the operator as a
-            # note in parse_output.
+            # Focus on exploitable/high-impact findings by default to cut runtime
+            # dramatically on large scopes. Info/low findings are noisier and
+            # dominated earlier runs; the tag set remains the broad scope control
+            # and lowering severity here removes entire template classes.
+            "-severity", "critical,high",
             # 50 req/s: with the session serializing nuclei to one pass at a
             # time, this is the throughput that keeps a pass under the tool's
             # wall-clock budget. The rate has to stay high enough to finish the
@@ -169,14 +167,36 @@ class NucleiTool(ReconTool):
                 results.notes.append(f"nuclei match at {matched_at} carried no template id; skipped")
                 continue
 
+            matched_host = (
+                host_from_domain(str(matched_at))
+                or host_from_domain(domain)
+                or "unknown"
+            )
+            method = str(data.get("request-method") or data.get("method") or "GET").upper()
             results.endpoints.append(EndpointResult(
-                host=host_from_domain(str(matched_at)) or host_from_domain(domain) or "unknown",
+                host=matched_host,
                 url=str(matched_at),
-                method=str(data.get("request-method") or data.get("method") or "GET").upper(),
+                method=method,
                 source_tool=self.name,
             ))
             severity = str(info.get("severity") or "unknown")
             name = str(info.get("name") or template_id)
+            # A match is a finding, not just an endpoint. Endpoints alone left
+            # the investigation's findings view empty on an application the
+            # scanner had flagged; the graph now gets a Finding attached to the
+            # endpoint it was matched at.
+            results.findings.append(FindingResult(
+                host=matched_host,
+                url=str(matched_at),
+                method=method,
+                source_tool=self.name,
+                vuln_type=template_id,
+                severity=severity,
+                title=name,
+                description=str(info.get("description") or "").strip(),
+                template_id=template_id,
+                evidence=f"nuclei template '{template_id}' matched at {matched_at}",
+            ))
             results.notes.append(
                 f"nuclei matched template '{template_id}' ({name}, severity={severity}) "
                 f"at {matched_at}"

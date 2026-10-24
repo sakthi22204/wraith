@@ -34,10 +34,30 @@ class EndpointResult(BaseModel):
     method: str
     source_tool: str
 
+class FindingResult(BaseModel):
+    """A vulnerability match a scanner reported at an endpoint.
+
+    Kept separate from EndpointResult: the endpoint is the asset, the finding is
+    the issue. Before this, nuclei's matches were folded into ``notes`` and the
+    graph held an Endpoint but no Finding, so the investigation's findings list
+    came back empty on an application the scanner had flagged.
+    """
+    host: str
+    url: str
+    method: str
+    source_tool: str
+    vuln_type: str
+    severity: str
+    title: str
+    description: str = ""
+    template_id: str = ""
+    evidence: Optional[str] = None
+
 class ToolResults(BaseModel):
     hosts: List[HostResult] = []
     ports: List[PortResult] = []
     endpoints: List[EndpointResult] = []
+    findings: List[FindingResult] = []
     # Caveats about this tool's own output: what was filtered out and why.
     # Without somewhere to put them, a parser that discards results has to do
     # it silently, and "fuzzed, found nothing" is indistinguishable from
