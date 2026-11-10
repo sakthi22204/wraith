@@ -58,6 +58,12 @@ _TIERS = {
     # T3 -- authorization failures and disclosure of other people's data.
     "Broken Access Control": 3,
     "Improper Access Control": 3,
+    # A proven bypass of the login check is a full account takeover, not a
+    # weaker cousin of one: the tautology either authenticated as someone or it
+    # did not. Kept at T3 rather than T4 because no code was executed; the
+    # anonymous bonus is what lifts it to critical, which is the correct grade
+    # for reaching an account without credentials.
+    "Authentication Bypass": 3,
     "Account Enumeration": 3,
     "Information Exposure": 3,
     "Weak JWT Handling": 3,

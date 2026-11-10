@@ -4,11 +4,9 @@ from app.main import app
 from unittest.mock import AsyncMock, patch
 
 @pytest.mark.asyncio
-async def test_recon_start_api():
+async def test_recon_start_api(admin_token):
     from httpx import ASGITransport
-    from app.config import settings
-
-    headers = {"Authorization": f"Bearer {settings.ADMIN_API_TOKEN}"}
+    headers = {"Authorization": f"Bearer {admin_token}"}
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         with patch("app.orchestrator.orchestrator.start_session") as mock_start:

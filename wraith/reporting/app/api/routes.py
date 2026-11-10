@@ -10,10 +10,23 @@ import os
 router = APIRouter()
 
 template_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "templates")
-from jinja2 import select_autoescape
+
+
+def _autoescape(template_name):
+    """Escape HTML templates, never the markdown one.
+
+    ``select_autoescape(["html", "j2", "xml"])`` classified every template as
+    HTML because both names end in ``.j2``, so the markdown body rendered as
+    ``&#39;`` instead of ``'`` -- valid HTML, unreadable plain text.
+    """
+    return bool(template_name) and (
+        template_name.endswith(".html") or template_name.endswith(".html.j2")
+    )
+
+
 env = Environment(
     loader=FileSystemLoader(template_dir),
-    autoescape=select_autoescape(["html", "j2", "xml"])
+    autoescape=_autoescape,
 )
 
 import logging

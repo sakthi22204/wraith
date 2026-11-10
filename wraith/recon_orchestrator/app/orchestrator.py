@@ -341,6 +341,21 @@ class ReconOrchestrator:
 
         session.progress = 100.0
         session.current_tool = None
+
+        # Deterministic post-recon validation (the LLM-free path).
+        #
+        # Recon records observations; the runner turns them into decided
+        # findings. That last step used to happen only when a language model
+        # picked a candidate, so a target whose vulnerability was an injection
+        # the model did not choose stayed reported as clean. The generator and
+        # the campaign are both deterministic, so the only thing missing was a
+        # trigger. It is gated to local targets: this sends crafted payloads
+        # (SQLi differentials, traversal, SSTI) and the aggressive-scanning
+        # permission that covers remote hosts under an ROE does not extend to
+        # exploitation.
+        if any(self._is_local_target(d) for d in domains):
+            await self._auto_validate_local(session, investigation_id, domains)
+
         session.logs.append(f"[{datetime.utcnow().strftime('%H:%M:%S')}] Automatic recon workflow finished with status: {session.status}")
 
         if graph_session_id:
@@ -1197,6 +1212,95 @@ class ReconOrchestrator:
         except Exception as e:
             print(f"Could not read aggressive flag for {investigation_id}: {e}")
         return True
+
+    async def _auto_validate_local(self, session, investigation_id: str, domains: List[str]):
+        """Ask the runner to drain deterministic candidates for a local target.
+
+        Never raises: recon already succeeded, and a validation pass that could
+        not start is a missing second stage, not a failed scan. Its outcome is
+        recorded in the session log so "no findings" is distinguishable from
+        "validation never ran".
+        """
+        import httpx
+        url = f"{settings.RUNNER_URL.rstrip('/')}/investigations/{investigation_id}/auto-validate"
+        headers = {"Authorization": f"Bearer {settings.RUNNER_ADMIN_TOKEN}",
+                   "Content-Type": "application/json"}
+        stamp = datetime.utcnow().strftime('%H:%M:%S')
+
+        # Recon is the hardest load the target sees, and a container that was
+        # healthy when httpx probed it may be restarting by the time validation
+        # runs. Starting the campaign into a restart is worse than waiting: the
+        # first probes come back "connect_error", which is a true observation
+        # about nothing and lands as UNCONFIRMED findings. Give the target one
+        # minute to answer a single GET before spending a candidate budget on it.
+        ready = await self._wait_for_target(domains, timeout=60)
+        if not ready:
+            session.logs.append(
+                f"[{stamp}] Deterministic validation skipped: "
+                f"{', '.join(domains)} did not answer a readiness probe after 60s"
+            )
+            return
+
+        try:
+            async with httpx.AsyncClient(timeout=600) as client:
+                resp = await client.post(url, headers=headers, json={"max_candidates": 25})
+            if resp.status_code != 200:
+                session.logs.append(
+                    f"[{stamp}] Deterministic validation did not start: runner "
+                    f"returned {resp.status_code}: {resp.text[:200]}"
+                )
+                return
+            data = resp.json()
+        except Exception as e:
+            session.logs.append(
+                f"[{stamp}] Deterministic validation did not start: "
+                f"{type(e).__name__}: {e}"
+            )
+            return
+
+        if data.get("aborted_unreachable"):
+            session.logs.append(
+                f"[{stamp}] Deterministic validation aborted: the target stopped "
+                f"answering after {data.get('executed', 0)} candidate(s); the "
+                f"remaining {data.get('considered', 0)} were left unrun rather "
+                f"than recorded as evidence"
+            )
+        by_verdict = data.get("by_result") or data.get("by_outcome") or {}
+        session.logs.append(
+            f"[{stamp}] Deterministic validation drained {data.get('executed', 0)} "
+            f"candidate(s) from {data.get('generated', 0)} generated "
+            f"({', '.join(domains)}); verdicts: "
+            f"{', '.join(f'{k}={v}' for k, v in by_verdict.items()) or 'none'}"
+            + (f"; {len(data['dropped_undecidable'])} candidate(s) dropped as "
+               f"undecidable" if data.get("dropped_undecidable") else "")
+        )
+
+    @staticmethod
+    async def _wait_for_target(domains: List[str], timeout: float = 60.0) -> bool:
+        """Wait until at least one domain answers a plain GET.
+
+        Readiness is deliberately shallow: any HTTP status proves the server is
+        listening and routing, which is all the campaign needs. A redirect or a
+        401 is just as good as a 200 here -- the question is whether a restart
+        is in progress, not whether a route is public.
+        """
+        import httpx
+        hosts = []
+        for domain in domains:
+            host = domain if "://" in domain else f"http://{domain}"
+            hosts.append(host)
+        deadline = asyncio.get_event_loop().time() + timeout
+        while True:
+            for host in hosts:
+                try:
+                    async with httpx.AsyncClient(timeout=5, verify=False) as client:
+                        await client.get(host, follow_redirects=False)
+                        return True
+                except Exception:
+                    continue
+            if asyncio.get_event_loop().time() >= deadline:
+                return False
+            await asyncio.sleep(3)
 
     async def _ensure_roe_rules(self, investigation_id: str, scope_domains: list):
         try:

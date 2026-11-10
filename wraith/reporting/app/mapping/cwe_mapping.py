@@ -168,6 +168,20 @@ CWE_MAPPING = {
         "cwe_id": "CWE-307",
         "owasp_category": "A07:2021-Identification and Authentication Failures",
         "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:N"
+    },
+    # The deterministic login-bypass rule emits this type. A tautology that
+    # yields a session token is an authentication failure, not a parsing quirk.
+    "authentication bypass": {
+        "cwe_id": "CWE-287",
+        "owasp_category": "A07:2021-Identification and Authentication Failures",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N"
+    },
+    # Unauthenticated data routes (feedback, addresses, cards) expose personal
+    # data directly; CWE-359 is the PII-specific descendant of CWE-200.
+    "pii exposure": {
+        "cwe_id": "CWE-359",
+        "owasp_category": "A01:2021-Broken Access Control",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N"
     }
 }
 

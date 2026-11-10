@@ -93,3 +93,18 @@ class _FakeFetch:
             }
             for pattern in self._state["scope"]
         ]
+
+@pytest.fixture
+def admin_token(monkeypatch):
+    """A non-empty admin token, so the start route is reachable on a host.
+
+    The route compares the presented bearer token against
+    ``settings.ADMIN_API_TOKEN`` in this process; nothing external verifies it.
+    In the compose network the real value arrives from the environment. On a
+    host without one, auth-gated route tests still need a token to get past the
+    dependency -- using any value here cannot mask a product failure.
+    """
+    from app.config import settings
+    if not settings.ADMIN_API_TOKEN:
+        monkeypatch.setattr(settings, "ADMIN_API_TOKEN", "test-admin-token")
+    return settings.ADMIN_API_TOKEN

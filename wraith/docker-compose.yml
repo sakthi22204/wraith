@@ -380,7 +380,11 @@ services:
     environment:
       - NODE_OPTIONS=--max-old-space-size=5120
     mem_limit: 6g
-    restart: on-failure
+    # `on-failure` does not restart a container that exits 0, and this image has
+    # been observed exiting cleanly under sustained scan load. The result was a
+    # target that was gone for the rest of the session and a validation pass
+    # full of connect_error. Restart on any exit.
+    restart: unless-stopped
 
   # Local Custom Recon Tool Images
   kiterunner_image:

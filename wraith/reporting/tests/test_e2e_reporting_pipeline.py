@@ -50,7 +50,11 @@ FINDING = {
     "target_id": "e1",
     "confidence": "0.95",
     "discovered_at": "2026-01-15T10:00:00Z",
-    "status": "CONFIRMED",
+    # AI_VALIDATED is the status the graph writes for an executed validation.
+    # The legacy "CONFIRMED" alias is deliberately not a confirmation path on
+    # its own (see test_unvalidated_not_reported_as_vulnerability.py): without
+    # a recorded exchange it is an unvalidated hypothesis.
+    "status": "AI_VALIDATED",
     "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
 }
 

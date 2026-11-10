@@ -100,11 +100,11 @@ class NucleiTool(ReconTool):
             # interactsh path is off.
             "-no-interactsh",
             "-tags", SCAN_TAGS,
-            # Focus on exploitable/high-impact findings by default to cut runtime
-            # dramatically on large scopes. Info/low findings are noisier and
-            # dominated earlier runs; the tag set remains the broad scope control
-            # and lowering severity here removes entire template classes.
-            "-severity", "critical,high",
+            # No `-severity` filter. The templates this tag set selects are
+            # mostly *info* severity by design -- tech fingerprinting, exposures
+            # and misc checks -- so a severity floor removes exactly the
+            # reportable matches while leaving the scan looking like it ran.
+            # Tag selection is the scope control here; severity is not.
             # 50 req/s: with the session serializing nuclei to one pass at a
             # time, this is the throughput that keeps a pass under the tool's
             # wall-clock budget. The rate has to stay high enough to finish the

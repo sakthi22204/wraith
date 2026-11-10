@@ -271,7 +271,17 @@ class ReportGenerator:
             "lfi": "Avoid passing user input directly to file system APIs. Use an allowlist of files.",
             "jwt": "Ensure strong signing algorithms and secrets. Validate all claims and expiration.",
             "xxe": "Disable external entity resolution in XML parsers.",
-            "cmdi": "Avoid calling OS commands with user input. Use safe alternatives or sanitize input thoroughly."
+            "cmdi": "Avoid calling OS commands with user input. Use safe alternatives or sanitize input thoroughly.",
+            "authentication bypass": (
+                "Parameterize the authentication query and never concatenate identity "
+                "fields into SQL. Authenticate only after the supplied credential "
+                "matches exactly one account's password hash."
+            ),
+            "pii exposure": (
+                "Require authentication and object-level authorization on every data "
+                "route. Deny by default and return only the fields the caller is "
+                "entitled to see."
+            ),
         }
         suggested_remediation = (
             finding.get("remediation")
