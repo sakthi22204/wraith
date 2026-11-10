@@ -36,7 +36,9 @@ import httpx
 from pydantic import BaseModel, Field
 
 from .common.base_server import BaseSecurityServer
-from .common.redaction import redact_capture, redact_headers, redact_text
+from .common.redaction import (
+    extract_session_token, redact_capture, redact_headers, redact_text,
+)
 from .gate import GateError, revalidate_hop
 
 # The gate's context for the request in flight, published by main.gate_request.
@@ -256,6 +258,12 @@ class ProbeCapture(BaseModel):
 
     error: Optional[str] = None
     reached_target: bool = False
+
+    # Transient: a credential recovered from a successful login response, and
+    # only when the caller explicitly asked for it (the single-probe tool). It
+    # is never part of the redacted evidence; it exists so a confirmed bypass
+    # can become an identity for a follow-up authenticated replay.
+    auth_token: Optional[str] = None
 
 
 class Identity(BaseModel):
@@ -759,6 +767,7 @@ class HttpProbeServer(BaseSecurityServer):
         timeout: float = 20.0,
         follow_redirects: bool = False,
         redirect_guard=None,
+        extract_token: bool = False,
     ) -> ProbeCapture:
         url = self._validate_url(url)
         method = self._validate_method(method)
@@ -860,7 +869,15 @@ class HttpProbeServer(BaseSecurityServer):
 
         # Redact before this leaves the sandbox: evidence must never carry
         # credentials into the graph, audit log, or a rendered report.
-        return ProbeCapture(**_coerce_text_bodies(redact_capture(capture.model_dump())))
+        raw = capture.model_dump()
+        auth_token = extract_session_token(raw) if extract_token else None
+        redacted = _coerce_text_bodies(redact_capture(raw))
+        if auth_token:
+            # Attached after redaction, so it can never appear in the evidence
+            # built from the redacted capture. The runner drops it as soon as it
+            # has been spent on the pivot request.
+            redacted["auth_token"] = auth_token
+        return ProbeCapture(**redacted)
 
     # -- differential comparison --------------------------------------------
 
@@ -1900,6 +1917,7 @@ class HttpProbeServer(BaseSecurityServer):
             return await self.probe(
                 url=url, method=method, headers=headers, body=body,
                 timeout=timeout, follow_redirects=follow_redirects,
+                extract_token=True,
             )
 
         @self.mcp.tool()

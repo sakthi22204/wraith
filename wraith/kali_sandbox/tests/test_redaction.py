@@ -3,6 +3,8 @@ import pytest
 
 from mcp_servers.common.redaction import (
     REDACTED,
+    extract_session_token,
+    redact_capture,
     redact_headers,
     redact_text,
     redact_url,
@@ -68,3 +70,43 @@ class TestAuthChallengeScrubbing:
     def test_empty_value_is_tolerated(self):
         assert scrub_auth_challenge("") == ""
         assert scrub_auth_challenge(None) is None
+
+
+class TestSessionTokenExtraction:
+    """A confirmed bypass becomes an identity without entering the evidence."""
+
+    def _capture(self, body, status=200, headers=None):
+        return {"status_code": status, "response_body": body,
+                "response_headers": headers or {}}
+
+    def test_token_in_json_body_is_recovered(self):
+        capture = self._capture('{"authentication": {"token": "abc.def.ghi"}}')
+        assert extract_session_token(capture) == "abc.def.ghi"
+
+    def test_camel_case_and_nested_keys_are_recovered(self):
+        capture = self._capture('{"data": {"accessToken": "tok-123"}}')
+        assert extract_session_token(capture) == "tok-123"
+
+    def test_session_cookie_is_recovered(self):
+        capture = self._capture(
+            "", headers={"Set-Cookie": "connect.sid=s%3Axyz; Path=/; HttpOnly"})
+        assert extract_session_token(capture) == "s%3Axyz"
+
+    def test_non_2xx_is_not_harvested(self):
+        capture = self._capture('{"token": "abc"}', status=401)
+        assert extract_session_token(capture) is None
+
+    def test_a_jwt_in_free_text_is_not_lifted_out(self):
+        token = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abcdefghijklmnop"
+        capture = self._capture(f"your debug token is {token}")
+        assert extract_session_token(capture) is None
+
+    def test_a_cookie_unrelated_to_auth_is_not_harvested(self):
+        capture = self._capture("", headers={"Set-Cookie": "theme=dark; Path=/"})
+        assert extract_session_token(capture) is None
+
+    def test_extraction_reads_raw_while_evidence_redacts(self):
+        token = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abcdefghijklmnop"
+        capture = self._capture(f'{{"token": "{token}"}}')
+        assert extract_session_token(capture) == token
+        assert token not in redact_capture(capture)["response_body"]

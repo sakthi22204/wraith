@@ -9,7 +9,7 @@ Redaction is applied on the way IN, before anything is persisted or rendered, so
 an unredacted value never reaches the graph, the audit log, or a report.
 """
 import re
-from typing import Any, Dict, Iterable, List, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 REDACTED = "[REDACTED]"
 
@@ -275,6 +275,85 @@ def redact_url(url: str) -> str:
         )
     except ValueError:
         return redact_text(url)
+
+
+# Credential-shaped response fields and session-cookie names. Used only by
+# extract_session_token(), which runs on the RAW capture before redaction so a
+# confirmed login bypass can hand the runner an identity to replay with. It is
+# deliberately narrow: a JWT sitting in page content is not a session.
+_CREDENTIAL_KEYS = frozenset({
+    "token", "accesstoken", "idtoken", "jwt", "jwttoken", "authtoken",
+    "sessiontoken",
+})
+_SESSION_COOKIE_KEYS = frozenset({
+    "token", "jwt", "accesstoken", "authtoken", "session", "sessionid",
+    "connectsid", "sid",
+})
+
+
+def _norm_field(name: Any) -> str:
+    return str(name).lower().replace("-", "").replace("_", "").replace(".", "")
+
+
+def _find_credential(node: Any, depth: int = 0) -> Optional[str]:
+    if depth > 8:
+        return None
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if (_norm_field(key) in _CREDENTIAL_KEYS
+                    and isinstance(value, str) and value):
+                return value
+        for value in node.values():
+            found = _find_credential(value, depth + 1)
+            if found:
+                return found
+    elif isinstance(node, list):
+        for value in node:
+            found = _find_credential(value, depth + 1)
+            if found:
+                return found
+    return None
+
+
+def extract_session_token(capture: Dict[str, Any]) -> Optional[str]:
+    """Return the credential a successful login response issues, or None.
+
+    Call this on the raw capture, never on a redacted one. The value is handed
+    back only to a caller that explicitly asks for it (the single-probe tool)
+    and is never written into the evidence, which is built from the redacted
+    capture.
+    """
+    status = capture.get("status_code")
+    try:
+        if status is None or not (200 <= int(status) < 300):
+            return None
+    except (TypeError, ValueError):
+        return None
+
+    body = capture.get("response_body")
+    if isinstance(body, str) and body:
+        import json
+        try:
+            parsed = json.loads(body)
+        except (ValueError, TypeError):
+            parsed = None
+        if parsed is not None:
+            found = _find_credential(parsed)
+            if found:
+                return found
+
+    headers = capture.get("response_headers") or {}
+    for name, value in headers.items():
+        if str(name).lower() != "set-cookie" or not isinstance(value, str):
+            continue
+        for part in value.split(","):
+            pair = part.split(";", 1)[0].strip()
+            if "=" not in pair:
+                continue
+            cname, _sep, cval = pair.partition("=")
+            if _norm_field(cname) in _SESSION_COOKIE_KEYS and cval.strip():
+                return cval.strip().strip('"')
+    return None
 
 
 def redact_capture(capture: Dict[str, Any]) -> Dict[str, Any]:
