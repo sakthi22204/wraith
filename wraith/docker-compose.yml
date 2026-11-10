@@ -121,6 +121,10 @@ services:
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://ollama:11434}
       - MCP_SERVER_URLS=["http://kali_sandbox:8000/sse"]
       - ADMIN_API_TOKEN=${ADMIN_API_TOKEN:?ADMIN_API_TOKEN must be set; generate one, do not reuse a published default}
+      - ENGAGEMENT_MODE=${ENGAGEMENT_MODE:-wapt}
+      - SKILLS_ENABLED=${SKILLS_ENABLED:-false}
+      - SKILLS_DIR=/app/skills
+      - SKILLS_ON_DEMAND=${SKILLS_ON_DEMAND:-true}
     networks:
       - wraith_internal
     depends_on:
