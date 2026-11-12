@@ -29,15 +29,16 @@ def test_graph_scope_absent_from_roe_is_flagged():
     assert result.unauthorized == ["tax.crypto.com"]
 
 
-def test_apex_roe_covers_subdomain_consistently_with_runner():
-    """Apex-covers-subdomain is the codebase-wide rule, in both copies.
+def test_exact_roe_does_not_cover_a_subdomain():
+    """A literal host rule covers only that host, in both copies.
 
-    ROE ``crypto.com`` and graph ``tax.crypto.com`` reconcile as agreeing
-    because the runner's own scope check would also permit that host. Tightening
-    only this comparison would report drift where the runner has none.
+    Programs routinely list individual hosts and exclude siblings or
+    subdomains on the same apex, so treating ``crypto.com`` as covering
+    ``tax.crypto.com`` would let recon select a target the runner refuses.
     """
     result = reconcile(["tax.crypto.com"], ["crypto.com"])
-    assert result.agreed is True
+    assert result.agreed is False
+    assert result.unauthorized == ["tax.crypto.com"]
 
 
 def test_empty_roe_scope_flags_everything():
@@ -53,7 +54,7 @@ def test_wildcard_roe_covers_subdomains():
 
 def test_roe_cannot_widen_graph():
     """Enforcement broader than selection is not drift; recon just selects less."""
-    result = reconcile(["a.example.com"], ["example.com", "other.test"])
+    result = reconcile(["a.example.com"], ["*.example.com", "other.test"])
     assert result.agreed is True
 
 
@@ -277,8 +278,8 @@ async def test_start_session_records_aggressive_allowance(
 async def test_aggressive_allowance_is_apex_scoped_not_blanket(
     real_reconcile, roe_state, monkeypatch
 ):
-    """The opt-in covers only the host (and its subdomains) the rule names;
-    another host on the same program is not exempt."""
+    """The opt-in covers only the host the rule names; another host on the
+    same program is not exempt."""
     from unittest.mock import AsyncMock
 
     from app.schemas import ReconRequest
@@ -380,9 +381,14 @@ def test_bracketed_ipv6_with_a_port_reconciles():
     assert result.agreed is True
 
 
-def test_a_subdomain_on_a_non_default_port_still_matches_its_parent():
-    result = reconcile(["api.example.com:8080"], ["example.com"], matcher=None)
+def test_a_subdomain_on_a_non_default_port_matches_a_wildcard_parent():
+    result = reconcile(["api.example.com:8080"], ["*.example.com"], matcher=None)
     assert result.agreed is True
+
+
+def test_a_subdomain_on_a_non_default_port_does_not_match_a_literal_parent():
+    result = reconcile(["api.example.com:8080"], ["example.com"], matcher=None)
+    assert result.agreed is False
 
 
 def test_an_address_outside_a_cidr_is_still_refused():

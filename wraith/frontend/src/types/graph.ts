@@ -100,7 +100,7 @@ export interface ExploitProposalHistory {
   params: Record<string, any>;
   actor: string;
   actor_note?: string | null;
-  status: 'pending' | 'approved' | 'rejected' | 'executed';
+  status: 'queued' | 'running' | 'completed' | 'blocked' | 'failed' | 'stopped' | 'pending' | 'approved' | 'rejected' | 'executed';
   created_at: string;
   result?: Record<string, any> | null;
 }

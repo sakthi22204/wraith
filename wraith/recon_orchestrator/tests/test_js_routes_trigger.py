@@ -26,7 +26,7 @@ def orchestrator_with(*endpoints):
     return orc
 
 
-async def trigger(orc):
+async def trigger(orc, domain="juice_shop:3000"):
     """Run the conditional triggers with tool execution stubbed out."""
     launched = []
     queued = set()
@@ -39,7 +39,7 @@ async def trigger(orc):
 
     with patch.object(ReconOrchestrator, "_run_tool", new=fake_run_tool):
         await orc._evaluate_conditional_triggers(
-            "s1", "inv-1", "juice_shop:3000", KatanaTool(), queued, running
+            "s1", "inv-1", domain, KatanaTool(), queued, running
         )
         await asyncio.gather(*running)
     return launched
@@ -70,6 +70,22 @@ async def test_js_routes_is_scheduled_alongside_the_other_js_tools():
     assert "linkfinder" in launched
     assert "secretfinder" in launched
     assert "js_routes" in launched
+
+
+@pytest.mark.asyncio
+async def test_remote_passive_run_does_not_schedule_external_js_fetchers():
+    """LinkFinder/SecretFinder follow third-party script srcs; a remote target
+    without an aggressive opt-in must only get the same-origin js_routes."""
+    orc = orchestrator_with(
+        EndpointResult(host="example.com", url="https://example.com/app.js",
+                       method="GET", source_tool="httpx")
+    )
+
+    launched = await trigger(orc, domain="example.com")
+
+    assert "js_routes" in launched
+    assert "linkfinder" not in launched
+    assert "secretfinder" not in launched
 
 
 @pytest.mark.asyncio

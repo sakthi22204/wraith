@@ -1,4 +1,5 @@
 import asyncio
+import fnmatch
 import ipaddress
 import re
 import uuid
@@ -87,9 +88,14 @@ class ReconOrchestrator:
                         "gittools", "nuclei"}
 
     # Passive / light-touch tools that are safe against remote targets.
+    # linkfinder and secretfinder are deliberately absent: with `-e` they follow
+    # every script a page references, including third-party CDNs, which is
+    # outside an exact-host program's scope. cloud_enum is absent for the same
+    # reason: it probes cloud-storage bucket names derived from the keyword, not
+    # the authorized host, so it reaches infrastructure the program never named.
     PASSIVE_REMOTE_TOOLS = {
-        "subfinder", "httpx", "gau", "waybackurls", "cloud_enum",
-        "dnsx", "tlsx", "linkfinder", "secretfinder", "trufflehog",
+        "subfinder", "httpx", "gau", "waybackurls",
+        "dnsx", "tlsx", "trufflehog",
     }
 
     def __init__(self):
@@ -501,7 +507,14 @@ class ReconOrchestrator:
             # table, which is the one thing that shows up in a single-page app
             # and nowhere else. Without it an SPA recon finds its own shell and
             # static assets and never its API.
-            for tool in [self.linkfinder, self.secretfinder, self.js_routes]:
+            #
+            # LinkFinder/SecretFinder with `-e` follow every script a page
+            # references, including third-party CDNs. They are therefore held
+            # behind the host's aggressive opt-in; js_routes does its own
+            # same-origin check and stays available to passive runs.
+            js_tools = ([self.linkfinder, self.secretfinder, self.js_routes]
+                        if aggressive_ok else [self.js_routes])
+            for tool in js_tools:
                 tool_key = f"{tool.name}:{domain}"
                 if tool_key not in queued_keys:
                     queued_keys.add(tool_key)
@@ -1171,11 +1184,14 @@ class ReconOrchestrator:
     def _scope_matches_any(self, norm_domain: str, normalized_scope: List[str]) -> bool:
         """Determine whether a requested domain is within an allowed scope.
 
-        A domain is in scope if it exactly equals an allowed scope entry, is a
-        subdomain of one (api.example.com vs example.com), or shares the same
-        registrable domain as an allowed entry (luminadatamatics.com vs
-        www.luminadatamatics.com). Ancestor matching is restricted to the
-        registrable domain so requesting 'com' can never satisfy a host scope.
+        The runner is the enforcement point, so this must answer the same
+        question it does (``_match`` in app/roe/scope_check.py): an exact host
+        rule covers only that host, and a rule containing a wildcard uses
+        fnmatch semantics. It deliberately does not treat an apex as covering
+        its subdomains or every sibling on the registrable domain -- programs
+        commonly list individual hosts and exclude others on the same apex
+        (``vendors.example.com`` without ``buy.example.com``), and widening the
+        matcher here made recon accept a host the runner would refuse.
         """
         for allowed in normalized_scope:
             if not allowed:
@@ -1190,11 +1206,15 @@ class ReconOrchestrator:
                         return True
                 except ValueError:
                     continue
+                continue
+            # Keep the literal host for exact rules; wildcard rules use the
+            # same fnmatch call as the runner, so `*.example.com` does not
+            # match `example.com` in either copy.
+            if "*" in allowed or "?" in allowed or "[" in allowed:
+                if fnmatch.fnmatch(norm_domain, allowed):
+                    return True
+                continue
             if norm_domain == allowed:
-                return True
-            if norm_domain.endswith(f".{allowed}"):
-                return True
-            if self.registrable_domain(norm_domain) == self.registrable_domain(allowed):
                 return True
         return False
 

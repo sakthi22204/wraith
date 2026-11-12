@@ -40,6 +40,8 @@ TRAFFIC_SENDING_TOOLS = {
     "run_jwt_tool",
     "run_nikto",
     "run_xsstrike",
+    "run_zap_baseline",
+    "run_zap_active",
     "http_probe",
     "http_probe_diff",
     "http_probe_race",
@@ -136,7 +138,8 @@ class TestDestinationResolution:
         binds already carries the port, and the whole query string is what
         gets scope-checked and sent."""
         url_tools = ("run_arjun", "run_dalfox", "run_corsy", "run_commix",
-                     "run_ghauri", "run_nikto", "run_xsstrike")
+                     "run_ghauri", "run_nikto", "run_xsstrike",
+                     "run_zap_baseline", "run_zap_active")
         for tool in url_tools:
             targets, ports = _destination_of(tool, {"url": "http://juice_shop:3000/?id=1&x=2"})
             assert targets == ["http://juice_shop:3000/?id=1&x=2"], tool

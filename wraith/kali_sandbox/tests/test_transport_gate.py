@@ -59,6 +59,8 @@ _DISPATCHABLE_BODIES = {
     "run_jwt_tool": {"token": "e30.e30.e30", "target": "http://127.0.0.1/"},
     "run_nikto": {"url": "http://127.0.0.1/"},
     "run_xsstrike": {"url": "http://127.0.0.1/"},
+    "run_zap_baseline": {"url": "http://127.0.0.1/"},
+    "run_zap_active": {"url": "http://127.0.0.1/"},
     "http_probe": {"url": "http://127.0.0.1/"},
     "http_probe_diff": {"url": "http://127.0.0.1/a", "variants": [{"url": "http://127.0.0.1/b"}]},
     "http_probe_race": {"url": "http://127.0.0.1/"},
@@ -85,6 +87,8 @@ _PROVIDER_FOR_TOOL = {
     "run_jwt_tool": "web_tools",
     "run_nikto": "web_tools",
     "run_xsstrike": "web_tools",
+    "run_zap_baseline": "zap",
+    "run_zap_active": "zap",
     "http_probe": "http_probe_server",
     "http_probe_diff": "http_probe_server",
     "http_probe_race": "http_probe_server",
@@ -105,7 +109,7 @@ def stub_providers(monkeypatch):
     """
     stubs = {name: _StubProvider() for name in ("nmap", "nuclei", "sqlmap", "hydra",
                                                 "metasploit", "http_probe_server",
-                                                "web_tools")}
+                                                "web_tools", "zap")}
     for name, stub in stubs.items():
         monkeypatch.setattr(main_mod, name, stub)
     return stubs

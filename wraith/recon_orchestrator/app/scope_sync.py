@@ -22,6 +22,7 @@ starts.
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
+import fnmatch
 import httpx
 import ipaddress
 
@@ -155,7 +156,10 @@ def _wildcard_matches(domain: str, allowed: List[str]) -> bool:
 
     Takes the whole allowed list rather than one pattern, matching the
     orchestrator's ``_scope_matches_any(domain, allowed_list)`` predicate so a
-    caller-supplied matcher and this default are interchangeable.
+    caller-supplied matcher and this default are interchangeable. The runner's
+    semantics are exact for a literal rule and fnmatch for a wildcard, so an
+    apex rule does not silently cover its subdomains; use ``*.example.com``
+    when the program grants them.
     """
     for pattern in allowed or []:
         base = (pattern or "").strip().lower()
@@ -167,15 +171,18 @@ def _wildcard_matches(domain: str, allowed: List[str]) -> bool:
         # scope the runner will enforce, and the refusal looks like drift.
         if "/" in base and "://" not in base:
             try:
-                return ipaddress.ip_address(domain) in ipaddress.ip_network(base)
+                if ipaddress.ip_address(domain) in ipaddress.ip_network(base):
+                    return True
             except ValueError:
                 # Not an address, so it cannot be inside a network. A malformed
                 # pattern is the rule author's problem, not a match.
-                continue
-        bare = base.lstrip("*").lstrip(".")
-        if not bare:
+                pass
             continue
-        if domain == bare or domain.endswith("." + bare):
+        if "*" in base or "?" in base or "[" in base:
+            if fnmatch.fnmatch(domain, base):
+                return True
+            continue
+        if domain == base:
             return True
     return False
 

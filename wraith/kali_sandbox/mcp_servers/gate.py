@@ -40,10 +40,11 @@ NONCE_KEY_PREFIX = "gate:spent_nonce"
 # the agent into an arbitrary grant-minter still cannot widen this list,
 # because the sandbox refuses to honour an exploit_agent grant for anything
 # else. Everything that sends exploit payloads (dalfox, xsstrike, jwt_tool,
-# commix, ghauri, sqlmap, hydra, msf) stays behind the runner's
-# approve-to-dispatch, where a human approves each submission.
+# commix, ghauri, sqlmap, hydra, msf, ZAP active) stays behind the runner's
+# autonomous execution path, where the full gate chain runs.
 EXPLOIT_AGENT_READ_ONLY_TOOLS = frozenset({
     "run_nmap_scan", "run_nuclei_scan", "run_arjun", "run_corsy", "run_nikto",
+    "run_zap_baseline",
 })
 
 

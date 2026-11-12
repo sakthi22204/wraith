@@ -7,7 +7,7 @@ Interactive control panel for the Wraith autonomous bug-bounty pipeline. The bro
 - **Framework**: Next.js 15 (App Router), React 19, Tailwind 4.
 - **Visualization**: `react-force-graph-2d` for the attack surface graph; SSE for the live agent activity feed.
 - The browser talks to backend services in two ways:
-  1. **Direct** — open read endpoints (graph, recon status, agent status, proposals, audit, scope, assessment) are fetched by the client from `NEXT_PUBLIC_*_URL` service URLs.
+  1. **Direct** — open read endpoints (graph, recon status, agent status, execution history, audit, scope, assessment) are fetched by the client from `NEXT_PUBLIC_*_URL` service URLs.
   2. **Server-side proxy routes** — any operation that requires the admin token goes through a Next.js route handler so `ADMIN_API_TOKEN` is never exposed to the browser.
 
 ## Server-side proxy routes
@@ -31,14 +31,14 @@ The killswitch proxy accepts **only** the fixed actions `activate` / `deactivate
 ## Pages
 
 - `/` — investigation list, create, delete.
-- `/investigations/[id]` — dashboard: live recon/agent phases, graph stats, severity distribution, live terminal, review queue, execution gate (approved exploit modules), rules of engagement, report export.
+- `/investigations/[id]` — dashboard: live recon/agent phases, graph stats, severity distribution, live terminal, review queue, autonomous execution history, rules of engagement, report export.
 - `/investigations/[id]/findings` — findings list grouped by asset.
 - `/investigations/[id]/graph` — interactive attack surface graph.
 - `/investigations/[id]/assessment` — risk score, validation plan, prioritized targets, CVEs.
 - `/investigations/[id]/agent` and `/agent/[sessionId]` — agent session history and live SSE reasoning feed.
 - `/investigations/[id]/recon-sessions` — recon history with live tool timeline and logs.
 - `/investigations/[id]/review` — human review of low-confidence findings (confirm / false positive).
-- `/investigations/[id]/exploitation` — exploit proposals (any status) and the immutable per-investigation audit trail from `active_exploit_runner`.
+- `/investigations/[id]/exploitation` — autonomous exploit executions (queued/running/terminal status) and the immutable per-investigation audit trail from `active_exploit_runner`. Execution is gated by scope, killswitch, aggressiveness, rate limits, and the runner's deterministic checks; it is not approved per action in the browser.
 
 ## Killswitch behavior
 

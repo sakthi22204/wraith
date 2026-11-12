@@ -75,3 +75,24 @@ class ScannerResult(BaseModel):
     findings: List[str] = []
     inconclusive: bool = False
     raw_output: Optional[str] = None
+
+
+class ZapAlert(BaseModel):
+    name: str
+    risk: str
+    url: Optional[str] = None
+    parameter: Optional[str] = None
+
+
+class ZapResult(BaseModel):
+    """ZAP's passive/active scan output.
+
+    `inconclusive` means the scan did not reach a verdict -- unreachable ZAP,
+    a missing API key, a timeout or a refused request. As with the other
+    scanners, that is deliberately distinct from a clean scan with no alerts.
+    """
+    tool: str
+    target: str
+    findings: List[str] = []
+    inconclusive: bool = False
+    raw_output: Optional[str] = None

@@ -125,6 +125,7 @@ services:
       - SKILLS_ENABLED=${SKILLS_ENABLED:-false}
       - SKILLS_DIR=/app/skills
       - SKILLS_ON_DEMAND=${SKILLS_ON_DEMAND:-true}
+      - C2_GATEWAY_URL=http://redteam_gateway:8010
     networks:
       - wraith_internal
     depends_on:
@@ -169,6 +170,7 @@ services:
       - GRAPH_DB_URL=http://graph_api:8001
       - ADMIN_API_TOKEN=${ADMIN_API_TOKEN:?ADMIN_API_TOKEN must be set; generate one, do not reuse a published default}
       - EXPLOIT_RUNNER_BROKER_TOKEN=${EXPLOIT_RUNNER_BROKER_TOKEN:?EXPLOIT_RUNNER_BROKER_TOKEN must be set; it authorizes host-socket container creation}
+      - ENGAGEMENT_MODE=${ENGAGEMENT_MODE:-wapt}
       # Shared with kali_sandbox. The runner signs each approved request with
       # it; the sandbox refuses anything without a valid signature.
       - WRAITH_GATE_SECRET=${WRAITH_GATE_SECRET:?WRAITH_GATE_SECRET must be set; it signs the grants the sandbox trusts as proof of scoping}
@@ -243,6 +245,154 @@ services:
       timeout: 5s
       retries: 5
 
+  # OWASP ZAP — default stack service (no profile). The adapter lives in
+  # kali_sandbox and reaches ZAP over the internal network only. There is no
+  # published host port: ZAP's API can both scan and read its own history, and
+  # the sandbox is the only component that needs it.
+  zap:
+    image: ghcr.io/zaproxy/zaproxy:stable
+    restart: unless-stopped
+    networks:
+      - wraith_internal
+    environment:
+      - ZAP_API_KEY=${ZAP_API_KEY:?ZAP_API_KEY must be set; generate one, do not reuse a published default}
+    # ZAP binds its API to localhost by default. The sandbox is a separate
+    # container, so the API address allow-list has to be widened for the
+    # internal bridge -- otherwise every scan is refused before it starts.
+    command:
+      - zap.sh
+      - -daemon
+      - -host
+      - 0.0.0.0
+      - -port
+      - "8080"
+      - -config
+      - api.key=${ZAP_API_KEY:?ZAP_API_KEY must be set}
+      - -config
+      - api.addrs.addr.name=.*
+      - -config
+      - api.addrs.addr.regex=true
+    # ZAP's JVM plus the active scanner's per-host work set exceed 2g on a
+    # realistic target; at that ceiling the API stops answering health probes
+    # and eventually drops in-flight scan-status connections. 4g leaves room
+    # for the heap while staying well inside a typical developer host.
+    mem_limit: 4g
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - 'python3 -c "import os,urllib.request; urllib.request.urlopen(\"http://127.0.0.1:8080/JSON/core/view/version/?apikey=\"+os.environ[\"ZAP_API_KEY\"], timeout=10)"'
+      interval: 15s
+      timeout: 15s
+      retries: 10
+      start_period: 60s
+
+
+  # REDTEAM C2 — opt-in profile. The default stack never starts these services.
+  #   docker compose --profile redteam up -d
+  # BeEF and Empire are reachable only on wraith_redteam; the gateway is the
+  # only bridge from the internal service network and the only caller that can
+  # task them. The runner remains the authority for scope, aggressiveness,
+  # killswitch and rate limits.
+  beef:
+    image: beefproject/beef@sha256:d2eeff1f55819ea6ab14f3b0c678697bd0cee00d6cfc820e277b698fa0395f49
+    profiles: ["redteam"]
+    restart: unless-stopped
+    networks:
+      - wraith_redteam
+    ports:
+      - "127.0.0.1:3001:3000"
+    environment:
+      - BEEF_USERNAME=${BEEF_USERNAME:-wraith}
+      - BEEF_PASSWORD=${BEEF_PASSWORD:-}
+      - BEEF_PUBLIC_URL=${BEEF_PUBLIC_URL:-http://127.0.0.1:3001}
+    # The upstream image ships a default config and refuses to boot with the
+    # default beef:beef credentials. Generate a per-start config so the password
+    # comes from the environment rather than a checked-in file, and keep the
+    # admin UI on private networks only. Hooking remains reachable by the
+    # authorized target; it is never published off-host unless an operator adds
+    # an ingress deliberately.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        test -n "$$BEEF_PASSWORD" || { echo "BEEF_PASSWORD is required for the redteam BeEF profile" >&2; exit 1; }
+        ruby -ryaml -e '
+          path = "/beef/config.yaml"
+          c = YAML.load_file(path)
+          c["beef"]["credentials"]["user"] = ENV.fetch("BEEF_USERNAME", "wraith")
+          c["beef"]["credentials"]["passwd"] = ENV.fetch("BEEF_PASSWORD")
+          c["beef"]["restrictions"]["permitted_ui_subnet"] = ["127.0.0.1/32", "::1/128", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+          # BeEF builds hook.js from its configured port, not the port the
+          # request arrived on. Without this, a browser reaching hook.js via the
+          # published 3001 mapping is told to call back to the internal 3000 and
+          # the hook never registers. The host stays dynamic (taken from Host),
+          # only the public port is fixed.
+          require "uri"
+          public_uri = URI.parse(ENV.fetch("BEEF_PUBLIC_URL", "http://127.0.0.1:3001"))
+          c["beef"]["http"]["public"] = { "port" => public_uri.port.to_s }
+          c["beef"]["http"]["allow_reverse_proxy"] = true
+          File.write("/tmp/wraith-beef.yaml", YAML.dump(c))
+        '
+        exec /beef/beef -c /tmp/wraith-beef.yaml
+    mem_limit: 1g
+
+  empire:
+    image: bcsecurity/empire:v7.0.2@sha256:7615e3e320908552a0705d63f34da0d4bbc1ab5da3f1b0da5732e7c7f3e81248
+    profiles: ["redteam"]
+    restart: unless-stopped
+    networks:
+      - wraith_redteam
+    ports:
+      - "127.0.0.1:1337:1337"
+    environment:
+      # Empire seeds its first admin from these nested settings on first start.
+      # EMPIRE_USERNAME/EMPIRE_PASSWORD are the gateway's login credentials and
+      # are deliberately the same values.
+      - EMPIRE_DATABASE__DEFAULTS__USERNAME=${EMPIRE_USERNAME:-empireadmin}
+      - EMPIRE_DATABASE__DEFAULTS__PASSWORD=${EMPIRE_PASSWORD:-}
+      - EMPIRE_PASSWORD=${EMPIRE_PASSWORD:-}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        test -n "$$EMPIRE_PASSWORD" || { echo "EMPIRE_PASSWORD is required for the redteam Empire profile" >&2; exit 1; }
+        exec /empire/ps-empire -f server
+    mem_limit: 2g
+
+  redteam_gateway:
+    build:
+      context: ./redteam_gateway
+    profiles: ["redteam"]
+    restart: unless-stopped
+    networks:
+      - wraith_internal
+      - wraith_redteam
+    ports:
+      - "127.0.0.1:8010:8010"
+    environment:
+      - ADMIN_API_TOKEN=${ADMIN_API_TOKEN:?ADMIN_API_TOKEN must be set; generate one, do not reuse a published default}
+      - RUNNER_URL=http://active_exploit_runner:8004/api/v1
+      - RUNNER_TOKEN=${EXPLOIT_RUNNER_BROKER_TOKEN:?EXPLOIT_RUNNER_BROKER_TOKEN must be set; it authorizes host-socket container creation}
+      - GATE_SECRET=${WRAITH_GATE_SECRET:?WRAITH_GATE_SECRET must be set; it signs the grants the sandbox trusts as proof of scoping}
+      - C2_AUTONOMY=${C2_AUTONOMY:-full}
+      - BEEF_API_URL=http://beef:3000
+      - BEEF_USERNAME=${BEEF_USERNAME:-wraith}
+      - BEEF_PASSWORD=${BEEF_PASSWORD:-}
+      - BEEF_API_TOKEN=${BEEF_API_TOKEN:-}
+      - BEEF_PUBLIC_URL=${BEEF_PUBLIC_URL:-http://127.0.0.1:3001}
+      - EMPIRE_API_URL=http://empire:1337
+      - EMPIRE_API_TOKEN=${EMPIRE_API_TOKEN:-}
+      - EMPIRE_USERNAME=${EMPIRE_USERNAME:-empireadmin}
+      - EMPIRE_PASSWORD=${EMPIRE_PASSWORD:-}
+      - BEEF_MODULE_ALLOWLIST=${BEEF_MODULE_ALLOWLIST:-fingerprint_browser,get_visited_urls,get_page_html,get_geolocation,detect_social_networks}
+      - EMPIRE_MODULE_ALLOWLIST=${EMPIRE_MODULE_ALLOWLIST:-powershell/situational_awareness/host/win32processes,powershell/situational_awareness/host/getav,powershell/situational_awareness/network/nslookup}
+    depends_on:
+      active_exploit_runner:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8010/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
   # PHASE 3 — KALI SANDBOX
   kali_sandbox:
     build:
@@ -262,6 +412,11 @@ services:
       - WRAITH_GATE_SECRET=${WRAITH_GATE_SECRET:?WRAITH_GATE_SECRET must be set; it signs the grants the sandbox trusts as proof of scoping}
       - REDIS_URL=redis://redis:6379/0
       - DATABASE_URL=postgresql://wraith:password@postgres:5432/wraith_audit
+      # ZAP is a separate service on the internal network. The adapter fails
+      # closed when this is unset or ZAP is unreachable; kali_sandbox still
+      # starts without waiting for ZAP's healthcheck.
+      - ZAP_API_URL=http://zap:8080
+      - ZAP_API_KEY=${ZAP_API_KEY:?ZAP_API_KEY must be set; generate one, do not reuse a published default}
     networks:
       - wraith_internal
     depends_on:
@@ -506,6 +661,8 @@ services:
 
 networks:
   wraith_internal:
+    driver: bridge
+  wraith_redteam:
     driver: bridge
 
 volumes:

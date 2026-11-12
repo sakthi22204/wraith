@@ -27,10 +27,17 @@
 #   scripts/run_tests.sh assessment   # assessment_service only
 #   scripts/run_tests.sh reporting    # reporting only
 #   scripts/run_tests.sh graph        # graph_db (non-container subset)
+#   scripts/run_tests.sh gateway      # redteam_gateway (host, no services)
 #   scripts/run_tests.sh unit         # no live services needed
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+
+# The default stack now includes ZAP, whose API key is required so the service
+# cannot start with unauthenticated remote API access. Tests are not an
+# exemption from that rule; they only supply a throwaway value so the compose
+# file resolves. A real deployment must set its own key.
+export ZAP_API_KEY="${ZAP_API_KEY:-test-zap-key-not-for-production}"
 
 COMPOSE=(docker compose -f docker-compose.yml -f docker-compose.test.yml)
 
@@ -70,13 +77,17 @@ wait_healthy() {
 # The graph suite reaches Neo4j through testcontainers, which needs a docker
 # socket. Only docker_broker gets one in this stack, deliberately: handing it to
 # a service so a test could be convenient would give that service the ability to
-# start containers. The six modules below therefore cannot run here and are
+# start containers. The modules below therefore cannot run here and are
 # excluded rather than left to error at setup -- an error at setup reads as "not
 # my problem", which is how 12 tests came to be silently skipped. The pure
 # logic (severity adjudication, schema, auth) needs no database and does run.
+# test_delete_investigation_recursive is also a testcontainer module; the
+# `graph` target runs it from the host, which has the docker socket, so it
+# must not leak into the container run.
 GRAPH_NEEDS_CONTAINER=(
   --ignore=tests/test_api.py
   --ignore=tests/test_corroboration.py
+  --ignore=tests/test_delete_investigation_recursive.py
   --ignore=tests/test_false_positive_patterns.py
   --ignore=tests/test_repository.py
   --ignore=tests/test_review_queue.py
@@ -108,6 +119,14 @@ run_agent() {
   docker exec -w /app "$id" python3 -m pytest tests/ -q
 }
 
+run_gateway() {
+  # The gateway suite mocks C2 HTTP calls and needs no running service, so it
+  # runs on the host against the working tree. -p no:cacheprovider avoids
+  # fighting a root-owned cache from the container test runs.
+  echo "=== redteam_gateway tests ==="
+  (cd redteam_gateway && python3 -m pytest tests/ -q -p no:cacheprovider)
+}
+
 case "$target" in
   unit)
     # The runner has a genuine host-runnable subset. The sandbox does not: its
@@ -122,6 +141,8 @@ case "$target" in
     echo "container-only suite; use: scripts/run_tests.sh sandbox"
     echo "=== exploit_agent ==="
     echo "container-only suite; use: scripts/run_tests.sh agent"
+    echo
+    run_gateway
     ;;
 
   runner)
@@ -155,6 +176,10 @@ case "$target" in
     start reporting
     wait_healthy reporting 8006
     run_in reporting tests/ -q
+    ;;
+
+  gateway)
+    run_gateway
     ;;
 
   graph)
@@ -204,10 +229,11 @@ case "$target" in
     run_in reporting tests/ -q
     run_in graph_api tests/ -q "${GRAPH_NEEDS_CONTAINER[@]}"
     run_agent
+    run_gateway
     ;;
 
   *)
-    echo "usage: $0 [all|runner|sandbox|recon|agent|assessment|reporting|graph|unit]" >&2
+    echo "usage: $0 [all|runner|sandbox|recon|agent|assessment|reporting|graph|gateway|unit]" >&2
     exit 2
     ;;
 esac

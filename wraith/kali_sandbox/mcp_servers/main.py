@@ -15,6 +15,7 @@ from .hydra_server import HydraServer
 from .metasploit_server import MetasploitServer
 from .web_tools_server import WebToolsServer
 from .http_probe_server import HttpProbeServer
+from .zap_server import ZapServer
 from . import http_probe_server as http_probe_server_module
 from .gate import GateError, authorization_context
 from .config import validate_startup_secrets
@@ -54,6 +55,10 @@ GATED_NETWORK_TOOLS = {
     # about where the request lands.
     "run_arjun", "run_dalfox", "run_corsy", "run_commix", "run_ghauri",
     "run_jwt_tool", "run_nikto", "run_xsstrike",
+    # ZAP runs in its own container and both modes fetch caller-supplied URLs
+    # through ZAP's API. Baseline is passive, active sends payloads, but the
+    # grant/scope binding is identical for both.
+    "run_zap_baseline", "run_zap_active",
 }
 AUTHORIZED_DANGEROUS_CALLERS = set(os.getenv("AUTHORIZED_DANGEROUS_CALLERS", "active_exploit_runner").split(","))
 
@@ -165,7 +170,8 @@ def _destination_of(tool_name: str, body: dict) -> tuple[list[str], Optional[str
         if body.get("url"):
             targets.append(str(body["url"]))
     elif tool_name in {"run_arjun", "run_dalfox", "run_corsy", "run_commix",
-                       "run_ghauri", "run_nikto", "run_xsstrike"}:
+                       "run_ghauri", "run_nikto", "run_xsstrike",
+                       "run_zap_baseline", "run_zap_active"}:
         # Every one of these reads its destination from `url` and dials the
         # port the URL names, exactly like sqlmap/the probe family -- so no
         # port claim: the authority the grant binds already carries the port.
@@ -348,6 +354,7 @@ sqlmap = SQLMapServer()
 hydra = HydraServer()
 metasploit = MetasploitServer()
 web_tools = WebToolsServer()
+zap = ZapServer()
 http_probe_server = HttpProbeServer()
 
 # Register tools from each provider to the main mcp instance
@@ -413,6 +420,18 @@ async def run_xsstrike(url: str, data: str = None):
     """Test a URL for reflected XSS with XSStrike (gated on scope + signed grant)."""
     caller = get_caller()
     return unwrap_inner(await web_tools.mcp.call_tool("run_xsstrike", {"url": url, "data": data, "caller": caller}))
+
+@mcp.tool()
+async def run_zap_baseline(url: str):
+    """Spider a URL and collect ZAP passive findings (gated on scope + grant)."""
+    caller = get_caller()
+    return unwrap_inner(await zap.mcp.call_tool("run_zap_baseline", {"url": url, "caller": caller}))
+
+@mcp.tool()
+async def run_zap_active(url: str):
+    """Run ZAP's active scanner (gated; requires aggressive authorization)."""
+    caller = get_caller()
+    return unwrap_inner(await zap.mcp.call_tool("run_zap_active", {"url": url, "caller": caller}))
 
 @mcp.tool()
 async def run_hydra(target: str, service: str, user: str, pass_list: str):
