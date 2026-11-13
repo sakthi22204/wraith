@@ -66,9 +66,11 @@ ALLOWED_METHODS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "O
 DEFAULT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
 
 # A differential test costs two requests. This bounds the whole comparison so a
-# caller cannot turn a single probe into an unbounded sweep.
+# caller cannot turn a single probe into an unbounded sweep. The per-variant cap
+# allows a UNION column-count sweep (one variant per candidate width); it is
+# still a fixed ceiling, and the comparison-level cap scales with it.
 MAX_COMPARISON_REQUESTS = 2
-MAX_VARIANTS = 8
+MAX_VARIANTS = 12
 
 # A race sweep sends the *same* request several times at once. The cap is
 # deliberately small: concurrency multiplies load on a live host, so the harness
@@ -78,9 +80,10 @@ MAX_RACE_REQUESTS = 6
 # A threshold sweep sends the same request repeatedly in quick succession to find
 # where a target starts refusing traffic. Higher than the race cap because the
 # requests are sequential and a budget is typically well above the concurrency
-# needed to break a lock, but still a small fixed number: this measures whether a
-# limiter exists, it is not a way to load a host.
-MAX_THRESHOLD_REQUESTS = 20
+# needed to break a lock. 50 is enough to show a login has no per-account
+# throttle at all (a spray needs breadth, not volume); it is still a fixed
+# ceiling, not a load tool.
+MAX_THRESHOLD_REQUESTS = 50
 # Timing harness: repeat the same request N times and compute median elapsed_ms
 # (matches the "3-repetition timing delta" requirement). Bounded like other
 # sweeps; not a stress test.

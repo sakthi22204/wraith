@@ -1,2 +1,5 @@
 venv/
 .paddle_live/
+
+# jwt_tool writes this at runtime while testing the JWT probe
+jwtconf.ini

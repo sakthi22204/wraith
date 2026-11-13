@@ -404,10 +404,10 @@ async def run_ghauri(url: str, param: str = None, method: str = "GET", data: str
     return unwrap_inner(await web_tools.mcp.call_tool("run_ghauri", {"url": url, "param": param, "method": method, "data": data, "caller": caller}))
 
 @mcp.tool()
-async def run_jwt_tool(token: str, target: str, mode: str = "alg"):
+async def run_jwt_tool(token: str, target: str, mode: str = "alg", pubkey: str = None):
     """Decode a JWT and test its algorithm handling against `target` (gated)."""
     caller = get_caller()
-    return unwrap_inner(await web_tools.mcp.call_tool("run_jwt_tool", {"token": token, "target": target, "mode": mode, "caller": caller}))
+    return unwrap_inner(await web_tools.mcp.call_tool("run_jwt_tool", {"token": token, "target": target, "mode": mode, "pubkey": pubkey, "caller": caller}))
 
 @mcp.tool()
 async def run_nikto(url: str):

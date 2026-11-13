@@ -16,7 +16,16 @@ class MetasploitServer(BaseSecurityServer):
             self.validate_target(search) # Reuse validation to prevent injection
             # Use msfconsole -x to run search command
             cmd = ["msfconsole", "-q", "-x", f"search {search}; exit"]
-            res = await self.run_tool(cmd, timeout=60)
+            # msfconsole's first start after a container boot loads the module
+            # cache and can exceed a minute. At 60s the run was killed, stdout
+            # was empty, and the parser returned [] -- indistinguishable from a
+            # search that genuinely matched nothing. The timeout is raised and
+            # an empty run is reported as a failure instead of an empty list.
+            res = await self.run_tool(cmd, timeout=120)
+            if not (res.get("stdout") or "").strip():
+                raise RuntimeError(
+                    res.get("error") or res.get("stderr")
+                    or "msfconsole produced no output, so no verdict was reached.")
 
             modules = []
             # Parse table output from msfconsole search

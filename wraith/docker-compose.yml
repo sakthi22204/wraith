@@ -124,6 +124,7 @@ services:
       - ENGAGEMENT_MODE=${ENGAGEMENT_MODE:-wapt}
       - SKILLS_ENABLED=${SKILLS_ENABLED:-false}
       - SKILLS_DIR=/app/skills
+      - SKILLS_LOCAL_DIR=/app/skills_local
       - SKILLS_ON_DEMAND=${SKILLS_ON_DEMAND:-true}
       - C2_GATEWAY_URL=http://redteam_gateway:8010
     networks:

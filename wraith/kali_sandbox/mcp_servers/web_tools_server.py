@@ -16,7 +16,7 @@ not -- a tool can exit non-zero while still printing a complete clean result.
 """
 
 import re
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from .common.base_server import BaseSecurityServer
 from .common.parsers import ScannerResult
@@ -42,9 +42,27 @@ JWT_SCRIPT = "/opt/jwt_tool/jwt_tool.py"
 # contract is unit-testable without spawning a scanner.
 
 def parse_arjun(combined: str) -> List[str]:
-    """Arjun's 'Found parameters: a, b, c' conclusion line."""
+    """Arjun's parameter conclusions.
+
+    Versions disagree on word order (`Found parameters: a, b` vs
+    `Parameters found: a, b`) and the per-parameter line carries the source
+    Arjun inferred from (`parameter detected: q, based on: http headers`). The
+    per-parameter lines are the more useful finding, so they win; the summary
+    is the fallback for output that only carries a list.
+    """
+    detected = [
+        f"parameter detected: {m.group(1).strip().strip(',')} "
+        f"(based on: {m.group(2).strip()})"
+        for m in re.finditer(
+            r"parameter detected:\s*([^,\n]+),\s*based on:\s*([^|\n]+)",
+            combined, re.IGNORECASE)
+    ]
+    if detected:
+        return detected
     findings = []
-    for match in re.finditer(r"Found parameters:\s*(.+)$", combined, re.IGNORECASE | re.MULTILINE):
+    for match in re.finditer(
+            r"(?:Found parameters|Parameters found):\s*(.+)$",
+            combined, re.IGNORECASE | re.MULTILINE):
         findings.append(f"parameters: {match.group(1).strip()}")
     return findings
 
@@ -57,23 +75,45 @@ def parse_dalfox(combined: str) -> List[str]:
     ]
 
 
+_CORSY_HEADER_RE = re.compile(
+    r"(access-control-allow|acao\s+header|acac\s+header)", re.IGNORECASE)
+
+
 def parse_corsy(combined: str) -> List[str]:
-    """Corsy surfaces the response ACAO/ACAC headers it considers misconfigured."""
+    """Corsy surfaces the response ACAO/ACAC headers it considers misconfigured.
+
+    Corsy's own report renders the pair as ``ACAO Header:`` / ``ACAC Header:``
+    rather than the raw header names, so both spellings are accepted.
+    """
     return [
         line.strip() for line in combined.splitlines()
-        if "access-control-allow" in line.lower()
+        if _CORSY_HEADER_RE.search(line)
     ]
 
 
-COMMIX_VULNERABLE = "(vulnerable)"
-COMMIX_NOT_VULNERABLE = "(not vulnerable)"
+# commix's wording depends on the version: older output pairs
+# `(vulnerable)` / `(not vulnerable)` with its own conclusion, current (4.x)
+# prints "does not seem to be injectable" / "do not appear to be injectable"
+# instead. Both spellings are the tool's verdict; anything else (a banner, a
+# prompt it could not answer) is not.
+COMMIX_NOT_MARKERS = (
+    "(not vulnerable)",
+    "does not seem to be injectable",
+    "do not appear to be injectable",
+    "might not be injectable",
+)
+COMMIX_VULNERABLE_MARKERS = (
+    "(vulnerable)",
+    "seems to be injectable",
+    "appears to be injectable",
+)
 
 
 def parse_commix(combined: str) -> List[str]:
-    """Commix's own conclusion is `(vulnerable)` / `(not vulnerable)`."""
-    if COMMIX_NOT_VULNERABLE in combined:
+    """Commix's own conclusion, in either the legacy or 4.x phrasing."""
+    if any(marker in combined for marker in COMMIX_NOT_MARKERS):
         return []
-    if COMMIX_VULNERABLE in combined:
+    if any(marker in combined for marker in COMMIX_VULNERABLE_MARKERS):
         return ["the parameter is vulnerable to OS command injection"]
     return []
 
@@ -92,7 +132,7 @@ def parse_ghauri(combined: str) -> List[str]:
 
 
 def parse_jwt_tool(combined: str) -> List[str]:
-    """jwt_tool's decoded header/payload blocks plus any [!]/SUCCESS lines."""
+    """jwt_tool's decoded header/payload blocks plus exploit and alert lines."""
     findings: List[str] = []
     capture = False
     for line in combined.splitlines():
@@ -101,13 +141,16 @@ def parse_jwt_tool(combined: str) -> List[str]:
             if capture:
                 capture = False
             continue
-        if stripped.startswith("*** Decoded"):
+        if stripped.startswith("*** Decoded") or stripped.startswith("Decoded Token Values"):
             capture = True
             continue
         if capture:
             findings.append(stripped)
             continue
         low = stripped.lower()
+        if stripped.startswith("jwttool_") or "exploit:" in low:
+            findings.append(stripped)
+            continue
         if "[!]" in stripped or "success" in low or "vulnerab" in low:
             findings.append(stripped)
     seen: set = set()
@@ -138,7 +181,18 @@ class WebToolsServer(BaseSecurityServer):
         self.setup_tools()
 
     async def _scan(self, tool: str, target: str, cmd: List[str],
-                    timeout: int, parser) -> ScannerResult:
+                    timeout: int, parser, verdict: Optional[Tuple[str, ...]] = None
+                    ) -> ScannerResult:
+        """Run a scanner and turn its output into findings.
+
+        ``verdict`` names the strings that constitute the tool's own
+        conclusion. A scanner that starts, prints its banner and then bails out
+        (a prompt it could not answer, a target it refused) still writes to
+        stdout; without this it would be parsed into ``findings=[]`` and read as
+        a clean result. When none of the verdict markers are present the run is
+        reported as inconclusive instead, which callers already treat as "no
+        usable verdict" rather than "nothing found".
+        """
         res = await self.run_tool(cmd, timeout=timeout)
         stdout = res.get("stdout") or ""
         combined = stdout + "\n" + (res.get("stderr") or "")
@@ -151,9 +205,12 @@ class WebToolsServer(BaseSecurityServer):
                     or f"{tool} produced no output, so it reached no verdict."
                 ),
             )
+        findings = parser(combined)
+        reached_verdict = (verdict is None
+                           or any(marker in combined for marker in verdict))
         return ScannerResult(
-            tool=tool, target=target, findings=parser(combined),
-            inconclusive=False, raw_output=stdout,
+            tool=tool, target=target, findings=findings,
+            inconclusive=not reached_verdict, raw_output=stdout,
         )
 
     def setup_tools(self):
@@ -168,8 +225,11 @@ class WebToolsServer(BaseSecurityServer):
             """
             self.verify_caller("run_arjun", caller)
             self.validate_url(url)
-            return await self._scan("arjun", url, ["arjun", "-u", url, "-q"],
-                                    ARJUN_TIMEOUT_SECONDS, parse_arjun)
+            return await self._scan(
+                "arjun", url, ["arjun", "-u", url], ARJUN_TIMEOUT_SECONDS,
+                parse_arjun,
+                verdict=("Parameters found:", "Found parameters:",
+                         "No parameters were discovered", "parameter detected:"))
 
         @self.mcp.tool()
         async def run_dalfox(url: str, caller: Optional[str] = None) -> ScannerResult:
@@ -184,7 +244,7 @@ class WebToolsServer(BaseSecurityServer):
             self.validate_url(url)
             return await self._scan(
                 "dalfox", url,
-                ["dalfox", "scan", url, "--silence", "--no-color"],
+                ["dalfox", "scan", url, "--no-color"],
                 DALFOX_TIMEOUT_SECONDS, parse_dalfox)
 
         @self.mcp.tool()
@@ -214,15 +274,24 @@ class WebToolsServer(BaseSecurityServer):
             """
             self.verify_caller("run_commix", caller)
             self.validate_url(url)
-            cmd = ["commix", "--url", url, "--batch", "--level=1", "--risk=1"]
+            # commix treats any non-TTY stdin as a target list and silently
+            # ignores -u, so a piped invocation would exit after its banner with
+            # no tests run. --ignore-stdin forces URL mode. The answer override
+            # is the other silent bail-out: the target answers 500 to the
+            # heuristic probe and commix's batch default is to skip the rest of
+            # the scan, which would otherwise read as "not vulnerable".
+            cmd = ["commix", "--url", url, "--batch", "--level=1",
+                   "--ignore-stdin",
+                   "--answers=ignore HTTP response code=Y"]
             if param:
                 cmd.extend(["-p", param])
             if method != "GET":
                 cmd.extend(["--method", method])
             if data:
                 cmd.extend(["--data", data])
-            return await self._scan("commix", url, cmd,
-                                    COMMIX_TIMEOUT_SECONDS, parse_commix)
+            return await self._scan(
+                "commix", url, cmd, COMMIX_TIMEOUT_SECONDS, parse_commix,
+                verdict=COMMIX_VULNERABLE_MARKERS + COMMIX_NOT_MARKERS)
 
         @self.mcp.tool()
         async def run_ghauri(url: str, param: Optional[str] = None,
@@ -244,29 +313,41 @@ class WebToolsServer(BaseSecurityServer):
                 cmd.extend(["--method", method])
             if data:
                 cmd.extend(["--data", data])
-            return await self._scan("ghauri", url, cmd,
-                                    GHAURI_TIMEOUT_SECONDS, parse_ghauri)
+            return await self._scan(
+                "ghauri", url, cmd, GHAURI_TIMEOUT_SECONDS, parse_ghauri,
+                verdict=GHAURI_NOT_MARKERS + GHAURI_VULN_MARKERS)
 
         @self.mcp.tool()
         async def run_jwt_tool(token: str, target: str, mode: str = "alg",
+                               pubkey: Optional[str] = None,
                                caller: Optional[str] = None) -> ScannerResult:
             """Decode a JWT and test it against a target with jwt_tool.
 
             Always decodes the token (the header/payload blocks are returned as
             findings). With `target` set, tests the token's algorithm handling
-            against that URL with the named mode (`alg`, `none`, `er`, `key`).
-            The token is sent in the Authorization header to the target, so the
-            destination is gated on scope and a signed grant like every other
-            network tool here.
+            against that URL with the named mode: `alg` (alg:none forgery),
+            `none` (null signature), `er` (forced-error scan), or `key`
+            (RS256->HS256 key confusion, which needs `pubkey` as a PEM path).
+            The token is echoed back in the Authorization header so jwt_tool can
+            substitute the forged value, and the destination is gated on scope
+            and a signed grant like every other network tool here.
             """
             self.verify_caller("run_jwt_tool", caller)
             if mode not in ("alg", "none", "er", "key"):
                 raise ValueError(f"unsupported jwt mode '{mode}'")
+            if mode == "key" and not pubkey:
+                raise ValueError("jwt mode 'key' requires the target's public key PEM")
             self.validate_url(target)
+            cmd = ["python3", JWT_SCRIPT, token]
+            if mode == "er":
+                cmd.extend(["-M", "er"])
+            elif mode == "key":
+                cmd.extend(["-X", "k", "-pk", pubkey])
+            else:
+                cmd.extend(["-X", {"alg": "a", "none": "n"}[mode]])
+            cmd.extend(["-t", target, "-rh", f"Authorization: Bearer {token}"])
             return await self._scan(
-                "jwt_tool", target,
-                ["python3", JWT_SCRIPT, token, "-M", mode, "-t", target, "-v", "0"],
-                JWT_TIMEOUT_SECONDS, parse_jwt_tool)
+                "jwt_tool", target, cmd, JWT_TIMEOUT_SECONDS, parse_jwt_tool)
 
         @self.mcp.tool()
         async def run_nikto(url: str, caller: Optional[str] = None) -> ScannerResult:
@@ -289,14 +370,14 @@ class WebToolsServer(BaseSecurityServer):
                                caller: Optional[str] = None) -> ScannerResult:
             """Test a URL for reflected XSS with XSStrike.
 
-            XSStrike's `[+]` reflection/scripting lines are the findings; blind
-            payloads are skipped (`--skip-ba`) so the run stays bounded. Gated
-            on scope and a signed grant; only run against targets you are
-            authorized to inject into.
+            XSStrike's `[+]` reflection/scripting lines are the findings; the
+            `--skip` flag answers its "continue?" prompt non-interactively so
+            the run stays bounded. Gated on scope and a signed grant; only run
+            against targets you are authorized to inject into.
             """
             self.verify_caller("run_xsstrike", caller)
             self.validate_url(url)
-            cmd = ["xsstrike", "-u", url, "--skip-ba"]
+            cmd = ["xsstrike", "-u", url, "--skip"]
             if data:
                 cmd.extend(["--data", data])
             return await self._scan("xsstrike", url, cmd,

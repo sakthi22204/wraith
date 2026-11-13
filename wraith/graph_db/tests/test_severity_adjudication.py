@@ -183,3 +183,47 @@ class TestIdempotentReshaping:
         once = adjudicate_severity(node)
         node["severity"] = once
         assert adjudicate_severity(node) == once
+
+class TestDisclosureFamiliesCarryTheirOwnWeight:
+    """"Information Exposure" is a claim about other people's data.
+
+    The family is tiered with authorization failures, so a stack trace or a
+    metrics page filed under it floors at critical the moment it is proven
+    anonymously. Those disclosures are real but they leak paths, versions and
+    operational counters, not records, so they name their own family and stay at
+    the unmapped floor. This is the distinction that stopped the Express error
+    page on /graphql from being filed critical.
+    """
+
+    def test_error_message_disclosure_is_medium_not_critical(self):
+        node = _finding(vuln_type="Error Message Disclosure")
+        assert severity_floor(node) == "medium"
+        assert adjudicate_severity(node) == "medium"
+
+    @pytest.mark.parametrize("family", [
+        "Monitoring Endpoint Exposure",
+        "API Documentation Exposure",
+    ])
+    def test_operational_disclosure_stays_at_the_unmapped_floor(self, family):
+        node = _finding(vuln_type=family)
+        assert severity_floor(node) == "medium"
+
+    def test_personal_or_confidential_exposure_keeps_the_higher_tier(self):
+        """The specific families above must not become a loophole: a disclosure
+        that really is another user's data is still an authorization failure."""
+        assert severity_floor(_finding(vuln_type="Information Exposure")) == "critical"
+
+
+class TestBooleanBlindInjectionIsStillDatabaseAccess:
+    """A quiet confirmation is not a weaker one.
+
+    The boolean-blind oracle proves the payload was evaluated by the query and
+    not escaped. That is the same database access an error- or time-based
+    confirmation demonstrates; scoring it lower because the response was a 200
+    instead of a 500 would grade the evidence, not the bug.
+    """
+
+    def test_boolean_blind_confirmation_is_critical_when_anonymous(self):
+        node = _finding(vuln_type="SQL Injection (boolean-blind)")
+        assert severity_floor(node) == "critical"
+        assert adjudicate_severity(node) == "critical"

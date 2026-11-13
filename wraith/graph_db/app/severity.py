@@ -53,6 +53,10 @@ _TIERS = {
     # T4 -- code or database execution.
     "SQL Injection": 4,
     "SQL Injection (time-based)": 4,
+    # A boolean-blind oracle proves the input reached the query and was
+    # evaluated, which is the same database access as an error- or time-based
+    # confirmation. It is not a weaker class because it was quieter to observe.
+    "SQL Injection (boolean-blind)": 4,
     "Injection Canary": 4,
     "Unrestricted File Upload": 4,
     # T3 -- authorization failures and disclosure of other people's data.
@@ -67,6 +71,9 @@ _TIERS = {
     "Account Enumeration": 3,
     "Information Exposure": 3,
     "Weak JWT Handling": 3,
+    # Signature-stripping is the same authentication failure as weak handling:
+    # an unsigned token means anyone can claim any identity.
+    "JWT Algorithm Confusion": 3,
     "Business Logic Flaw": 3,
     "Race Condition / TOCTOU": 3,
     "WebSocket Authentication Bypass": 3,

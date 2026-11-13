@@ -102,6 +102,18 @@ class TestParsers:
         out = parse_arjun("[+] Finished\n[+] Found parameters: uid, pass, q\n")
         assert out == ["parameters: uid, pass, q"]
 
+    def test_arjun_reports_its_current_word_order_and_source(self):
+        out = parse_arjun(
+            "[!] Processing chunks: 1/1\n"
+            "\x1b[1;92m[\u2713]\x1b[0m parameter detected: q, based on: "
+            "http headers | \x1b[1;32m[+]\x1b[0m Parameters found: q\n"
+        )
+        assert out == ["parameter detected: q (based on: http headers)"]
+
+    def test_arjun_current_summary_word_order_is_read_too(self):
+        out = parse_arjun("[+] Parameters found: uid, pass\n")
+        assert out == ["parameters: uid, pass"]
+
     def test_dalfox_reports_poc_lines(self):
         out = parse_dalfox(
             "[I] loading\n[P] [POC][GET][https://h/][reflected]\n[P] [POC] url\ndone\n"
@@ -121,9 +133,29 @@ class TestParsers:
         assert len(out) == 2
         assert "Access-Control-Allow-Origin" in out[0]
 
+    def test_corsy_surfaces_its_own_acao_report_format(self):
+        out = parse_corsy(
+            " - Class: wildcard value\n"
+            " - Severity: low\n"
+            " - ACAO Header: *\n"
+            " - ACAC Header: None\n"
+        )
+        assert len(out) == 2
+        assert "ACAO Header: *" in out[0]
+        assert "ACAC Header: None" in out[1]
+
     def test_commix_conclusion_lines(self):
         assert parse_commix("[-] (not vulnerable)\n") == []
         assert parse_commix("[+] (vulnerable)\n") != []
+
+    def test_commix_4x_conclusion_lines(self):
+        # current commix drops the parenthesised verdict and phrases the
+        # conclusion as a sentence instead.
+        assert parse_commix(
+            "[warning] GET parameter 'q' does not seem to be injectable.\n"
+            "[critical] All tested parameters do not appear to be injectable.\n"
+        ) == []
+        assert parse_commix("The parameter 'q' seems to be injectable.\n") != []
 
     def test_ghauri_not_vulnerable_never_reads_as_positive(self):
         assert parse_ghauri("[INFO] parameter 'id' is not vulnerable\n") == []
@@ -138,6 +170,16 @@ class TestParsers:
         )
         assert any('"alg"' in line for line in out)
         assert any("SECURITY ISSUE" in line for line in out)
+
+    def test_jwt_tool_surfaces_exploit_result_lines(self):
+        out = parse_jwt_tool(
+            "Decoded Token Values:\n"
+            "[+] alg = \"RS256\"\n"
+            "[+] typ = \"JWT\"\n\n"
+            "jwttool_abc123 Exploit: \"alg\":\"none\" Response Code: 200, 8510 bytes\n"
+        )
+        assert any(line.startswith("jwttool_abc123") for line in out)
+        assert any("alg" in line and "RS256" in line for line in out)
 
     def test_nikto_plus_lines_are_findings(self):
         out = parse_nikto(
@@ -211,3 +253,74 @@ async def test_a_clean_run_is_clean_not_inconclusive(monkeypatch):
     res = await _tool(srv, "run_xsstrike")(url="https://h/")
     assert res.inconclusive is False
     assert res.findings == []
+
+
+@pytest.mark.asyncio
+async def test_arjun_bailing_before_its_conclusion_is_inconclusive(monkeypatch):
+    srv = _server(monkeypatch)
+    _stub_run_tool(srv, monkeypatch, {
+        "stdout": "[!] Processing chunks: 1/1\n", "stderr": "", "exit_code": 0,
+        "success": True,
+    })
+    res = await _tool(srv, "run_arjun")(url="https://h/?q=1")
+    assert res.inconclusive is True
+
+    _stub_run_tool(srv, monkeypatch, {
+        "stdout": "[+] Parameters found: q\n", "stderr": "", "exit_code": 0,
+        "success": True,
+    })
+    res = await _tool(srv, "run_arjun")(url="https://h/?q=1")
+    assert res.inconclusive is False
+
+
+@pytest.mark.asyncio
+async def test_commix_is_forced_out_of_stdin_target_mode(monkeypatch):
+    """A piped stdin makes commix ignore -u and exit after its banner. That
+    reads as a clean verdict, so the invocation must name URL mode and answer
+    the 500-skip prompt instead of letting the batch default bail out."""
+    srv = _server(monkeypatch)
+    seen = {}
+
+    async def _run_tool(cmd, timeout=None):
+        seen["cmd"] = cmd
+        return {"stdout": "[-] (not vulnerable)\n", "stderr": "", "exit_code": 0,
+                "success": True}
+
+    monkeypatch.setattr(srv, "run_tool", _run_tool)
+    res = await _tool(srv, "run_commix")(url="https://h/?q=1", param="q")
+
+    assert "--ignore-stdin" in seen["cmd"]
+    assert any(arg.startswith("--answers=") for arg in seen["cmd"])
+    assert res.inconclusive is False
+
+
+@pytest.mark.asyncio
+async def test_commix_bailing_before_testing_is_inconclusive(monkeypatch):
+    """The banner plus a skipped scan is not a "not vulnerable" conclusion."""
+    srv = _server(monkeypatch)
+    _stub_run_tool(srv, monkeypatch, {
+        "stdout": ("banner\n[info] Skipping further testing on the target "
+                   "URL.\n"),
+        "stderr": "", "exit_code": 0, "success": True,
+    })
+    res = await _tool(srv, "run_commix")(url="https://h/?q=1")
+    assert res.inconclusive is True
+    assert res.findings == []
+
+
+@pytest.mark.asyncio
+async def test_ghauri_bailing_before_testing_is_inconclusive(monkeypatch):
+    srv = _server(monkeypatch)
+    _stub_run_tool(srv, monkeypatch, {
+        "stdout": "[INFO] testing connection to the target URL\n",
+        "stderr": "", "exit_code": 0, "success": True,
+    })
+    res = await _tool(srv, "run_ghauri")(url="https://h/?q=1")
+    assert res.inconclusive is True
+
+    _stub_run_tool(srv, monkeypatch, {
+        "stdout": "[INFO] parameter 'q' is not vulnerable\n",
+        "stderr": "", "exit_code": 0, "success": True,
+    })
+    res = await _tool(srv, "run_ghauri")(url="https://h/?q=1")
+    assert res.inconclusive is False

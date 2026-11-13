@@ -36,14 +36,21 @@ RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt
 # "inconclusive", so a changed upstream is a verdict that says "nothing", never
 # a verdict that says "clean".
 #
-# jwt_tool: ticarpi/jwt_tool. Python 3, stdlib + termcolor. The clones get the
-# same 3-attempt retry the recon tool images use: a single flaky fetch under
-# concurrent rebuild load must not fail the whole build.
+# jwt_tool: ticarpi/jwt_tool. Python 3, stdlib + termcolor, plus pycryptodomex
+# for its asymmetric signing/verification modes. Without pycryptodomex the tool
+# imports but refuses to run, which reads as "no verdict" instead of "clean".
+# The clones get the same 3-attempt retry the recon tool images use: a single
+# flaky fetch under concurrent rebuild load must not fail the whole build.
 RUN for i in 1 2 3; do \
-        git clone --depth 1 https://github.com/ticarpi/jwt_tool.git /opt/jwt_tool && break \
+        git clone --depth 1 --branch v2.3.0 https://github.com/ticarpi/jwt_tool.git /opt/jwt_tool && break \
         || { [ "$i" -lt 3 ] && sleep 5 || exit 1; }; \
     done \
-    && pip3 install --no-cache-dir --break-system-packages termcolor requests
+    && pip3 install --no-cache-dir --break-system-packages termcolor requests pycryptodomex
+
+# jwt_tool 2.3.0 generates its config by writing keys that contain a colon, which
+# Python 3.13+ configparser rejects. Ship a valid config instead so the first run
+# never calls createConfig(); it is copied into the runtime user's home below.
+COPY jwtconf.ini /opt/jwt_tool/jwtconf.ini
 
 # Corsy: s0md3v/Corsy. Python 3 port needs requests and urllib3.
 RUN for i in 1 2 3; do \
@@ -82,7 +89,10 @@ COPY . .
 # Default command starts the main MCP server
 
   # Runs as a non-root user. This is the highest-risk container in the stack.
-  RUN useradd --create-home --uid 10002 --shell /usr/sbin/nologin wraith
+  RUN useradd --create-home --uid 10002 --shell /usr/sbin/nologin wraith \
+      && mkdir -p /home/wraith/.jwt_tool \
+      && cp /opt/jwt_tool/jwtconf.ini /home/wraith/.jwt_tool/jwtconf.ini \
+      && chown -R wraith:wraith /home/wraith/.jwt_tool
 
   USER wraith
 CMD ["python3", "-m", "mcp_servers.main"]

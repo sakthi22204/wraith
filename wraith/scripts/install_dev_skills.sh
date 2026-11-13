@@ -20,23 +20,39 @@ AGENT="${1:-opencode}"
 MODE="${2:-}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SRC="$ROOT/exploit_agent/skills"
+SRC_LOCAL="$ROOT/exploit_agent/skills_local"
 
 if [[ ! -d "$SRC" ]]; then
   echo "error: $SRC is missing; run scripts/sync_skills.sh first" >&2
   exit 1
+fi
+# The local overlay is optional but, when present, install it too so the
+# developer agent sees the same namespace the runtime loads.
+SOURCES=("$SRC")
+if [[ -d "$SRC_LOCAL" ]]; then
+  SOURCES+=("$SRC_LOCAL")
 fi
 
 install_into() {
   local dest="$1"
   local label="$2"
   if [[ "$MODE" == "--dry-run" ]]; then
-    echo "[dry-run] would install $(find "$SRC" -mindepth 1 -maxdepth 1 -type d | wc -l) skills into $dest ($label)"
+    local total=0
+    local source
+    for source in "${SOURCES[@]}"; do
+      total=$((total + $(find "$source" -mindepth 1 -maxdepth 1 -type d | wc -l)))
+    done
+    echo "[dry-run] would install $total skills into $dest ($label)"
     return
   fi
   mkdir -p "$dest"
-  # Copy only skill directories. LICENSE/TERMS.md stay with the vendor tree;
-  # agent runtimes enumerate directories, and stray files are noise.
-  find "$SRC" -mindepth 1 -maxdepth 1 -type d -exec cp -a {} "$dest"/ \;
+  # Copy only skill directories. LICENSE/TERMS.md/README.md stay with their
+  # trees; agent runtimes enumerate directories, and stray files are noise.
+  # Local overlay is copied last so it shadows same-named vendored skills.
+  local source
+  for source in "${SOURCES[@]}"; do
+    find "$source" -mindepth 1 -maxdepth 1 -type d -exec cp -a {} "$dest"/ \;
+  done
   echo "Installed skills into $dest ($label)"
 }
 

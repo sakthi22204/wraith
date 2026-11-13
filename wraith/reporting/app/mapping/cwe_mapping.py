@@ -56,6 +56,20 @@ CWE_MAPPING = {
         "owasp_category": "A01:2021-Broken Access Control",
         "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N"
     },
+    # The recon-driven deterministic rules emit "Information Exposure" (the
+    # confidential-document probe), not the "disclosure" wording above.
+    "information exposure": {
+        "cwe_id": "CWE-200",
+        "owasp_category": "A01:2021-Broken Access Control",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N"
+    },
+    # CWE-209 is the specific descendant for a stack trace / framework error
+    # page that discloses internals to an unauthenticated caller.
+    "error message disclosure": {
+        "cwe_id": "CWE-209",
+        "owasp_category": "A05:2021-Security Misconfiguration",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N"
+    },
     "api exposure": {
         "cwe_id": "CWE-200",
         "owasp_category": "A05:2021-Security Misconfiguration",
@@ -80,6 +94,16 @@ CWE_MAPPING = {
     # Map them so generated findings render real CWE/OWASP labels rather than
     # "Unknown - Unknown".
     "sql injection": {
+        "cwe_id": "CWE-89",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+    },
+    "sql injection (boolean-blind)": {
+        "cwe_id": "CWE-89",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+    },
+    "sql injection (union-based)": {
         "cwe_id": "CWE-89",
         "owasp_category": "A03:2021-Injection",
         "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
@@ -124,11 +148,22 @@ CWE_MAPPING = {
         "owasp_category": "A07:2021-Identification and Authentication Failures",
         "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N"
     },
+    "jwt algorithm confusion": {
+        "cwe_id": "CWE-347",
+        "owasp_category": "A07:2021-Identification and Authentication Failures",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N"
+    },
     # The deterministic hypothesis rules (Phase 1.5) emit these types.
     "mass assignment": {
         "cwe_id": "CWE-915",
         "owasp_category": "A04:2021-Insecure Design",
         "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:H/A:N"
+    },
+    # The campaign files IDOR as the family name, not the "idor" slug.
+    "broken access control": {
+        "cwe_id": "CWE-639",
+        "owasp_category": "A01:2021-Broken Access Control",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:N"
     },
     "business logic flaw": {
         "cwe_id": "CWE-840",
@@ -182,6 +217,173 @@ CWE_MAPPING = {
         "cwe_id": "CWE-359",
         "owasp_category": "A01:2021-Broken Access Control",
         "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N"
+    },
+    # Skill-pack and playbook families. A report must never render
+    # "Unknown - Unknown", so every vuln_type a pack can decide has an entry.
+    "api documentation exposure": {
+        "cwe_id": "CWE-200",
+        "owasp_category": "A05:2021-Security Misconfiguration",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N"
+    },
+    "agent instruction override": {
+        "cwe_id": "CWE-1426",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:H/I:H/A:N"
+    },
+    "clickjacking": {
+        "cwe_id": "CWE-1021",
+        "owasp_category": "A05:2021-Security Misconfiguration",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:N/I:L/A:N"
+    },
+    "credential spray feasible": {
+        "cwe_id": "CWE-307",
+        "owasp_category": "A07:2021-Identification and Authentication Failures",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:N"
+    },
+    "cross-site scripting": {
+        "cwe_id": "CWE-79",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N"
+    },
+    "html injection": {
+        "cwe_id": "CWE-80",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N"
+    },
+    "exposed docker api": {
+        "cwe_id": "CWE-306",
+        "owasp_category": "A01:2021-Broken Access Control",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H"
+    },
+    "exposed search service": {
+        "cwe_id": "CWE-306",
+        "owasp_category": "A01:2021-Broken Access Control",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:L/A:N"
+    },
+    "exposed terraform state": {
+        "cwe_id": "CWE-200",
+        "owasp_category": "A01:2021-Broken Access Control",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N"
+    },
+    "graphql authorization bypass": {
+        "cwe_id": "CWE-639",
+        "owasp_category": "A01:2021-Broken Access Control",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:N"
+    },
+    "http request smuggling": {
+        "cwe_id": "CWE-444",
+        "owasp_category": "A05:2021-Security Misconfiguration",
+        "cvss_template": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:N"
+    },
+    "improper access control": {
+        "cwe_id": "CWE-284",
+        "owasp_category": "A01:2021-Broken Access Control",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:N"
+    },
+    "injection canary": {
+        "cwe_id": "CWE-74",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:N"
+    },
+    "monitoring endpoint exposure": {
+        "cwe_id": "CWE-200",
+        "owasp_category": "A05:2021-Security Misconfiguration",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N"
+    },
+    "nosql injection": {
+        "cwe_id": "CWE-943",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N"
+    },
+    "path traversal": {
+        "cwe_id": "CWE-22",
+        "owasp_category": "A01:2021-Broken Access Control",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N"
+    },
+    "prototype pollution": {
+        "cwe_id": "CWE-1321",
+        "owasp_category": "A04:2021-Insecure Design",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:H/A:N"
+    },
+    "reset token disclosed": {
+        "cwe_id": "CWE-640",
+        "owasp_category": "A07:2021-Identification and Authentication Failures",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N"
+    },
+    "sql injection (time-based)": {
+        "cwe_id": "CWE-89",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+    },
+    "sensitive file exposure": {
+        "cwe_id": "CWE-538",
+        "owasp_category": "A01:2021-Broken Access Control",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N"
+    },
+    "server-side request forgery": {
+        "cwe_id": "CWE-918",
+        "owasp_category": "A10:2021-Server-Side Request Forgery",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:L/A:N"
+    },
+    "server-side template injection": {
+        "cwe_id": "CWE-1336",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+    },
+    "source code exposure": {
+        "cwe_id": "CWE-540",
+        "owasp_category": "A01:2021-Broken Access Control",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N"
+    },
+    "unauthenticated mcp server": {
+        "cwe_id": "CWE-306",
+        "owasp_category": "A01:2021-Broken Access Control",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N"
+    },
+    "web cache poisoning": {
+        "cwe_id": "CWE-349",
+        "owasp_category": "A05:2021-Security Misconfiguration",
+        "cvss_template": "CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:C/C:L/I:L/A:N"
+    },
+    "websocket authentication bypass": {
+        "cwe_id": "CWE-306",
+        "owasp_category": "A07:2021-Identification and Authentication Failures",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N"
+    },
+    "xml external entity": {
+        "cwe_id": "CWE-611",
+        "owasp_category": "A05:2021-Security Misconfiguration",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:L/A:N"
+    },
+    "exposed-backup": {
+        "cwe_id": "CWE-530",
+        "owasp_category": "A01:2021-Broken Access Control",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N"
+    },
+    "exposed-config": {
+        "cwe_id": "CWE-538",
+        "owasp_category": "A05:2021-Security Misconfiguration",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N"
+    },
+    "exposed-secrets": {
+        "cwe_id": "CWE-798",
+        "owasp_category": "A02:2021-Cryptographic Failures",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N"
+    },
+    "exposed-source-code": {
+        "cwe_id": "CWE-540",
+        "owasp_category": "A01:2021-Broken Access Control",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N"
+    },
+    "graphql-introspection": {
+        "cwe_id": "CWE-200",
+        "owasp_category": "A05:2021-Security Misconfiguration",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N"
+    },
+    "info-disclosure": {
+        "cwe_id": "CWE-200",
+        "owasp_category": "A01:2021-Broken Access Control",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N"
     }
 }
 
