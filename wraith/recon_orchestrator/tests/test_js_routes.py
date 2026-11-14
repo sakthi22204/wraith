@@ -92,6 +92,19 @@ def test_ignores_paths_outside_api_prefixes():
     assert paths(found) == {"/rest/user/login"}
 
 
+def test_extracts_php_ajax_entrypoints():
+    """Classic PHP front controllers keep routes in the query string, not in
+    the path: a bundle calls "/ajax.php?cat=count". The path-prefix filter must
+    not drop these, or a whole application class yields zero recovered routes."""
+    found = routes_in_js(
+        "$.ajax({url: '/ajax.php?cat=count&t=' + Date.now()});"
+        "fetch('/ajax.php?action=search');"
+    )
+
+    assert "/ajax.php?cat=count&t=" in paths(found)
+    assert "/ajax.php?action=search" in paths(found)
+
+
 def test_ignores_minified_debris_that_is_not_a_route():
     """Minified JS is dense with brace-and-digit fragments. Without the API
     prefix requirement these flood the endpoint list with junk."""

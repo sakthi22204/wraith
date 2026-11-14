@@ -13,8 +13,10 @@ from ..config import settings
 # prefix requirement, a generic path regex over a minified bundle returns the
 # code's own debris: on Juice Shop's main.js that was 247 junk paths ("/.]",
 # "/100;return", "/0x8343d2eb2B13A2495...") against 49 real routes. The prefix is
-# what separates a route table from tokenised source.
-_API_PREFIX = r"(?:rest|api|graphql|gql|v\d+)"
+# what separates a route table from tokenised source. A .php front controller is
+# included because classic applications put the route in the query
+# ("/ajax.php?cat=count"), which a path-only prefix list would drop entirely.
+_API_PREFIX = r"(?:rest|api|graphql|gql|v\d+|[A-Za-z0-9_-]+\.php)"
 
 # The route literal, not just a path. A framework client builds its URL as
 # `this.http.get(`${this.host}/rest/products/search?q=${term}`)`, and in that
