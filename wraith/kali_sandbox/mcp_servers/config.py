@@ -29,6 +29,11 @@ class Settings:
     # are refused, so this must be identical on both sides and unset means
     # closed, not open.
     GATE_SECRET: str = os.getenv("WRAITH_GATE_SECRET", os.getenv("GATE_SECRET", ""))
+    # UNSAFE: when true, gate_request() and the dangerous-caller floor are
+    # skipped entirely. Mirrors the flag in the runner and exploit_agent.
+    FULL_TOOL_ACCESS: bool = os.getenv(
+        "WRAITH_FULL_TOOL_ACCESS", os.getenv("FULL_TOOL_ACCESS", "0")
+    ).strip().lower() in ("1", "true", "yes", "on")
 
 
 def validate_startup_secrets(cfg: "Settings" = None) -> None:

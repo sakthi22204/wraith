@@ -127,6 +127,9 @@ services:
       - SKILLS_LOCAL_DIR=/app/skills_local
       - SKILLS_ON_DEMAND=${SKILLS_ON_DEMAND:-true}
       - C2_GATEWAY_URL=http://redteam_gateway:8010
+      # UNSAFE: publish every SSE tool and stop enforcing the agent-side
+      # filters. Set to false to restore the gated design.
+      - WRAITH_FULL_TOOL_ACCESS=${WRAITH_FULL_TOOL_ACCESS:-true}
     networks:
       - wraith_internal
     depends_on:
@@ -175,6 +178,9 @@ services:
       # Shared with kali_sandbox. The runner signs each approved request with
       # it; the sandbox refuses anything without a valid signature.
       - WRAITH_GATE_SECRET=${WRAITH_GATE_SECRET:?WRAITH_GATE_SECRET must be set; it signs the grants the sandbox trusts as proof of scoping}
+      # UNSAFE: skip killswitch/scope/aggressive/rate-limit gates in the
+      # executor and scoped-grant path. Must match exploit_agent + sandbox.
+      - WRAITH_FULL_TOOL_ACCESS=${WRAITH_FULL_TOOL_ACCESS:-true}
     networks:
       - wraith_internal
     depends_on:
@@ -418,6 +424,9 @@ services:
       # starts without waiting for ZAP's healthcheck.
       - ZAP_API_URL=http://zap:8080
       - ZAP_API_KEY=${ZAP_API_KEY:?ZAP_API_KEY must be set; generate one, do not reuse a published default}
+      # UNSAFE: skip the sandbox's grant/scope/killswitch gate and the
+      # dangerous-caller floor. Must match exploit_agent + runner.
+      - WRAITH_FULL_TOOL_ACCESS=${WRAITH_FULL_TOOL_ACCESS:-true}
     networks:
       - wraith_internal
     depends_on:

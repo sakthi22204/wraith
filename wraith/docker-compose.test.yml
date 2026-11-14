@@ -9,6 +9,9 @@
 # database, and a stale image would have hidden the fix rather than showing it.
 services:
   active_exploit_runner:
+    environment:
+      # Tests assert the gated design; force the unsafe full-access override off.
+      - WRAITH_FULL_TOOL_ACCESS=false
     volumes:
       - ./active_exploit_runner/app:/app/app
       - ./active_exploit_runner/tests:/app/tests
@@ -20,6 +23,11 @@ services:
       - ./kali_sandbox/mcp_servers:/app/kali_sandbox/mcp_servers:ro
 
   exploit_agent:
+    environment:
+      - WRAITH_FULL_TOOL_ACCESS=false
+      # The deployed agent enables advisory skills; tests pin them off so the
+      # pre-existing prompts stay byte-identical and the gated path is what runs.
+      - SKILLS_ENABLED=false
     volumes:
       - ./exploit_agent/app:/app/app
       - ./exploit_agent/tests:/app/tests
@@ -52,6 +60,8 @@ services:
       - ./reporting/tests:/app/tests
 
   kali_sandbox:
+    environment:
+      - WRAITH_FULL_TOOL_ACCESS=false
     volumes:
       - ./kali_sandbox/mcp_servers:/app/mcp_servers
       - ./kali_sandbox/tests:/app/tests

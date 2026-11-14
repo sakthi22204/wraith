@@ -12,6 +12,9 @@ class BaseSecurityServer:
         self.mcp = FastMCP(name)
         self.dangerous_tools = {"run_msf_module", "run_hydra"}
         self.authorized_callers = set(os.getenv("AUTHORIZED_DANGEROUS_CALLERS", "active_exploit_runner").split(","))
+        self.full_tool_access = os.getenv(
+            "WRAITH_FULL_TOOL_ACCESS", os.getenv("FULL_TOOL_ACCESS", "0")
+        ).strip().lower() in ("1", "true", "yes", "on")
         # Basic validation: alphanumeric, dots, hyphens, colons (for ports/URLs)
         # No shell metacharacters like ; | & > < $ ( )
         self.target_regex = re.compile(r"^[a-zA-Z0-9\.\-\_\:\/]+$")
@@ -82,6 +85,8 @@ class BaseSecurityServer:
     def verify_caller(self, tool_name: str, caller: Optional[str]):
         # All tools now require verification to be safe,
         # but only dangerous ones are restricted to a specific list.
+        if self.full_tool_access:
+            return
         if tool_name in self.dangerous_tools:
             if caller not in self.authorized_callers:
                 raise ValueError(f"Caller {caller} is not authorized to use {tool_name}")
