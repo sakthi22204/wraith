@@ -47,7 +47,7 @@ async def test_regression_domain_normalization():
         # at all, and a legacy catch-all closes them out as COMPLETED.
         base_tool_names = {
             "subfinder", "naabu", "httpx", "katana",
-            "gau", "waybackurls", "cloud_enum",
+            "gau", "waybackurls",
         }
         for key, status in session.tool_statuses.items():
             tool_name = key.split(":")[0]
@@ -57,6 +57,12 @@ async def test_regression_domain_normalization():
                 assert status == ToolStatus.SKIPPED, f"{tool_name} should be ROE-skipped"
             else:
                 assert status == ToolStatus.COMPLETED, f"{tool_name} should have run"
+
+        # cloud_enum probes bucket names derived from the keyword (third-party
+        # cloud infrastructure), so it is not a passive-remote tool and must be
+        # closed out as SKIPPED rather than dispatched at a target the program
+        # only authorized as an exact host.
+        assert session.tool_statuses["cloud_enum:chyowe.com"] == ToolStatus.SKIPPED
 
 
 @pytest.mark.asyncio

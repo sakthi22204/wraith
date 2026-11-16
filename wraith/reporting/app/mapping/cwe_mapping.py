@@ -1,3 +1,4 @@
+import re
 CWE_MAPPING = {
     "sqli": {
         "cwe_id": "CWE-89",
@@ -285,6 +286,14 @@ CWE_MAPPING = {
         "owasp_category": "A03:2021-Injection",
         "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:N"
     },
+    # Nuclei template names reach the report verbatim ("Public Swagger API -
+    # Detect"). The base name carries the weakness; the suffix is the template
+    # action, so the lookup strips it and this entry answers for all actions.
+    "public swagger api": {
+        "cwe_id": "CWE-200",
+        "owasp_category": "A05:2021-Security Misconfiguration",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N"
+    },
     "monitoring endpoint exposure": {
         "cwe_id": "CWE-200",
         "owasp_category": "A05:2021-Security Misconfiguration",
@@ -384,12 +393,57 @@ CWE_MAPPING = {
         "cwe_id": "CWE-200",
         "owasp_category": "A01:2021-Broken Access Control",
         "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N"
+    },
+    # Scanner/template slugs (nuclei ids, recon rule names) reach the report as
+    # the vuln_type verbatim. They name the same classes as the human-readable
+    # keys above, so map them to the same CWE/OWASP rather than rendering the
+    # weakness as "Unknown - Unknown".
+    "swagger-api": {
+        "cwe_id": "CWE-200",
+        "owasp_category": "A05:2021-Security Misconfiguration",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N"
+    },
+    "http-missing-security-headers": {
+        "cwe_id": "CWE-693",
+        "owasp_category": "A05:2021-Security Misconfiguration",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:N"
+    },
+    "open-proxy-internal": {
+        "cwe_id": "CWE-441",
+        "owasp_category": "A05:2021-Security Misconfiguration",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:N"
+    },
+    "sensitive data exposure": {
+        "cwe_id": "CWE-200",
+        "owasp_category": "A01:2021-Broken Access Control",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N"
+    },
+    "business logic": {
+        "cwe_id": "CWE-840",
+        "owasp_category": "A04:2021-Insecure Design",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:H/A:N"
+    },
+    "authentication bypass retest": {
+        "cwe_id": "CWE-287",
+        "owasp_category": "A07:2021-Identification and Authentication Failures",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N"
     }
 }
 
 def get_mapping(vuln_type: str):
-    return CWE_MAPPING.get(vuln_type.lower(), {
+    """CWE/OWASP entry for an emitted vuln type.
+
+    Recon observations keep the scanner template name ("Public Swagger API -
+    Detect"), so a matching map entry is not enough on its own: strip the
+    template-action suffix and retry before falling back to Unknown.
+    """
+    key = (vuln_type or "").strip().lower()
+    mapping = CWE_MAPPING.get(key)
+    if mapping is None:
+        key = re.sub(r"\s*-\s*(?:detect|matcher|request|response|template)$", "", key)
+        mapping = CWE_MAPPING.get(key)
+    return mapping or {
         "cwe_id": "Unknown",
         "owasp_category": "Unknown",
         "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:N"
-    })
+    }

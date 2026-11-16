@@ -1,5 +1,6 @@
 """Tests for http_probe: request construction, capture fidelity, and hardening."""
 import asyncio
+import httpx
 
 import json
 
@@ -221,3 +222,37 @@ class TestConcurrency:
         # Distinct pages return distinct bodies; identical hashes would mean a
         # response was served to the wrong request.
         assert len({c.body_sha256 for c in caps}) > 1
+
+
+class TestTransientTransportRetry:
+    """A reset on a pooled keep-alive socket is not a target verdict."""
+
+    def test_read_error_is_retried_on_a_fresh_connection(self, monkeypatch):
+        calls = {"n": 0}
+
+        async def flaky(self, method, url, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise httpx.ReadError("reset", request=httpx.Request(method, url))
+            return httpx.Response(
+                200, content=b"ok", request=httpx.Request(method, url))
+
+        monkeypatch.setattr(httpx.AsyncClient, "request", flaky)
+        cap = asyncio.run(srv.probe(url="http://juice_shop:3000/rest"))
+        assert calls["n"] == 2
+        assert cap.reached_target is True
+        assert cap.status_code == 200
+        assert cap.response_body == "ok"
+
+    def test_persistent_failure_is_still_reported_unreached(self, monkeypatch):
+        calls = {"n": 0}
+
+        async def dead(self, method, url, **kwargs):
+            calls["n"] += 1
+            raise httpx.ReadError("reset", request=httpx.Request(method, url))
+
+        monkeypatch.setattr(httpx.AsyncClient, "request", dead)
+        cap = asyncio.run(srv.probe(url="http://juice_shop:3000/rest"))
+        assert calls["n"] == 2
+        assert cap.reached_target is False
+        assert "ReadError" in cap.error

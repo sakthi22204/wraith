@@ -605,6 +605,30 @@ def _coerce_text_bodies(payload: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
+# A transport reset is not evidence about the target. Node-based targets close
+# idle keep-alive sockets aggressively (juice-shop does at ~5s), so a probe that
+# reuses a pooled connection after a pause can fail with ReadError even though
+# the service is healthy; recording that as INCONCLUSIVE used to lose a real
+# spray/patch finding to a single reset. Retry only when no HTTP response was
+# received, so a request that reached the app is never counted twice.
+TRANSIENT_RETRIES = 2
+TRANSIENT_BACKOFF_SECONDS = 0.25
+
+
+async def _request_with_retry(client, method, url, headers, body):
+    attempt = 0
+    while True:
+        try:
+            return await client.request(
+                method, url, headers=headers, content=body)
+        except (httpx.TimeoutException, httpx.NetworkError,
+                httpx.RemoteProtocolError):
+            attempt += 1
+            if attempt >= TRANSIENT_RETRIES:
+                raise
+            await asyncio.sleep(TRANSIENT_BACKOFF_SECONDS * attempt)
+
+
 class HttpProbeServer(BaseSecurityServer):
     def __init__(self):
         super().__init__("HttpProbe Server")
@@ -799,8 +823,8 @@ class HttpProbeServer(BaseSecurityServer):
                 verify=False,
             ) as client:
                 history: list[str] = []
-                resp = await client.request(
-                    method, url, headers=req_headers, content=req_body
+                resp = await _request_with_retry(
+                    client, method, url, req_headers, req_body
                 )
                 if follow_redirects:
                     resp = await self._follow(
