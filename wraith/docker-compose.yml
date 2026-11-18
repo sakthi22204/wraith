@@ -479,6 +479,12 @@ services:
       - GRAPH_DB_URL=http://graph_api:8001/api/v1
       - ACTIVE_EXPLOIT_RUNNER_URL=http://active_exploit_runner:8004/api/v1
       - ADMIN_API_TOKEN=${ADMIN_API_TOKEN:?ADMIN_API_TOKEN must be set; generate one, do not reuse a published default}
+      - WRAITH_SCREENSHOT_DIR=/data/screenshots
+    volumes:
+      # Optional evidence directory. Capture tooling or an operator can place
+      # screenshots under <investigation_id>/<finding_id>/ and the finalized
+      # report will embed them as proof. The directory is read-only here.
+      - ./data/screenshots:/data/screenshots:ro
     networks:
       - wraith_internal
     depends_on:

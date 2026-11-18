@@ -5,6 +5,7 @@ export async function GET(request: Request) {
   const investigationId = searchParams.get('investigationId') || searchParams.get('programId');
   const findingId = searchParams.get('findingId');
   const format = searchParams.get('format') || 'markdown';
+  const profile = searchParams.get('profile') || 'final';
 
   const adminToken = process.env.ADMIN_API_TOKEN;
   const reportingUrlRaw = process.env.REPORTING_URL || 'http://reporting:8006';
@@ -14,9 +15,13 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Missing investigationId' }, { status: 400 });
   }
 
+  const params = new URLSearchParams({ format });
+  if (!findingId) {
+    params.set('profile', profile);
+  }
   const url = findingId
-    ? `${reportingUrl}/reports/${investigationId}/findings/${findingId}?format=${format}`
-    : `${reportingUrl}/reports/${investigationId}?format=${format}`;
+    ? `${reportingUrl}/reports/${investigationId}/findings/${findingId}?${params.toString()}`
+    : `${reportingUrl}/reports/${investigationId}?${params.toString()}`;
 
   try {
     const response = await fetch(url, {

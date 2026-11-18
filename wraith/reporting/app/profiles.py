@@ -12,7 +12,8 @@ switch for the operator to forget.
 from typing import Any, Dict, Iterable, Optional
 
 AUTO = "auto"
-PROFILES = ("bugcrowd", "hackerone", "redteam")
+FINAL = "final"
+PROFILES = ("bugcrowd", "hackerone", "redteam", FINAL)
 
 # The fields a submission needs before a triager can reproduce it. Missing any
 # of these is an evidence gap, not a formatting preference: the report is not
@@ -84,6 +85,28 @@ _GUIDANCE: Dict[str, Dict[str, Any]] = {
             "A missing security header or an enabled introspection endpoint is information, not a confirmed vulnerability, unless chained to a demonstrated impact.",
             "Redact cookies, tokens and third-party PII from screenshots and HAR files.",
             "State the exact asset and whether it is in scope; a finding on an out-of-scope host is not submittable because the test worked.",
+        ],
+    },
+    "final": {
+        "reader": "remediation owner and program triager",
+        "severity_system": "CVSS 3.1 plus the report severity",
+        "title": "<Vulnerability class> on <asset>",
+        "required_sections": [
+            "Summary",
+            "Confirmed findings",
+            "Affected endpoints",
+            "Steps to reproduce",
+            "Expected vs actual",
+            "Impact",
+            "Severity and CVSS",
+            "Proof of exploitation (attached screenshots)",
+            "Remediation",
+        ],
+        "notes": [
+            "One combined report for the investigation; never split confirmed findings into separate downloads.",
+            "Only confirmed findings appear in the findings section. Unvalidated hypotheses and rejected probes are listed separately and never counted as vulnerabilities.",
+            "Attach the screenshot that shows the observed result for every finding; redact cookies, tokens and third-party PII before attaching.",
+            "Replay the exact captured request from a clean session and state the observed status code and response delta.",
         ],
     },
     "redteam": {

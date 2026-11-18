@@ -1,5 +1,10 @@
+import base64
+import mimetypes
+import os
+import re
 from datetime import datetime
 from typing import List, Dict, Any, Optional
+from urllib.parse import parse_qs, urlsplit
 from .models import ReportFinding, ProgramReport
 from .clients.graph_db_client import graph_db_client
 from .clients.assessment_client import assessment_client
@@ -53,6 +58,382 @@ def is_confirmed(finding: Dict[str, Any]) -> bool:
     return bool(finding.get("poc_request")) and bool(finding.get("poc_response"))
 
 
+_SEVERITY_RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
+_STAGE_RANK = {
+    "EXPLOITABILITY_CONFIRMED": 4,
+    "IMPACT_CONFIRMED": 3,
+    "CONDITION_CONFIRMED": 2,
+    "REACHABILITY_CONFIRMED": 1,
+    "NOT_VALIDATED": 0,
+    "REFUTED": -1,
+}
+
+
+def _base_vuln_type(value: Any) -> str:
+    """Collapse ``SQL Injection (union-based)`` to ``sql injection``."""
+    text = re.sub(r"\([^)]*\)", " ", str(value or "").lower())
+    return re.sub(r"[^a-z0-9]+", " ", text).strip()
+
+
+def _provisional_cvss_vector(vuln_type: str, mapping: Dict[str, Any]) -> Optional[str]:
+    """Return a conservative CVSS 3.1 baseline when the finding has no vector.
+
+    A confirmed finding without a CVSS vector should not render as
+    ``CVSS score not calculated``: the class and observed access level are
+    enough to state a baseline. The vectors below are deliberately conservative
+    for an authenticated web assessment; a caller that recorded its own vector
+    always wins.
+    """
+    key = str(vuln_type or "").lower()
+    if "blind" in key and "sql" in key:
+        return "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N"
+    if "sql injection" in key or "sqli" in key:
+        return "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H"
+    if "command injection" in key or "os command" in key or "cmdi" in key:
+        return "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H"
+    if "stored" in key and "xss" in key:
+        return "CVSS:3.1/AV:N/AC:L/PR:L/UI:R/S:C/C:L/I:L/A:N"
+    if "reflected" in key and "xss" in key:
+        return "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N"
+    if "local file inclusion" in key or "lfi" in key or "path traversal" in key:
+        return "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N"
+    template = mapping.get("cvss_template")
+    if template and mapping.get("cwe_id") != "Unknown":
+        return template
+    return None
+
+
+def _class_impact(vuln_type: str) -> Optional[str]:
+    """Explain the consequence of the observed class, not just its severity."""
+    key = str(vuln_type or "").lower()
+    if "blind" in key and "sql" in key:
+        return (
+            "An attacker can infer database contents one bit at a time by "
+            "observing true/false responses, enabling data disclosure and "
+            "further account compromise."
+        )
+    if "sql injection" in key or "sqli" in key:
+        return (
+            "An attacker can read or modify database contents, bypass "
+            "authentication, and potentially execute database functions with "
+            "the application's privileges."
+        )
+    if "command injection" in key or "os command" in key or "cmdi" in key:
+        return (
+            "An attacker can execute arbitrary operating-system commands with "
+            "the privileges of the web server, leading to data disclosure, "
+            "modification, or full host compromise."
+        )
+    if "stored" in key and "xss" in key:
+        return (
+            "An attacker can store script that executes in other users' "
+            "browsers, enabling session theft, actions as the victim, or "
+            "credential phishing."
+        )
+    if "reflected" in key and "xss" in key:
+        return (
+            "An attacker can execute script in a victim's browser via a crafted "
+            "link, enabling session theft or actions as the victim."
+        )
+    if "local file inclusion" in key or "lfi" in key or "path traversal" in key:
+        return (
+            "An attacker can read files outside the intended directory, "
+            "including configuration, source code, and credential material."
+        )
+    return None
+
+
+def _class_remediation(vuln_type: str) -> Optional[str]:
+    """Return a class-specific fix before falling back to generic advice."""
+    key = str(vuln_type or "").lower()
+    if "blind" in key and "sql" in key:
+        return (
+            "Use parameterized queries or prepared statements and treat "
+            "cookie/session values as untrusted input. Enforce numeric/type "
+            "validation, avoid dynamic SQL, and run the database account with "
+            "least privilege."
+        )
+    if "sql injection" in key or "sqli" in key:
+        return (
+            "Use parameterized queries or prepared statements for every "
+            "database call. Do not concatenate query, body, cookie, or session "
+            "values into SQL; validate types and use a least-privilege database "
+            "account."
+        )
+    if "command injection" in key or "os command" in key or "cmdi" in key:
+        return (
+            "Do not build shell command strings from user input. Call the "
+            "underlying API or use an argument-list subprocess API, allowlist "
+            "accepted values, and run the service with least privilege."
+        )
+    if "stored" in key and "xss" in key:
+        return (
+            "Apply context-aware output encoding when rendering stored data, "
+            "sanitize HTML with an allowlist, deploy a restrictive Content "
+            "Security Policy, and set session cookies HttpOnly and SameSite."
+        )
+    if "reflected" in key and "xss" in key:
+        return (
+            "Apply context-aware output encoding to reflected input, avoid raw "
+            "HTML insertion, deploy a restrictive Content Security Policy, and "
+            "encode query and body parameters."
+        )
+    if "local file inclusion" in key or "lfi" in key or "path traversal" in key:
+        return (
+            "Resolve the requested file with a canonical path and require it to "
+            "remain under an allowlisted base directory; use a filename "
+            "allowlist and disable dangerous stream wrappers."
+        )
+    return None
+
+
+def is_self_test_marker(finding: Dict[str, Any]) -> bool:
+    """Whether the finding is a probe artifact rather than a vulnerability.
+
+    The injection canary exists to prove that input reaches an interpreter. When
+    it fires, the class of the underlying bug is still unknown; reporting a
+    finding titled "Injection Canary" tells a triager nothing they can act on.
+    The concrete family (SQL/command/LDAP injection) is filed by the pack that
+    owns it, so this marker is excluded from reports entirely.
+    """
+    return _base_vuln_type(finding.get("vuln_type")) == "injection canary"
+
+
+def _parameter_from_request(poc_request: Any) -> str:
+    """Return the query parameter a finding's first request exercised, if any."""
+    text = str(poc_request or "")
+    match = re.search(
+        r"^(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+(\S+)", text, re.MULTILINE)
+    if not match:
+        return ""
+    query = parse_qs(urlsplit(match.group(1)).query, keep_blank_values=True)
+    return ",".join(sorted(query))
+
+
+def _display_endpoint(endpoint: str) -> str:
+    """Render a replayable URL without dumping a multi-word payload into a table."""
+    if not any(char.isspace() for char in endpoint):
+        return endpoint
+    base, separator, query = endpoint.partition("?")
+    if separator and query:
+        key = query.split("&", 1)[0].split("=", 1)[0]
+        return f"{base}?{key}=..."
+    return endpoint.split()[0] + "..."
+
+
+def _endpoints_from_evidence(finding: Dict[str, Any], affected_asset: str) -> List[str]:
+    """Return the endpoints actually exercised by the captured traffic.
+
+    ``affected_asset`` describes the graph node, which is useful but not always
+    a URL. The final report needs the concrete method+URL, so prefer the request
+    lines from ``poc_request`` and keep order while de-duplicating.
+    """
+    text = str(finding.get("poc_request") or "")
+    endpoints = re.findall(
+        r"^(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+(.+?)\s*$",
+        text,
+        re.MULTILINE,
+    )
+    out: List[str] = []
+    for endpoint in endpoints:
+        endpoint = re.sub(r"\s+HTTP/\d(?:\.\d)?$", "", endpoint.strip())
+        endpoint = _display_endpoint(endpoint)
+        if endpoint not in out:
+            out.append(endpoint)
+    if not out and affected_asset and affected_asset != "Unknown Asset":
+        out.append(affected_asset)
+    return out
+
+
+_NON_FINDING_OPTION_TYPES = {
+    "allowed options method",
+    "options method",
+    "allowed http methods",
+    "http options method",
+}
+_NON_FINDING_API_DOC_TYPES = {
+    "api documentation exposure",
+    "api documentation is exposed",
+    "openapi documentation exposure",
+}
+
+
+def non_finding_reason(finding: Dict[str, Any]) -> Optional[str]:
+    """Explain why a recorded probe is not a reportable vulnerability.
+
+    Two probes common to automated sweeps are not findings by themselves:
+
+      * an ``OPTIONS`` request that returns 200 proves only that the method is
+        advertised; it does not demonstrate a security impact; and
+      * an "API documentation exposed" probe whose captured response is a 404
+        proves the opposite of its own title -- the body echoing the requested
+        path is not a served document.
+
+    Returning a reason lets the final report list the exclusion explicitly
+    rather than leaving the reader to wonder where the item went.
+    """
+    base = _base_vuln_type(finding.get("vuln_type"))
+    if base in _NON_FINDING_OPTION_TYPES:
+        return "OPTIONS returned a capability response; no security impact was demonstrated."
+    if base in _NON_FINDING_API_DOC_TYPES:
+        response = str(finding.get("poc_response") or "")
+        if re.search(r"(^|\D)404(\D|$)|not found", response, re.IGNORECASE):
+            return "the captured request returned 404; no API document was exposed."
+    return None
+
+
+def is_non_finding(finding: Dict[str, Any]) -> bool:
+    return non_finding_reason(finding) is not None
+
+
+_SCREENSHOT_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+
+
+def _caption_for_screenshot(path: str, fallback: str = "") -> str:
+    name = os.path.splitext(os.path.basename(path))[0]
+    caption = re.sub(r"[_-]+", " ", name).strip()
+    return caption.title() if caption else fallback
+
+
+def _load_screenshots(program_id: str, finding: Dict[str, Any]) -> List[dict]:
+    """Load screenshots attached to a finding as self-contained data URIs.
+
+    A capture pipeline may write images into
+    ``WRAITH_SCREENSHOT_DIR/<investigation>/<finding>/``. A caller can also pass
+    an explicit ``screenshots`` list on the finding. Both are normalised here so
+    the HTML, PDF and Markdown templates render the same proof section without
+    needing filesystem access of their own.
+    """
+    raw = (
+        finding.get("screenshots")
+        or finding.get("evidence_screenshots")
+        or finding.get("screenshot_paths")
+        or []
+    )
+    if isinstance(raw, (str, dict)):
+        raw = [raw]
+
+    entries: List[dict] = []
+    for item in raw:
+        if isinstance(item, str):
+            entries.append({"path": item})
+        elif isinstance(item, dict):
+            entries.append(dict(item))
+
+    finding_id = str(finding.get("id") or "")
+    base_dir = os.environ.get("WRAITH_SCREENSHOT_DIR", "/data/screenshots")
+    if not entries and finding_id:
+        for candidate in (
+            os.path.join(base_dir, str(program_id), finding_id),
+            os.path.join(base_dir, finding_id),
+        ):
+            if not os.path.isdir(candidate):
+                continue
+            for name in sorted(os.listdir(candidate)):
+                if os.path.splitext(name)[1].lower() in _SCREENSHOT_EXTENSIONS:
+                    entries.append({"path": os.path.join(candidate, name)})
+            if entries:
+                break
+
+    screenshots: List[dict] = []
+    for entry in entries:
+        source = entry.get("path") or entry.get("file") or entry.get("url") or ""
+        screenshot = dict(entry)
+        screenshot["caption"] = (
+            entry.get("caption")
+            or _caption_for_screenshot(source, finding.get("title") or "Proof of exploitation")
+        )
+        screenshot["filename"] = os.path.basename(urlsplit(source).path) if source else ""
+        if source and not source.startswith(("http://", "https://", "data:")):
+            if os.path.isfile(source):
+                mime, _ = mimetypes.guess_type(source)
+                with open(source, "rb") as handle:
+                    encoded = base64.b64encode(handle.read()).decode("ascii")
+                screenshot["data_uri"] = f"data:{mime or 'image/png'};base64,{encoded}"
+        screenshots.append(screenshot)
+    return screenshots
+
+
+def _finding_group_key(finding: Dict[str, Any]) -> Optional[tuple]:
+    """Key by the same evidence a triager uses to call two reports duplicates.
+
+    Endpoint identity is the graph's ``target_id``; the class is normalized so a
+    union and boolean variant of one SQL injection do not become two reports;
+    the parameter keeps separate injection points separate. Confirmed and
+    unconfirmed findings never share a group, because merging them would lend
+    the hypothesis the executed finding's status.
+    """
+    target_id = finding.get("target_id")
+    if not target_id:
+        return None
+    return (
+        target_id,
+        _base_vuln_type(finding.get("vuln_type")),
+        _parameter_from_request(finding.get("poc_request")),
+        is_confirmed(finding),
+    )
+
+
+def _merge_corroborating_findings(
+    findings: List[Dict[str, Any]],
+) -> tuple[List[Dict[str, Any]], int]:
+    """Merge same-endpoint/same-class/same-parameter findings.
+
+    The strongest observation represents the group: an IMPACT_CONFIRMED union
+    variant outranks a CONDITION_CONFIRMED boolean variant even when the latter
+    was assigned a higher severity. The group keeps the highest severity and
+    records every variant in the description, so merging loses no proof while
+    removing the duplicate reports triagers reject.
+    """
+    grouped: Dict[tuple, List[Dict[str, Any]]] = {}
+    standalone: List[Dict[str, Any]] = []
+    for finding in findings:
+        key = _finding_group_key(finding)
+        if key is None:
+            standalone.append(finding)
+        else:
+            grouped.setdefault(key, []).append(finding)
+
+    merged_count = 0
+    out = list(standalone)
+    for group in grouped.values():
+        if len(group) == 1:
+            out.append(group[0])
+            continue
+        merged_count += len(group) - 1
+        representative = max(
+            group,
+            key=lambda f: (
+                _STAGE_RANK.get(str(f.get("validation_stage") or "").upper(), 0),
+                -_SEVERITY_RANK.get(str(f.get("severity") or "").lower(), 5),
+                len(str(f.get("evidence") or "")),
+            ),
+        )
+        merged = dict(representative)
+        strongest_severity = min(
+            group,
+            key=lambda f: _SEVERITY_RANK.get(
+                str(f.get("severity") or "").lower(), 5),
+        ).get("severity")
+        if strongest_severity:
+            merged["severity"] = strongest_severity
+        representative_type = str(representative.get("vuln_type") or "").lower()
+        variants = sorted({
+            str(f.get("vuln_type"))
+            for f in group
+            if f.get("vuln_type")
+            and str(f.get("vuln_type")).lower() != representative_type
+        })
+        if variants:
+            description = str(merged.get("description") or "").rstrip()
+            merged["description"] = (
+                f"{description} Corroborated by the same-endpoint variants: "
+                f"{', '.join(variants)}."
+            ).strip()
+        out.append(merged)
+    return out, merged_count
+
+
 class ReportGenerator:
     async def generate_finding_report(self, program_id: str, finding: Dict[str, Any]) -> ReportFinding:
         vuln_type = finding.get("vuln_type", "unknown")
@@ -69,7 +450,9 @@ class ReportGenerator:
         vulnerability_type = f"{mapping['cwe_id']} - {mapping['owasp_category']}"
 
         # 3. Severity + CVSS
-        cvss_vector = finding.get("cvss_vector")
+        explicit_vector = finding.get("cvss_vector")
+        cvss_vector = explicit_vector or _provisional_cvss_vector(vuln_type, mapping)
+        cvss_provisional = bool(cvss_vector) and not bool(explicit_vector)
         score, band = (None, "Unknown")
 
         if cvss_vector:
@@ -80,7 +463,13 @@ class ReportGenerator:
         else:
             cvss_display = "CVSS score not calculated"
 
+        # When the vector is a class baseline rather than finding-specific
+        # evidence, the band is the defensible severity. A graph label of
+        # "critical" paired with a 8.8 vector reads as an internal
+        # contradiction to a triager.
         severity = finding.get("severity", band).capitalize()
+        if cvss_provisional and band != "Unknown":
+            severity = band
 
         # HackerOne report guidance asks for the CVSS score to be justified
         # metric-by-metric. Break the vector down into plain-English reasons.
@@ -164,6 +553,9 @@ class ReportGenerator:
             affected_asset = " | ".join(asset_parts)
         else:
             affected_asset = "Unknown Asset"
+
+        affected_endpoints = _endpoints_from_evidence(finding, affected_asset)
+        screenshots = _load_screenshots(program_id, finding)
 
         # 5. Description
         description = finding.get("description", "No detailed description provided.")
@@ -259,6 +651,8 @@ class ReportGenerator:
         # what this severity class usually means.
         business_impact = (
             finding.get("impact")
+            or finding.get("business_impact")
+            or _class_impact(vuln_type)
             or impact_map.get(severity.lower(), "Potential security risk to the organization's assets and reputation.")
         )
 
@@ -285,6 +679,8 @@ class ReportGenerator:
         }
         suggested_remediation = (
             finding.get("remediation")
+            or finding.get("suggested_remediation")
+            or _class_remediation(vuln_type)
             or remediation_map.get(
                 vuln_type.lower(),
                 "Follow industry best practices for securing the affected component and addressing the identified vulnerability class."
@@ -372,8 +768,11 @@ class ReportGenerator:
             severity=severity,
             cvss_score=cvss_display,
             cvss_vector=cvss_vector,
+            cvss_provisional=cvss_provisional,
             ai_confidence=ai_confidence_display,
             affected_asset=affected_asset,
+            affected_endpoints=affected_endpoints,
+            screenshots=screenshots,
             description=description,
             steps_to_reproduce=steps,
             exploit_poc=poc,
@@ -409,11 +808,27 @@ class ReportGenerator:
 
         duplicates = [f for f in findings_raw if f.get("status") == "DUPLICATE"]
         false_positives = [f for f in findings_raw if f.get("status") == "FALSE_POSITIVE"]
+        # A recorded probe can carry a "validated" status and still not be a
+        # vulnerability (an OPTIONS 200, or a 404 that echoes the path). Keep
+        # those out of the confirmed count and list them as explicit exclusions.
+        excluded_non_findings_raw = [
+            f for f in findings_raw
+            if f.get("status") not in ["DUPLICATE", "FALSE_POSITIVE"]
+            and is_non_finding(f)
+        ]
 
         active_findings_raw = [
             f for f in findings_raw
             if f.get("status") not in ["DUPLICATE", "FALSE_POSITIVE"]
+            and not is_self_test_marker(f)
+            and not is_non_finding(f)
         ]
+        # Status-based duplicates are already excluded above. This second pass
+        # collapses findings the runner filed separately because their vuln_type
+        # strings differed (SQL Injection vs SQL Injection (union-based)), even
+        # though they exercised the same parameter on the same endpoint.
+        active_findings_raw, grouped_duplicates = _merge_corroborating_findings(
+            active_findings_raw)
 
         findings = []
         for f in active_findings_raw:
@@ -428,12 +843,22 @@ class ReportGenerator:
         # confirmed vulnerability is what produced a report claiming "23 active
         # security issues" for a target that never resolved a DNS record.
         confirmed = [f for f in findings if f.validation_state == "CONFIRMED"]
-        unvalidated = [f for f in findings if f.validation_state != "CONFIRMED"]
+        observations = [
+            f for f in findings
+            if f.validation_state != "CONFIRMED"
+            and normalize_status(f.discovery_metadata.get("status")) == "OBSERVATION"
+        ]
+        unvalidated = [
+            f for f in findings
+            if f.validation_state != "CONFIRMED" and f not in observations
+        ]
 
         summary = (
-            f"{len(duplicates)} duplicate and {len(false_positives)} false-positive finding(s) "
+            f"{len(duplicates) + grouped_duplicates} duplicate and "
+            f"{len(false_positives)} false-positive finding(s) "
             f"excluded from this report. "
-            f"{len(confirmed)} confirmed, {len(unvalidated)} unvalidated."
+            f"{len(confirmed)} confirmed, {len(unvalidated)} unvalidated, "
+            f"{len(observations)} observation(s)."
         )
 
         # Program Executive Summary. Severity counts and the average score cover
@@ -483,6 +908,16 @@ class ReportGenerator:
                 f"{severity_counts['High']} high severity findings require immediate "
                 f"remediation."
             )
+        if observations:
+            assessment_comment += (
+                f" {len(observations)} additional observation(s) describe missing controls "
+                f"but were not counted as vulnerabilities."
+            )
+        if excluded_non_findings_raw:
+            assessment_comment += (
+                f" {len(excluded_non_findings_raw)} recorded probe(s) were excluded as "
+                f"non-findings; see the exclusion list."
+            )
 
         executive_summary = {
             "overall_posture": posture,
@@ -491,6 +926,8 @@ class ReportGenerator:
             "unvalidated_severity_breakdown": unvalidated_counts,
             "confirmed_count": len(confirmed),
             "unvalidated_count": len(unvalidated),
+            "observation_count": len(observations),
+            "excluded_non_finding_count": len(excluded_non_findings_raw),
             "assessment_comment": assessment_comment,
         }
 
@@ -498,12 +935,18 @@ class ReportGenerator:
         program_timeline = []
         for f in findings:
             is_confirmed_finding = f.validation_state == "CONFIRMED"
+            is_observation = normalize_status(
+                f.discovery_metadata.get("status")) == "OBSERVATION"
             program_timeline.append({
                 "timestamp": f.discovery_metadata.get("timestamp") or datetime.utcnow().isoformat(),
                 "event": (
                     f"Vulnerability confirmed: {f.title} ({f.severity})"
                     if is_confirmed_finding
-                    else f"Unvalidated hypothesis recorded (not confirmed): {f.title} ({f.severity})"
+                    else (
+                        f"Observation recorded (not a vulnerability): {f.title}"
+                        if is_observation
+                        else f"Unvalidated hypothesis recorded (not confirmed): {f.title} ({f.severity})"
+                    )
                 )
             })
 
@@ -545,6 +988,16 @@ class ReportGenerator:
             {"channel": "Incident Response Line", "contact": "+1 (800) WRAITH-SEC"}
         ]
 
+        excluded_non_findings = [
+            {
+                "title": f.get("title") or str(f.get("vuln_type") or "Unknown probe"),
+                "vuln_type": f.get("vuln_type"),
+                "status": f.get("status"),
+                "reason": non_finding_reason(f),
+            }
+            for f in excluded_non_findings_raw
+        ]
+
         return ProgramReport(
             investigation_name=program_data.get("name", "Unknown Program") if program_data else "Unknown",
             generated_at=datetime.utcnow(),
@@ -558,6 +1011,7 @@ class ReportGenerator:
             report_profile=report_profile,
             submission_guidance=submission_guidance,
             evidence_warnings=evidence_warnings,
+            excluded_non_findings=excluded_non_findings,
         )
 
 generator = ReportGenerator()

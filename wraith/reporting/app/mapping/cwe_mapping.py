@@ -430,6 +430,25 @@ CWE_MAPPING = {
     }
 }
 
+# The scanner and validation layers use family names that do not always match
+# the compact keys above (``Stored XSS`` vs ``xss``, ``Command Injection`` vs
+# ``cmdi``). Normalise the common aliases before the exact lookup so a report
+# names the weakness class instead of rendering ``Unknown - Unknown``.
+_MAPPING_ALIASES = {
+    "stored xss": "xss",
+    "reflected xss": "xss",
+    "dom xss": "xss",
+    "persistent xss": "xss",
+    "command injection": "cmdi",
+    "os command injection": "cmdi",
+    "local file inclusion": "lfi",
+    "path traversal": "lfi",
+    "blind sql injection": "sql injection (boolean-blind)",
+    "boolean-blind sql injection": "sql injection (boolean-blind)",
+    "sql injection (boolean blind)": "sql injection (boolean-blind)",
+}
+
+
 def get_mapping(vuln_type: str):
     """CWE/OWASP entry for an emitted vuln type.
 
@@ -437,10 +456,14 @@ def get_mapping(vuln_type: str):
     Detect"), so a matching map entry is not enough on its own: strip the
     template-action suffix and retry before falling back to Unknown.
     """
-    key = (vuln_type or "").strip().lower()
+    key = str(vuln_type or "").strip().lower()
     mapping = CWE_MAPPING.get(key)
     if mapping is None:
+        key = _MAPPING_ALIASES.get(key, key)
+        mapping = CWE_MAPPING.get(key)
+    if mapping is None:
         key = re.sub(r"\s*-\s*(?:detect|matcher|request|response|template)$", "", key)
+        key = _MAPPING_ALIASES.get(key, key)
         mapping = CWE_MAPPING.get(key)
     return mapping or {
         "cwe_id": "Unknown",

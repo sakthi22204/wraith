@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Security Assessment Report — {{ program_name }}</title>
+    <style>
+        @page {
+            size: A4;
+            margin: 18mm 16mm 20mm 16mm;
+            @bottom-center {
+                content: "{{ program_name }} — page " counter(page) " of " counter(pages);
+                font-size: 8pt;
+                color: #64748b;
+            }
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.55;
+            color: #1e293b;
+            background: #ffffff;
+            margin: 0;
+            padding: 0;
+            font-size: 10pt;
+        }
+        .container { max-width: 900px; margin: 0 auto; padding: 0; }
+        h1 { color: #0f172a; font-size: 22pt; margin: 0 0 6px 0; }
+        h2 {
+            color: #1e1b4b;
+            font-size: 15pt;
+            margin: 26px 0 10px 0;
+            border-bottom: 1px solid #e2e8f0;
+            padding-bottom: 5px;
+        }
+        h3 {
+            color: #4f46e5;
+            font-size: 11.5pt;
+            margin: 18px 0 6px 0;
+        }
+        p { margin: 7px 0; }
+        code {
+            background: #f1f5f9;
+            border: 1px solid #e2e8f0;
+            border-radius: 4px;
+            padding: 1px 4px;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 9pt;
+        }
+        .cover {
+            border-bottom: 4px solid #6366f1;
+            padding-bottom: 18px;
+            margin-bottom: 18px;
+        }
+        .cover .brand {
+            color: #6366f1;
+            font-weight: 800;
+            letter-spacing: .08em;
+            font-size: 9pt;
+            text-transform: uppercase;
+        }
+        .cover .subtitle {
+            color: #64748b;
+            font-size: 10.5pt;
+            margin-top: 4px;
+        }
+        .meta {
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 8.5pt;
+            color: #475569;
+            margin-top: 10px;
+        }
+        .badge {
+            display: inline-block;
+            padding: 2px 9px;
+            font-size: 7.5pt;
+            font-weight: bold;
+            border-radius: 999px;
+            text-transform: uppercase;
+            letter-spacing: .03em;
+        }
+        .badge-critical { background: #fecaca; color: #991b1b; }
+        .badge-high { background: #fed7aa; color: #9a3412; }
+        .badge-medium { background: #fef08a; color: #854d0e; }
+        .badge-low { background: #dcfce7; color: #166534; }
+        .badge-info { background: #e0f2fe; color: #075985; }
+        .summary-box {
+            background: #eef2ff;
+            border-left: 5px solid #4f46e5;
+            padding: 12px 16px;
+            border-radius: 0 6px 6px 0;
+            margin: 14px 0;
+        }
+        .summary-box strong { color: #1e1b4b; }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 12px 0 18px 0;
+            font-size: 8.8pt;
+        }
+        th, td {
+            border: 1px solid #e2e8f0;
+            padding: 7px 9px;
+            text-align: left;
+            vertical-align: top;
+        }
+        th { background: #f8fafc; color: #334155; font-weight: 600; }
+        tr:nth-child(even) td { background: #fafafa; }
+        .finding {
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 16px 18px;
+            margin: 18px 0 22px 0;
+            page-break-before: always;
+        }
+        .finding:first-of-type { page-break-before: auto; }
+        .finding-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 12px;
+            border-bottom: 1px solid #f1f5f9;
+            padding-bottom: 8px;
+            margin-bottom: 10px;
+        }
+        .finding-title { font-size: 14pt; font-weight: 700; color: #0f172a; margin: 0; }
+        .evidence {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 6px;
+            padding: 10px 12px;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 8pt;
+            white-space: pre-wrap;
+            word-break: break-word;
+            color: #0f172a;
+            margin: 8px 0 12px 0;
+            max-height: 260px;
+            overflow: hidden;
+        }
+        .proof {
+            margin: 10px 0 14px 0;
+            page-break-inside: avoid;
+        }
+        .proof img {
+            display: block;
+            width: 100%;
+            max-width: 100%;
+            border: 1px solid #cbd5e1;
+            border-radius: 6px;
+            margin: 6px 0 4px 0;
+        }
+        .caption {
+            color: #64748b;
+            font-size: 8pt;
+            font-style: italic;
+            margin: 0 0 12px 0;
+        }
+        .notice {
+            background: #fffbeb;
+            border: 1px solid #fcd34d;
+            border-left: 5px solid #f59e0b;
+            padding: 10px 14px;
+            border-radius: 0 6px 6px 0;
+            margin: 12px 0;
+            color: #78350f;
+            font-size: 9pt;
+        }
+        .appendix { margin-top: 20px; }
+        .appendix ul { margin: 6px 0 0 0; padding-left: 20px; }
+        .footer-note {
+            margin-top: 26px;
+            border-top: 1px solid #e2e8f0;
+            padding-top: 10px;
+            color: #64748b;
+            font-size: 8.5pt;
+        }
+    </style>
+</head>
+<body>
+{% set confirmed = findings | selectattr("validation_state", "equalto", "CONFIRMED") | list %}
+{% set hypotheses = findings | rejectattr("validation_state", "equalto", "CONFIRMED") | list %}
+<div class="container">
+
+    <div class="cover">
+        <div class="brand">Wraith Security</div>
+        <h1>Security Assessment Report</h1>
+        <div class="subtitle">{{ program_name }}</div>
+        <div class="meta">
+            Generated: {{ generated_at.strftime('%Y-%m-%d %H:%M:%S UTC') }}
+            {% if report_profile %}<br>Profile: {{ report_profile }}{% if submission_guidance %} — {{ submission_guidance.reader }}{% endif %}{% endif %}
+        </div>
+    </div>
+
+    <h2>Summary</h2>
+    <div class="summary-box">
+        This report contains <strong>{{ confirmed | length }} confirmed vulnerabilities</strong>.
+        Every finding below was validated by an executed request against the running target.
+        {% if executive_summary and executive_summary.excluded_non_finding_count %}
+        The assessment also recorded {{ executive_summary.excluded_non_finding_count }} probe(s)
+        that were excluded as non-findings; they are listed separately and are not counted.
+        {% endif %}
+        {% if hypotheses %}
+        The {{ hypotheses | length }} unvalidated item(s) in the appendix are automated
+        hypotheses or observations, not confirmed vulnerabilities.
+        {% endif %}
+    </div>
+    {% if summary_line %}
+    <p style="color:#64748b; font-size:9pt; font-style:italic;">{{ summary_line }}</p>
+    {% endif %}
+
+    <h2>Confirmed findings</h2>
+    {% if confirmed %}
+    <table>
+        <thead>
+            <tr>
+                <th style="width:4%;">#</th>
+                <th>Finding</th>
+                <th style="width:10%;">Severity</th>
+                <th style="width:14%;">CVSS 3.1</th>
+                <th>Endpoint</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for f in confirmed %}
+            <tr>
+                <td>{{ loop.index }}</td>
+                <td>{{ f.title }}</td>
+                <td><span class="badge badge-{{ f.severity|lower }}">{{ f.severity }}</span></td>
+                <td>{{ f.cvss_score }}</td>
+                <td style="font-family:monospace; font-size:8pt;">{{ (f.affected_endpoints or [f.affected_asset]) | join(', ') }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p>No confirmed vulnerabilities were recorded in this assessment.</p>
+    {% endif %}
+
+    {% for f in confirmed %}
+    <div class="finding">
+        <div class="finding-header">
+            <div>
+                <div style="color:#64748b; font-size:8pt; text-transform:uppercase; font-weight:bold; margin-bottom:4px;">Finding {{ loop.index }}</div>
+                <h2 class="finding-title">{{ f.title }}</h2>
+            </div>
+            <div style="text-align:right;">
+                <span class="badge badge-{{ f.severity|lower }}">{{ f.severity }}</span>
+                <div style="font-size:8pt; color:#64748b; margin-top:4px;">CVSS {{ f.cvss_score }}</div>
+            </div>
+        </div>
+
+        <h3>Summary</h3>
+        <p>{{ f.description }}</p>
+
+        <h3>Affected endpoints</h3>
+        {% if f.affected_endpoints %}
+        <ul>
+            {% for endpoint in f.affected_endpoints %}
+            <li><code>{{ endpoint }}</code></li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <p><code>{{ f.affected_asset }}</code></p>
+        {% endif %}
+
+        <h3>Steps to reproduce</h3>
+        {% if f.poc_request %}
+        <ol>
+            <li>Authenticate to the target and establish a session authorised for the affected endpoint.</li>
+            <li>Send the captured request below exactly as shown, including method, path, headers, and body. If the finding depends on a prior state change, perform that action first as described in the Summary.</li>
+            <li>Compare the response with the expected and actual result below.</li>
+        </ol>
+        <div class="evidence">{{ f.poc_request }}</div>
+        {% else %}
+        <p>{{ f.steps_to_reproduce }}</p>
+        {% endif %}
+
+        <h3>Expected vs actual</h3>
+        <p><strong>Expected:</strong> {{ f.expected_result or "The application should reject or neutralise the supplied input." }}</p>
+        <p><strong>Actual:</strong> {{ f.actual_result or "The application returned the behaviour captured in the proof below." }}</p>
+
+        <h3>Impact</h3>
+        <p>{{ f.business_impact }}</p>
+
+        <h3>Severity and CVSS</h3>
+        <p><strong>Severity:</strong> {{ f.severity }} &nbsp;|&nbsp; <strong>CVSS 3.1:</strong> {{ f.cvss_score }}{% if f.cvss_provisional %} <em>(baseline for this vulnerability class and observed access level)</em>{% endif %}</p>
+        {% if f.cvss_vector %}
+        <p><strong>Vector:</strong> <code>{{ f.cvss_vector }}</code></p>
+        {% endif %}
+        {% if f.risk_rating and f.risk_rating.cvss_rationale %}
+        <table>
+            <thead>
+                <tr><th style="width:10%;">Metric</th><th style="width:10%;">Value</th><th>Rationale</th></tr>
+            </thead>
+            <tbody>
+                {% for m in f.risk_rating.cvss_rationale %}
+                <tr><td><strong>{{ m.metric }}</strong></td><td>{{ m.value }}</td><td>{{ m.meaning }}</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+
+        <h3>Proof of exploitation (attached screenshots)</h3>
+        {% if f.screenshots %}
+        <div class="proof">
+            {% for shot in f.screenshots %}
+            <img src="{{ shot.data_uri or shot.url or shot.path }}" alt="{{ shot.caption or 'Proof of exploitation' }}">
+            <div class="caption">{{ shot.caption or shot.filename or "Observed result" }}</div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p style="color:#64748b;">No screenshot was attached for this finding. The captured request and response below are the proof of exploitation.</p>
+        {% endif %}
+
+        {% if f.poc_response %}
+        <div class="evidence">{{ f.poc_response }}</div>
+        {% endif %}
+
+        <h3>Remediation</h3>
+        <p>{{ f.suggested_remediation }}</p>
+    </div>
+    {% endfor %}
+
+    {% if excluded_non_findings %}
+    <h2>Excluded non-findings</h2>
+    <div class="notice">
+        These recorded probes were reviewed and excluded. They are not vulnerabilities
+        and are not included in the confirmed count.
+    </div>
+    <table>
+        <thead>
+            <tr><th>Probe</th><th>Recorded type</th><th>Why it was excluded</th></tr>
+        </thead>
+        <tbody>
+            {% for item in excluded_non_findings %}
+            <tr>
+                <td>{{ item.title }}</td>
+                <td>{{ item.vuln_type or "unknown" }}</td>
+                <td>{{ item.reason }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+
+    {% if hypotheses %}
+    <div class="appendix">
+        <h2>Appendix — unvalidated hypotheses and observations</h2>
+        <div class="notice">
+            These items were produced by automated reconnaissance or validation but were
+            not confirmed as vulnerabilities. They are listed as leads or coverage notes
+            and must not be submitted as findings.
+        </div>
+        <ul>
+            {% for f in hypotheses %}
+            <li>
+                <strong>{{ f.title }}</strong> ({{ f.severity }}) —
+                {{ "observation" if f.discovery_metadata.status == "OBSERVATION" else "unvalidated hypothesis" }}
+                {% if f.poc_request %}; captured request: <code>{{ f.poc_request.splitlines()[0] }}</code>{% endif %}
+            </li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+
+    {% if evidence_warnings %}
+    <h2>Evidence gaps</h2>
+    <div class="notice">
+        Some confirmed findings are missing part of the evidence manifest. They remain
+        in the report but are not yet submittable until the missing capture is attached.
+    </div>
+    <ul>
+        {% for warning in evidence_warnings %}
+        <li><strong>{{ warning.finding }}:</strong> {{ warning.gaps | join(', ') }}</li>
+        {% endfor %}
+    </ul>
+    {% endif %}
+
+    {% if coverage %}
+    <h2>Assessment coverage</h2>
+    <table>
+        <tbody>
+            <tr><th>Endpoints discovered</th><td>{{ coverage.endpoints_discovered }}</td></tr>
+            <tr><th>JavaScript bundles analysed</th><td>{{ coverage.javascript_bundles }}</td></tr>
+            <tr><th>API routes identified</th><td>{{ coverage.api_endpoints }}</td></tr>
+            <tr><th>Findings recorded</th><td>{{ coverage.findings_recorded }}</td></tr>
+            <tr><th>Validations executed</th><td>{{ coverage.validations_run }}</td></tr>
+            <tr><th>Validations inconclusive</th><td>{{ coverage.validations_inconclusive }}</td></tr>
+            <tr><th>Findings confirmed</th><td>{{ confirmed | length }}</td></tr>
+        </tbody>
+    </table>
+    {% if coverage.gaps %}
+    <p><strong>Known gaps:</strong></p>
+    <ul>
+        {% for gap in coverage.gaps %}
+        <li>{{ gap }}</li>
+        {% endfor %}
+    </ul>
+    {% endif %}
+    {% endif %}
+
+    <h2>Remediation summary</h2>
+    <table>
+        <thead>
+            <tr><th style="width:30%;">Finding</th><th>Primary fix</th></tr>
+        </thead>
+        <tbody>
+            {% for f in confirmed %}
+            <tr><td>{{ f.title }}</td><td>{{ f.suggested_remediation }}</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <div class="footer-note">
+        All requests were replayed against the target identified above. Cookies, session
+        identifiers, and authentication tokens are redacted in this report. Screenshots
+        show the observed result with secrets removed. A finding without an attached
+        screenshot still carries the captured request and response in its evidence section.
+    </div>
+</div>
+</body>
+</html>

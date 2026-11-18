@@ -17,3 +17,6 @@ wraith-logs.txt
 
 # Generated scan/report output; not part of the source tree.
 reports/
+
+# Generated screenshot evidence attached to reports.
+data/screenshots/

@@ -13,15 +13,20 @@ is reported as uninteresting rather than as a finding.
 """
 import re
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlsplit, urlunsplit
 
 # Headers whose presence, absence, or value change is security-relevant.
+# ``content-length`` is deliberately absent: it is derived from the body, so a
+# payload that is merely reflected in the response changes the length without
+# the application doing anything wrong. Treating it as a signal confirmed
+# "injection" on endpoints whose only response difference was a bigger echo.
 SECURITY_RELEVANT_HEADERS = frozenset({
     "set-cookie", "location", "www-authenticate", "authorization",
     "access-control-allow-origin", "access-control-allow-credentials",
     "access-control-allow-headers", "access-control-allow-methods",
     "content-security-policy", "strict-transport-security", "x-frame-options",
     "x-content-type-options", "server", "x-powered-by", "content-type",
-    "content-length", "vary", "allow", "link",
+    "vary", "allow", "link",
 })
 
 # Value shapes that suggest the response handed back something it should not.
@@ -234,6 +239,19 @@ def _common_suffix(a: str, b: str) -> int:
     return count
 
 
+def _normalise_header_value(name: str, value: str) -> str:
+    """Collapse differences that carry no meaning for the header.
+
+    A Content-Type of ``text/html;charset=utf-8`` and ``text/html; charset=UTF-8``
+    is the same media type; the only thing that changed is punctuation and case.
+    Without this, every response from a server that re-cases its charset was a
+    "security-relevant header change".
+    """
+    if name == "content-type":
+        return re.sub(r"\s+", "", value or "").lower()
+    return value
+
+
 def _header_delta(baseline_headers: Dict[str, str], variant_headers: Dict[str, str]) -> Dict[str, Any]:
     base = {k.lower(): v for k, v in (baseline_headers or {}).items()}
     var = {k.lower(): v for k, v in (variant_headers or {}).items()}
@@ -243,7 +261,8 @@ def _header_delta(baseline_headers: Dict[str, str], variant_headers: Dict[str, s
     changed = {
         k: {"baseline": base[k], "variant": var[k]}
         for k in base
-        if k in var and base[k] != var[k] and k in SECURITY_RELEVANT_HEADERS
+        if k in var and k in SECURITY_RELEVANT_HEADERS
+        and _normalise_header_value(k, base[k]) != _normalise_header_value(k, var[k])
     }
 
     security_added = {k: v for k, v in added.items() if k in SECURITY_RELEVANT_HEADERS}
@@ -258,6 +277,44 @@ def _header_delta(baseline_headers: Dict[str, str], variant_headers: Dict[str, s
     }
 
 
+def _normalise_url(url: str) -> str:
+    """Canonical form used only to decide whether a redirect happened.
+
+    An HTTP client reports ``final_url`` with the default port elided
+    (``http://dvwa/...``) while the caller may have requested the same origin as
+    ``http://dvwa:80/...``. Comparing those strings makes every request look
+    redirected, and because differential variants carry their payload in the
+    URL, every comparison then becomes material. Normalising scheme/host case,
+    the default port, and an empty path removes that false signal without
+    hiding a real redirect to another origin, scheme, or path.
+    """
+    try:
+        parts = urlsplit(url)
+    except Exception:  # noqa: BLE001
+        return url
+    scheme = (parts.scheme or "").lower()
+    host = (parts.hostname or "").lower()
+    if host and ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    try:
+        port = parts.port
+    except ValueError:
+        port = None
+    if (scheme == "http" and port == 80) or (scheme == "https" and port == 443):
+        port = None
+    userinfo = ""
+    if parts.username is not None:
+        userinfo = parts.username
+        if parts.password is not None:
+            userinfo += f":{parts.password}"
+        userinfo += "@"
+    netloc = f"{userinfo}{host}"
+    if port is not None:
+        netloc = f"{netloc}:{port}"
+    path = parts.path or "/"
+    return urlunsplit((scheme, netloc, path, parts.query, parts.fragment))
+
+
 def _redirect_target(capture: Dict[str, Any]) -> Optional[str]:
     """Where a response was actually served from, or None if it was not redirected.
 
@@ -270,7 +327,9 @@ def _redirect_target(capture: Dict[str, Any]) -> Optional[str]:
     final = capture.get("final_url")
     if not requested or not final:
         return None
-    return final if final != requested else None
+    if _normalise_url(final) == _normalise_url(requested):
+        return None
+    return final
 
 
 def classify_differential(baseline: Dict[str, Any], variant: Dict[str, Any]) -> Dict[str, Any]:

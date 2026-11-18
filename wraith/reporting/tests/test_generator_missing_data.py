@@ -32,7 +32,8 @@ async def test_generate_finding_report_missing_data(mock_clients):
 
     report = await generator.generate_finding_report("p1", finding)
 
-    assert "CVSS score not calculated" in report.cvss_score
+    assert report.cvss_score == "6.1 (Medium)"
+    assert report.cvss_provisional is True
     assert "Unknown Asset" in report.affected_asset
     # With no executed request there is nothing to replay, so the report must
     # label the finding as an unvalidated hypothesis rather than inventing
@@ -43,3 +44,28 @@ async def test_generate_finding_report_missing_data(mock_clients):
     assert "No proof of concept" in report.exploit_poc
     assert "No raw evidence captured" in report.evidence
     assert report.discovery_metadata["tool"] == "automated scan"
+
+
+@pytest.mark.asyncio
+async def test_unknown_class_does_not_get_an_invented_cvss(mock_clients):
+    """A class with no mapping must stay unscored rather than borrowing 0.0."""
+    mock_graph, mock_audit = mock_clients
+    finding = {
+        "id": "f3",
+        "vuln_type": "magic_vuln",
+        "severity": "low",
+        "status": "UNCONFIRMED",
+        "description": "Unknown class",
+        "discovered_at": "2023-01-01T12:00:00Z",
+        "target_id": "t3",
+    }
+
+    mock_graph.get_target_details.return_value = None
+    mock_graph.get_discovering_tool.return_value = None
+    mock_graph.get_program.return_value = None
+    mock_audit.get_audit_entries.return_value = []
+
+    report = await generator.generate_finding_report("p1", finding)
+
+    assert report.cvss_score == "CVSS score not calculated"
+    assert report.cvss_provisional is False

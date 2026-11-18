@@ -81,18 +81,25 @@ async def get_finding_report(investigation_id: str, finding_id: str, format: str
 async def get_investigation_report(
     investigation_id: str,
     format: str = Query("markdown", pattern="^(markdown|pdf|html|json)$"),
-    profile: str = Query("auto", pattern="^(auto|bugcrowd|hackerone|redteam)$"),
+    profile: str = Query("final", pattern="^(auto|bugcrowd|hackerone|redteam|final)$"),
 ):
     report = await generator.generate_program_report(investigation_id, profile=profile)
     report_data = report.model_dump()
 
+    # The final profile is the deliverable shape: one combined report, confirmed
+    # findings only, with attached screenshots and an explicit exclusion list.
+    # Other profiles keep their existing templates for compatibility.
+    is_final = getattr(report, "report_profile", None) == "final"
+    html_template_name = "final_report.html.j2" if is_final else "finding_report.html.j2"
+    markdown_template_name = "final_report.md.j2" if is_final else "finding_report.md.j2"
+
     if format == "pdf":
-        pdf_bytes = pdf_exporter.export_report(report_data)
+        pdf_bytes = pdf_exporter.export_report(report_data, template_name=html_template_name)
         return Response(content=pdf_bytes, media_type="application/pdf", headers={
             "Content-Disposition": f"attachment; filename=investigation_{investigation_id}.pdf"
         })
     elif format == "html":
-        template = env.get_template("finding_report.html.j2")
+        template = env.get_template(html_template_name)
         html_out = template.render(**report_data)
         return Response(content=html_out, media_type="text/html", headers={
             "Content-Disposition": f"attachment; filename=investigation_{investigation_id}.html"
@@ -100,7 +107,7 @@ async def get_investigation_report(
     elif format == "json":
         return report
     else:
-        template = env.get_template("finding_report.md.j2")
+        template = env.get_template(markdown_template_name)
         md_out = template.render(**report_data)
         return Response(content=md_out, media_type="text/markdown")
 
@@ -113,6 +120,6 @@ async def get_program_finding_report_alias(program_id: str, finding_id: str, for
 async def get_program_report_alias(
     program_id: str,
     format: str = Query("markdown", pattern="^(markdown|pdf|html|json)$"),
-    profile: str = Query("auto", pattern="^(auto|bugcrowd|hackerone|redteam)$"),
+    profile: str = Query("final", pattern="^(auto|bugcrowd|hackerone|redteam|final)$"),
 ):
     return await get_investigation_report(program_id, format, profile)

@@ -1,0 +1,182 @@
+{% set confirmed = findings | selectattr("validation_state", "equalto", "CONFIRMED") | list %}
+{% set hypotheses = findings | rejectattr("validation_state", "equalto", "CONFIRMED") | list %}
+# Security Assessment Report — {{ program_name }}
+
+**Generated at:** {{ generated_at.strftime('%Y-%m-%d %H:%M:%S UTC') }}
+{% if report_profile %}**Report profile:** {{ report_profile }}{% if submission_guidance %} — {{ submission_guidance.reader }}{% endif %}{% endif %}
+
+## Summary
+
+This report contains **{{ confirmed | length }} confirmed vulnerabilities** in
+`{{ program_name }}`. Every finding below was validated by an executed request
+against the running target. {% if executive_summary and executive_summary.excluded_non_finding_count %}The assessment also recorded {{ executive_summary.excluded_non_finding_count }} probe(s) that were excluded as non-findings; they are listed separately and are not counted.{% endif %}{% if hypotheses %} The {{ hypotheses | length }} unvalidated item(s) in the appendix are automated hypotheses or observations, not confirmed vulnerabilities.{% endif %}
+
+{% if summary_line %}{{ summary_line }}{% endif %}
+
+{% if confirmed %}
+| # | Finding | Severity | CVSS 3.1 | Endpoint |
+|---|---------|----------|----------|----------|
+{% for f in confirmed -%}
+| {{ loop.index }} | {{ f.title }} | {{ f.severity }} | {{ f.cvss_score }} | {{ (f.affected_endpoints or [f.affected_asset]) | join(', ') }} |
+{% endfor %}
+{% else %}
+No confirmed vulnerabilities were recorded in this assessment.
+{% endif %}
+
+---
+
+{% for f in confirmed %}
+## {{ loop.index }}. {{ f.title }} — {{ f.severity }}
+
+### Summary
+
+{{ f.description }}
+
+### Affected endpoints
+
+{% if f.affected_endpoints %}
+{% for endpoint in f.affected_endpoints %}
+- `{{ endpoint }}`
+{% endfor %}
+{% else %}
+- `{{ f.affected_asset }}`
+{% endif %}
+
+### Steps to reproduce
+
+{% if f.poc_request %}
+1. Authenticate to the target and establish a session authorised for the affected endpoint.
+2. Send the captured request below exactly as shown, including method, path, headers, and body. If the finding depends on a prior state change, perform that action first as described in the Summary.
+3. Compare the response with the expected and actual result below.
+
+```http
+{{ f.poc_request }}
+```
+{% else %}
+{{ f.steps_to_reproduce }}
+{% endif %}
+
+### Expected vs actual
+
+- **Expected:** {{ f.expected_result or "The application should reject or neutralise the supplied input." }}
+- **Actual:** {{ f.actual_result or "The application returned the behaviour captured in the proof below." }}
+
+### Impact
+
+{{ f.business_impact }}
+
+### Severity and CVSS
+
+**Severity:** {{ f.severity }} | **CVSS 3.1:** {{ f.cvss_score }}{% if f.cvss_provisional %} _(baseline for this vulnerability class and observed access level)_{% endif %}
+{% if f.cvss_vector %}**Vector:** `{{ f.cvss_vector }}`{% endif %}
+
+{% if f.risk_rating and f.risk_rating.cvss_rationale %}
+| Metric | Value | Rationale |
+|--------|-------|-----------|
+{% for m in f.risk_rating.cvss_rationale -%}
+| {{ m.metric }} | {{ m.value }} | {{ m.meaning }} |
+{% endfor %}
+{% endif %}
+
+### Proof of exploitation (attached screenshots)
+
+{% if f.screenshots %}
+{% for shot in f.screenshots %}
+![{{ shot.caption or "Proof of exploitation" }}]({{ shot.data_uri or shot.url or shot.path }})
+
+*{{ shot.caption or shot.filename or "Observed result" }}*
+{% endfor %}
+{% else %}
+No screenshot was attached for this finding. The captured request and response
+in the evidence section above are the proof of exploitation.
+{% endif %}
+
+{% if f.poc_response %}
+**Observed response**
+
+```http
+{{ f.poc_response }}
+```
+{% endif %}
+
+### Remediation
+
+{{ f.suggested_remediation }}
+
+---
+
+{% endfor %}
+
+{% if excluded_non_findings %}
+## Excluded non-findings
+
+The following recorded probes were reviewed and excluded. They are not
+vulnerabilities and are not included in the confirmed count.
+
+| Probe | Recorded type | Why it was excluded |
+|-------|---------------|---------------------|
+{% for item in excluded_non_findings -%}
+| {{ item.title }} | {{ item.vuln_type or "unknown" }} | {{ item.reason }} |
+{% endfor %}
+{% endif %}
+
+{% if hypotheses %}
+## Appendix — unvalidated hypotheses and observations
+
+These items were produced by automated reconnaissance or validation but were
+not confirmed as vulnerabilities. They are listed as leads or coverage notes
+and must not be submitted as findings.
+
+{% for f in hypotheses %}
+- **{{ f.title }}** ({{ f.severity }}) — {{ "observation" if f.discovery_metadata.status == "OBSERVATION" else "unvalidated hypothesis" }}{% if f.poc_request %}; captured request: `{{ f.poc_request.splitlines()[0] }}`{% endif %}
+{% endfor %}
+{% endif %}
+
+{% if evidence_warnings %}
+## Evidence gaps
+
+Some confirmed findings are missing part of the evidence manifest. They remain
+in the report but are not yet submittable until the missing capture is attached.
+
+{% for warning in evidence_warnings %}
+- **{{ warning.finding }}:** {{ warning.gaps | join(', ') }}
+{% endfor %}
+{% endif %}
+
+{% if coverage %}
+## Assessment coverage
+
+| Measure | Count |
+|---------|-------|
+| Endpoints discovered | {{ coverage.endpoints_discovered }} |
+| JavaScript bundles analysed | {{ coverage.javascript_bundles }} |
+| API routes identified | {{ coverage.api_endpoints }} |
+| Findings recorded | {{ coverage.findings_recorded }} |
+| Validations executed | {{ coverage.validations_run }} |
+| Validations inconclusive | {{ coverage.validations_inconclusive }} |
+| Findings confirmed | {{ confirmed | length }} |
+
+{% if coverage.gaps %}
+**Known gaps:**
+
+{% for gap in coverage.gaps %}
+- {{ gap }}
+{% endfor %}
+{% endif %}
+{% endif %}
+
+## Remediation summary
+
+| Finding | Primary fix |
+|---------|-------------|
+{% for f in confirmed -%}
+| {{ f.title }} | {{ f.suggested_remediation }} |
+{% endfor %}
+
+## Evidence notes
+
+All requests were replayed against the target identified above. Cookies, session
+identifiers, and authentication tokens are redacted in this report. Screenshots
+show the observed result with secrets removed. A finding without an attached
+screenshot still carries the captured request and response in its evidence
+section.

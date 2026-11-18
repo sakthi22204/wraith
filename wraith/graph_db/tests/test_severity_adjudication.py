@@ -227,3 +227,23 @@ class TestBooleanBlindInjectionIsStillDatabaseAccess:
         node = _finding(vuln_type="SQL Injection (boolean-blind)")
         assert severity_floor(node) == "critical"
         assert adjudicate_severity(node) == "critical"
+
+
+class TestExecutionAndDisclosureTiers:
+    def test_command_injection_weights_like_code_execution(self):
+        assert severity_floor(_finding(vuln_type="Command Injection")) == "critical"
+        assert severity_floor(
+            _finding(vuln_type="Command Injection", probe_principal="reviewer")
+        ) == "high"
+
+    def test_path_traversal_is_a_disclosure_not_an_unmapped_family(self):
+        assert severity_floor(_finding(vuln_type="Path Traversal")) == "critical"
+        assert severity_floor(
+            _finding(vuln_type="Path Traversal", probe_principal="reviewer")
+        ) == "high"
+
+    def test_browser_markup_classes_score_as_browser_weaknesses(self):
+        for name in ("Cross-Site Scripting", "HTML Injection"):
+            assert severity_floor(_finding(vuln_type=name)) == "high", name
+            assert severity_floor(
+                _finding(vuln_type=name, probe_principal="reviewer")) == "medium", name

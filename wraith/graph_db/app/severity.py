@@ -59,6 +59,10 @@ _TIERS = {
     "SQL Injection (boolean-blind)": 4,
     "Injection Canary": 4,
     "Unrestricted File Upload": 4,
+    # An injected shell command runs with the web server's privileges. It is
+    # code execution in the same sense as SQL injection, so it belongs at the
+    # top tier rather than inheriting the unmapped-family default.
+    "Command Injection": 4,
     # T3 -- authorization failures and disclosure of other people's data.
     "Broken Access Control": 3,
     "Improper Access Control": 3,
@@ -78,6 +82,9 @@ _TIERS = {
     "Race Condition / TOCTOU": 3,
     "WebSocket Authentication Bypass": 3,
     "Mass Assignment": 3,
+    # Arbitrary file read is disclosure of server-side data, not merely a
+    # configuration weakness.
+    "Path Traversal": 3,
     # T2 -- configuration and browser-facing weaknesses.
     #
     # Missing Rate Limiting sits here, not at T3, because its proof is a
@@ -93,6 +100,8 @@ _TIERS = {
     "Open Redirect": 2,
     "Cross-Site Request Forgery": 2,
     "HTTP Request Smuggling": 2,
+    "Cross-Site Scripting": 2,
+    "HTML Injection": 2,
     "GraphQL Introspection": 2,
     "GraphQL Alias Over-fetch": 2,
 }

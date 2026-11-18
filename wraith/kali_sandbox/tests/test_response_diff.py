@@ -88,6 +88,41 @@ class TestMateriality:
         )
         assert r["material"] is True
 
+    def test_reflection_changing_content_length_is_not_material(self):
+        """A payload echoed back grows the body; that is not an injection."""
+        r = classify_differential(
+            cap(200, "hello", {"content-length": "5"}),
+            cap(200, "hello ' OR 1=1--", {"content-length": "19"}),
+        )
+        assert r["material"] is False
+        assert r["headers"]["changed"] == {}
+
+    def test_content_type_case_and_spacing_are_not_material(self):
+        r = classify_differential(
+            cap(200, "same", {"content-type": "text/html; charset=UTF-8"}),
+            cap(200, "same", {"content-type": "text/html;charset=utf-8"}),
+        )
+        assert r["material"] is False
+        assert r["headers"]["changed"] == {}
+
+    def test_a_real_content_type_change_is_material(self):
+        r = classify_differential(
+            cap(200, "same", {"content-type": "text/html"}),
+            cap(200, "same", {"content-type": "application/json"}),
+        )
+        assert r["material"] is True
+        assert "content-type" in r["headers"]["changed"]
+
+    def test_default_port_elision_is_not_a_redirect(self):
+        """``host:80`` and ``host`` are the same origin, not a redirect."""
+        r = classify_differential(
+            cap(200, "same", request_url="http://dvwa:80/login.php",
+                final_url="http://dvwa/login.php"),
+            cap(200, "same", request_url="http://dvwa:80/login.php?u=x",
+                final_url="http://dvwa/login.php?u=x"),
+        )
+        assert r["material"] is False
+
     def test_a_varying_request_url_is_not_a_redirect(self):
         """The bug this guards against.
 

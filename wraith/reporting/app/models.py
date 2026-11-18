@@ -8,8 +8,13 @@ class ReportFinding(BaseModel):
     severity: str
     cvss_score: str
     cvss_vector: Optional[str] = None
+    # True when the vector is a class/access-level baseline inferred at report
+    # time rather than a finding-specific vector recorded during validation.
+    cvss_provisional: bool = False
     ai_confidence: str
     affected_asset: str
+    affected_endpoints: List[str] = Field(default_factory=list)
+    screenshots: List[dict] = Field(default_factory=list)
     description: str
     steps_to_reproduce: str
     exploit_poc: str
@@ -55,6 +60,11 @@ class ProgramReport(BaseModel):
     # marked unsubmittable rather than disappearing; a missing capture is an
     # evidence problem, not a reason to hide a confirmed issue.
     evidence_warnings: List[dict] = Field(default_factory=list)
+    # Probes that a human triager would reject as non-findings (for example an
+    # OPTIONS response, or a 404 page that merely echoes the requested path).
+    # They are retained here so the final report can explain the exclusion
+    # instead of silently inflating the confirmed count.
+    excluded_non_findings: List[dict] = Field(default_factory=list)
 
     @computed_field
     @property

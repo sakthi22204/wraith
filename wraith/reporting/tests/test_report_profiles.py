@@ -52,7 +52,7 @@ def test_explicit_profile_wins_and_unknown_is_an_error():
 
 
 def test_every_profile_has_guidance():
-    for profile in ("bugcrowd", "hackerone", "redteam"):
+    for profile in ("bugcrowd", "hackerone", "redteam", "final"):
         guidance = guidance_for(profile)
         assert guidance["reader"]
         assert guidance["required_sections"]

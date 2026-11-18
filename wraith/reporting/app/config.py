@@ -44,10 +44,10 @@ def validate_startup_secrets(settings) -> None:
                 f"({value!r}); generate a real secret and inject it"
             )
     profile = (getattr(settings, "REPORT_PROFILE", "") or "auto").strip().lower()
-    if profile not in {"auto", "bugcrowd", "hackerone", "redteam"}:
+    if profile not in {"auto", "bugcrowd", "hackerone", "redteam", "final"}:
         problems.append(
             f"REPORT_PROFILE is {profile!r}; expected auto, bugcrowd, "
-            f"hackerone or redteam"
+            f"hackerone, redteam or final"
         )
     if problems:
         raise RuntimeError(

@@ -39,8 +39,8 @@ async def test_regression_domain_normalization():
 
         # chyowe.com is a real-world target, so the ROE guard keeps the
         # aggressive scanners out of the base workflow. Passive tools run;
-        # aggressive ones are SKIPPED (not merely absent) so a conditional
-        # trigger cannot later resurrect them.
+        # aggressive and cross-host tools are SKIPPED (not merely absent) so a
+        # conditional trigger cannot later resurrect them.
         #
         # Scoped to the base workflow on purpose: tools that are only ever run
         # by a conditional trigger (nmap, ffuf, ...) are never scheduled here
@@ -49,11 +49,15 @@ async def test_regression_domain_normalization():
             "subfinder", "naabu", "httpx", "katana",
             "gau", "waybackurls",
         }
+        # cloud_enum probes bucket names derived from the keyword, not the
+        # authorized host, so it is deliberately outside PASSIVE_REMOTE_TOOLS.
+        remote_skipped = {"cloud_enum"}
         for key, status in session.tool_statuses.items():
             tool_name = key.split(":")[0]
             if tool_name not in base_tool_names:
                 continue
-            if tool_name in ReconOrchestrator.AGGRESSIVE_TOOLS:
+            if (tool_name in ReconOrchestrator.AGGRESSIVE_TOOLS
+                    or tool_name in remote_skipped):
                 assert status == ToolStatus.SKIPPED, f"{tool_name} should be ROE-skipped"
             else:
                 assert status == ToolStatus.COMPLETED, f"{tool_name} should have run"

@@ -15,6 +15,7 @@ services:
     volumes:
       - ./active_exploit_runner/app:/app/app
       - ./active_exploit_runner/tests:/app/tests
+      - ./active_exploit_runner/skill_packs:/app/skill_packs
       - ./active_exploit_runner/scripts:/app/scripts
       # Read-only, and only so a test can assert the runner's sweep ceilings
       # match the sandbox's. The two services are separate images and the

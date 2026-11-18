@@ -74,3 +74,11 @@ def test_scanner_slug_vuln_types_are_mapped(vuln_type, cwe):
     """Nuclei ids and recon rule names land in the graph as vuln_type and used
     to render as "Unknown - Unknown" in the weakness block."""
     assert get_mapping(vuln_type)["cwe_id"] == cwe
+
+def test_family_aliases_name_the_weakness_class():
+    """The validation packs use family names; aliases must resolve them."""
+    assert get_mapping("Stored XSS")["cwe_id"] == "CWE-79"
+    assert get_mapping("Reflected XSS")["cwe_id"] == "CWE-79"
+    assert get_mapping("Command Injection")["cwe_id"] == "CWE-77"
+    assert get_mapping("Local File Inclusion")["cwe_id"] == "CWE-22"
+    assert get_mapping("Blind SQL Injection")["cwe_id"] == "CWE-89"
