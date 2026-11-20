@@ -59,6 +59,12 @@ services:
     volumes:
       - ./reporting/app:/app/app
       - ./reporting/tests:/app/tests
+      # The CWE mapping tests assert the skill router and generated index from
+      # the working tree, so the reporting image needs the same repo-root paths
+      # those tests resolve at runtime.
+      - ./exploit_agent:/exploit_agent:ro
+      - ./scripts:/scripts:ro
+      - ./active_exploit_runner/app/skill_index.json:/active_exploit_runner/app/skill_index.json:ro
 
   kali_sandbox:
     environment:

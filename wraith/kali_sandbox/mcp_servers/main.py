@@ -16,8 +16,19 @@ from .metasploit_server import MetasploitServer
 from .web_tools_server import WebToolsServer
 from .http_probe_server import HttpProbeServer
 from .zap_server import ZapServer
+from .injection_harness_server import InjectionHarnessServer
+from .native_host_server import NativeHostServer
 from . import http_probe_server as http_probe_server_module
-from .gate import GateError, authorization_context
+from .gate import (
+    DANGEROUS_TOOLS,
+    GATED_NETWORK_TOOLS,
+    GateError,
+    RESERVED_HOST_OPTIONS,
+    _destination_of,
+    _nmap_port_claim,
+    _nuclei_port_claim,
+    authorization_context,
+)
 from .config import validate_startup_secrets, settings as sandbox_settings
 
 # Create a single MCP server instance
@@ -25,91 +36,7 @@ mcp = FastMCP("Wraith Security Tools", host="0.0.0.0", port=8000)
 
 caller_context: ContextVar[Optional[str]] = ContextVar("caller_context", default=None)
 
-DANGEROUS_TOOLS = {"run_hydra", "run_msf_module"}
-
-# Tools that send traffic to a caller-supplied destination. Each is gated on
-# killswitch + signed grant + re-read scope, not merely on who the caller says
-# it is: the request body chooses the destination, so a caller name proves
-# nothing about where the packet is going.
-#
-# This list was previously the http_probe family only. run_nmap_scan,
-# run_nuclei_scan, run_sqlmap, run_hydra and run_msf_module were dispatched on
-# verify_caller alone, which is the request reading its own X-Wraith-Caller
-# header. They are here now; `tests/test_ungated_tools.py` fails if a tool that
-# sends traffic is ever added without being gated.
-GATED_NETWORK_TOOLS = {
-    "http_probe", "http_probe_diff", "http_probe_race", "http_probe_threshold",
-    # Timing harness (median-of-N)
-    "http_probe_timing",
-    # Both of these open a raw socket and speak a protocol of their own rather
-    # than following the URL, so the grant's host:port binding is what stops
-    # them. Gating them is not optional for the same reason as the others: the
-    # request decides the destination, and a caller name proves nothing about
-    # where the bytes land.
-    "http_probe_smuggle", "http_probe_websocket_auth",
-    "run_nmap_scan", "run_nuclei_scan", "run_sqlmap", "run_hydra", "run_msf_module",
-    # Phase 1.9 web scanners: arjun, dalfox, corsy, commix, ghauri, jwt_tool,
-    # nikto, xsstrike. All of them take a caller-supplied URL (or, for
-    # jwt_tool, a URL plus a token) and send traffic to it, so they are gated
-    # on the same grant/scope chain as the rest -- a caller name proves nothing
-    # about where the request lands.
-    "run_arjun", "run_dalfox", "run_corsy", "run_commix", "run_ghauri",
-    "run_jwt_tool", "run_nikto", "run_xsstrike",
-    # ZAP runs in its own container and both modes fetch caller-supplied URLs
-    # through ZAP's API. Baseline is passive, active sends payloads, but the
-    # grant/scope binding is identical for both.
-    "run_zap_baseline", "run_zap_active",
-}
 AUTHORIZED_DANGEROUS_CALLERS = set(os.getenv("AUTHORIZED_DANGEROUS_CALLERS", "active_exploit_runner").split(","))
-
-# Metasploit option names that would redirect a module at a different host than
-# the one the server set. msfconsole applies `set` commands left to right, and the
-# sandbox emits `set RHOSTS <target>; <options>; run`, so an option named RHOSTS
-# lands *after* it and wins. Refused rather than stripped: there is no way to tell
-# a deliberate override from a mistake, and the destination belongs in `target`,
-# which is what the grant is bound to.
-RESERVED_HOST_OPTIONS = frozenset({"RHOST", "RHOSTS", "LHOST", "LHOSTS"})
-
-# nmap_server.py's own default. Restated here so the gate describes the scan the
-# server will actually run when the body names no ports. If the two drift, the
-# claim stops matching the command line and the scan is refused rather than
-# authorised at the wrong width.
-NMAP_DEFAULT_PORTS = "1-1000"
-
-
-def _nmap_port_claim(target: str, ports) -> str:
-    """The ports an nmap run will dial, as nmap_server reads them.
-
-    `nmap_server.run_nmap_scan` does `effective_ports = embedded_port or ports`,
-    so a target carrying a port narrows the scan to that one. Mirrored exactly,
-    because reporting the wider of the two here would authorise more than runs.
-    """
-    host, sep, port = str(target).rpartition(":")
-    if sep and host and port.isdigit():
-        return port
-    if ports is None or not str(ports).strip():
-        return NMAP_DEFAULT_PORTS
-    return str(ports).strip()
-
-
-def _nuclei_port_claim(target: str) -> str:
-    """The port nuclei will dial for this target.
-
-    `nuclei_server.run_nuclei_scan` passes `-u target` and no port flag, so the
-    port comes from the target's own scheme. A bare host means port 80, which is
-    what nuclei does with it.
-    """
-    candidate = str(target).strip()
-    host, sep, port = candidate.rpartition(":")
-    if sep and host and port.isdigit():
-        return port
-    if "://" in candidate:
-        scheme = candidate.split("://", 1)[0].lower()
-        default = {"http": 80, "https": 443, "ws": 80, "wss": 443}.get(scheme)
-        if default:
-            return str(default)
-    return "80"
-
 
 def verify_caller(tool_name: str, caller: Optional[str]):
     """Coarse caller pre-check; the gate is the real boundary.
@@ -138,90 +65,6 @@ grant_context: ContextVar[Optional[str]] = ContextVar("grant_context", default=N
 # rules, rather than each layer re-deriving them or skipping the check.
 authorization_context_var: ContextVar[Optional[dict]] = ContextVar(
     "authorization_context", default=None)
-
-
-def _destination_of(tool_name: str, body: dict) -> tuple[list[str], Optional[str]]:
-    """Every URL a tool will send to, plus the port claim if it chooses its own.
-
-    The body is what decides where the bytes go, so this is the whole of the
-    gate's input. Each tool names its destination differently -- sqlmap reads
-    `url`, nmap/hydra/msf read `target`, probes read `url` plus one per variant --
-    and reading the wrong field scope-checks a value the tool never sends while
-    the real destination rides through unchecked.
-
-    The second element is the claim of "these are the ports I will dial", which
-    is only ever set for a tool that picks its own ports. It used to be hardcoded
-    to `None`, which meant the port half of a `host:port` grant was never
-    actually checked: a grant for one port authorised nmap's default sweep.
-    """
-    body = body or {}
-    targets: list[str] = []
-    port_claim = None
-
-    if tool_name in {"http_probe", "http_probe_diff", "http_probe_race",
-                     "http_probe_threshold", "http_probe_timing",
-                     "http_probe_smuggle", "http_probe_websocket_auth"}:
-        if body.get("url"):
-            targets.append(str(body["url"]))
-        # Every variant is a separate request to a possibly separate host, so each
-        # is checked on its own account rather than riding in on the baseline's.
-        for variant in body.get("variants") or []:
-            if isinstance(variant, dict) and variant.get("url"):
-                targets.append(str(variant["url"]))
-    elif tool_name == "run_sqlmap":
-        if body.get("url"):
-            targets.append(str(body["url"]))
-    elif tool_name in {"run_arjun", "run_dalfox", "run_corsy", "run_commix",
-                       "run_ghauri", "run_nikto", "run_xsstrike",
-                       "run_zap_baseline", "run_zap_active"}:
-        # Every one of these reads its destination from `url` and dials the
-        # port the URL names, exactly like sqlmap/the probe family -- so no
-        # port claim: the authority the grant binds already carries the port.
-        if body.get("url"):
-            targets.append(str(body["url"]))
-    elif tool_name == "run_jwt_tool":
-        # jwt_tool reads `target` (a URL) and sends the token to it in an
-        # Authorization header; the token itself is data, never a destination.
-        if body.get("target"):
-            targets.append(str(body["target"]))
-    elif tool_name in {"run_nmap_scan", "run_nuclei_scan", "run_hydra", "run_msf_module"}:
-        if tool_name == "run_msf_module":
-            options = body.get("options")
-            if isinstance(options, dict):
-                reserved = RESERVED_HOST_OPTIONS.intersection(options)
-                if reserved:
-                    raise ValueError(
-                        "Metasploit options may not redirect the host: "
-                        f"{', '.join(sorted(reserved))}; set the destination in 'target'"
-                    )
-        raw = body.get("target")
-        if raw:
-            targets.append(str(raw))
-
-        if not targets:
-            # Checked before the port claim, which reads targets[0]: an absent
-            # destination has to surface as this ValueError rather than an
-            # IndexError the caller is not expecting.
-            raise ValueError(f"{tool_name} has no destination to check; refusing to send")
-
-        if tool_name == "run_nmap_scan":
-            # Read the ports exactly as the nmap server will: an embedded
-            # `target:port` wins over the `ports` field, and an absent `ports`
-            # means the server's own default. Reporting anything else here would
-            # authorise a different scan from the one that runs.
-            port_claim = _nmap_port_claim(targets[0], body.get("ports"))
-        elif tool_name == "run_nuclei_scan":
-            # nuclei takes no port parameter; it dials the scheme default for the
-            # host it was given. So the claim is that single port, and a target
-            # naming no port yields the default for whatever scheme it carries.
-            port_claim = _nuclei_port_claim(targets[0])
-    else:
-        raise ValueError(f"no known destination field for tool {tool_name!r}")
-
-    if not targets:
-        raise ValueError(f"{tool_name} has no destination to check; refusing to send")
-
-    return targets, port_claim
 
 
 def gate_request(tool_name: str, body: dict, request=None):
@@ -359,6 +202,8 @@ metasploit = MetasploitServer()
 web_tools = WebToolsServer()
 zap = ZapServer()
 http_probe_server = HttpProbeServer()
+injection_harness = InjectionHarnessServer()
+native_host = NativeHostServer()
 
 # Register tools from each provider to the main mcp instance
 @mcp.tool()
@@ -670,6 +515,86 @@ async def http_probe_websocket_auth(
         "identities": identities, "identity": identity, "caller": caller,
     }))
 
+@mcp.tool()
+async def browser_probe(
+    url: str = "",
+    marker: str = "",
+    script: str = "",
+    data_url: str = "",
+    timeout: float = 10.0,
+    selector: str = "",
+    headers: Optional[dict] = None,
+):
+    """Render a destination in headless Chromium and capture marker evidence."""
+    return unwrap_inner(await injection_harness.mcp.call_tool("browser_probe", {
+        "url": url, "marker": marker, "script": script,
+        "data_url": data_url, "timeout": timeout, "selector": selector,
+        "headers": headers,
+    }))
+
+
+@mcp.tool()
+async def oob_probe(
+    target_url: str = "",
+    oob_wait_seconds: float = 0.0,
+    marker: str = "",
+):
+    """Create a token-bound OOB callback and collect inbound interactions."""
+    return unwrap_inner(await injection_harness.mcp.call_tool("oob_probe", {
+        "target_url": target_url, "oob_wait_seconds": oob_wait_seconds,
+        "marker": marker,
+    }))
+
+
+@mcp.tool()
+async def smtp_capture(
+    target_url: str = "",
+    recipient: str = "",
+    subject: str = "",
+    body: str = "",
+    headers: Optional[dict] = None,
+    message: str = "",
+):
+    """Send one message into the bounded in-process SMTP sink and capture it."""
+    return unwrap_inner(await injection_harness.mcp.call_tool("smtp_capture", {
+        "target_url": target_url, "recipient": recipient, "subject": subject,
+        "body": body, "headers": headers, "message": message,
+    }))
+
+
+@mcp.tool()
+async def file_export_probe(url: str = "", timeout: float = 10.0):
+    """Fetch an export, inspect CSV cells for formula injection, never execute it."""
+    return unwrap_inner(await injection_harness.mcp.call_tool("file_export_probe", {
+        "url": url, "timeout": timeout,
+    }))
+
+
+@mcp.tool()
+async def raw_socket_probe(
+    url: str = "",
+    host: str = "",
+    port: int = 0,
+    raw_socket_payload: str = "",
+    timeout: float = 5.0,
+):
+    """Send bounded bytes over TCP and return capped response header lines."""
+    return unwrap_inner(await injection_harness.mcp.call_tool("raw_socket_probe", {
+        "url": url, "host": host, "port": port,
+        "raw_socket_payload": raw_socket_payload, "timeout": timeout,
+    }))
+
+
+@mcp.tool()
+async def native_host_probe(
+    target_url: str = "", native_host_job: Optional[dict] = None
+):
+    """Forward a native host job to the bridge and return its evidence."""
+    return unwrap_inner(await native_host.mcp.call_tool("native_host_probe", {
+        "target_url": target_url, "native_host_job": native_host_job or {},
+    }))
+
+
 # The gate has to be on the path into a tool, not on one of the paths to it.
 #
 # It used to be called only by the REST bridge below, and that left the same
@@ -768,6 +693,10 @@ async def call_tool_internal(request):
 
     # Since call_tool returns a list of Content objects, we need to serialize them
     return JSONResponse(content=jsonable_encoder(result))
+
+mcp.custom_route("/oob/{token}", methods=["GET", "POST", "PUT"])(
+    injection_harness.oob_callback_route
+)
 
 # Lightweight health check endpoint for Docker healthcheck (avoids relying
 # on the SSE stream endpoint, which never "completes" a normal HTTP request)

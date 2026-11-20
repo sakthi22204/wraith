@@ -427,6 +427,16 @@ services:
       # UNSAFE: skip the sandbox's grant/scope/killswitch gate and the
       # dangerous-caller floor. Must match exploit_agent + runner.
       - WRAITH_FULL_TOOL_ACCESS=${WRAITH_FULL_TOOL_ACCESS:-true}
+      # Runtime harness endpoints. OOB callbacks must point back at this
+      # container's published MCP port so callback URLs are reachable on the
+      # internal network; DNS uses a high port and needs no extra capability.
+      - OOB_CALLBACK_HOST=${OOB_CALLBACK_HOST:-kali_sandbox}
+      - OOB_CALLBACK_PORT=${OOB_CALLBACK_PORT:-8000}
+      - OOB_DNS_PORT=${OOB_DNS_PORT:-5353}
+      - SMTP_CAPTURE_HOST=${SMTP_CAPTURE_HOST:-127.0.0.1}
+      - SMTP_CAPTURE_PORT=${SMTP_CAPTURE_PORT:-0}
+      - NATIVE_HOST_BRIDGE_URL=${NATIVE_HOST_BRIDGE_URL:-http://native_host_bridge:8010}
+      - NATIVE_HOST_BRIDGE_TOKEN=${NATIVE_HOST_BRIDGE_TOKEN:-}
     networks:
       - wraith_internal
     depends_on:
@@ -675,6 +685,52 @@ services:
       - mitmproxy_flows:/flows
     # No published ports on purpose: only the internal network reaches it.
 
+  native_host_bridge:
+    build:
+      context: ./native_host_bridge
+    profiles: ["native-host"]
+    restart: unless-stopped
+    networks:
+      - wraith_internal
+    environment:
+      - NATIVE_HOST_BRIDGE_HOST=0.0.0.0
+      - NATIVE_HOST_BRIDGE_PORT=8010
+      - NATIVE_HOST_BRIDGE_TOKEN=${NATIVE_HOST_BRIDGE_TOKEN:-}
+      - NATIVE_HOST_AGENT_TOKEN=${NATIVE_HOST_AGENT_TOKEN:-}
+      - NATIVE_HOST_ALLOWED_HOST_IDS=${NATIVE_HOST_ALLOWED_HOST_IDS:-}
+      - NATIVE_HOST_AGENTS=${NATIVE_HOST_AGENTS:-native_host_agent=http://native_host_agent:8011}
+      - NATIVE_HOST_ALLOWED_ACTIONS=${NATIVE_HOST_ALLOWED_ACTIONS:-load_probe,module_check,log_write,log_verify,process_self,cleanup}
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8010/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  native_host_agent:
+    build:
+      context: ./native_host_agent
+    profiles: ["native-host"]
+    restart: unless-stopped
+    networks:
+      - wraith_internal
+    environment:
+      - NATIVE_HOST_AGENT_HOST=0.0.0.0
+      - NATIVE_HOST_AGENT_PORT=8011
+      - NATIVE_HOST_AGENT_TOKEN=${NATIVE_HOST_AGENT_TOKEN:-}
+      - NATIVE_HOST_CANARY_DIR=/var/lib/wraith-native/canary
+      - NATIVE_HOST_PROBE_LIB=${NATIVE_HOST_PROBE_LIB:-}
+    volumes:
+      - native_host_canary:/var/lib/wraith-native/canary
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8011/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
 networks:
   wraith_internal:
     driver: bridge
@@ -687,3 +743,4 @@ volumes:
   ollama_data:
   mitmproxy_ca:
   mitmproxy_flows:
+  native_host_canary:

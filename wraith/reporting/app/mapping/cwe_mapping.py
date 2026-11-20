@@ -427,6 +427,296 @@ CWE_MAPPING = {
         "cwe_id": "CWE-287",
         "owasp_category": "A07:2021-Identification and Authentication Failures",
         "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N"
+    },
+    "ldap injection": {
+        "cwe_id": "CWE-90",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+    },
+    "ldap-injection": {
+        "cwe_id": "CWE-90",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+    },
+    "xpath injection": {
+        "cwe_id": "CWE-643",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N"
+    },
+    "xpath-injection": {
+        "cwe_id": "CWE-643",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N"
+    },
+    "graphql injection": {
+        "cwe_id": "CWE-74",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N"
+    },
+    "graphql-injection": {
+        "cwe_id": "CWE-74",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N"
+    },
+    "orm injection": {
+        "cwe_id": "CWE-89",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+    },
+    "orm-hql injection": {
+        "cwe_id": "CWE-89",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+    },
+    "hql injection": {
+        "cwe_id": "CWE-89",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+    },
+    "jpql injection": {
+        "cwe_id": "CWE-89",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+    },
+    "argument injection": {
+        "cwe_id": "CWE-88",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+    },
+    "argument-injection": {
+        "cwe_id": "CWE-88",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+    },
+    "code injection": {
+        "cwe_id": "CWE-94",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+    },
+    "code-injection": {
+        "cwe_id": "CWE-94",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+    },
+    "eval injection": {
+        "cwe_id": "CWE-95",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+    },
+    "eval-injection": {
+        "cwe_id": "CWE-95",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+    },
+    "client-side template injection": {
+        "cwe_id": "CWE-1336",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:H/I:H/A:N"
+    },
+    "client template injection": {
+        "cwe_id": "CWE-1336",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:H/I:H/A:N"
+    },
+    "expression language injection": {
+        "cwe_id": "CWE-917",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+    },
+    "ognl injection": {
+        "cwe_id": "CWE-917",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+    },
+    "el injection": {
+        "cwe_id": "CWE-917",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+    },
+    "deserialization injection": {
+        "cwe_id": "CWE-502",
+        "owasp_category": "A08:2021-Software and Data Integrity Failures",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+    },
+    "deserialization-injection": {
+        "cwe_id": "CWE-502",
+        "owasp_category": "A08:2021-Software and Data Integrity Failures",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+    },
+    "crlf injection": {
+        "cwe_id": "CWE-113",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:L/I:L/A:N"
+    },
+    "crlf-injection": {
+        "cwe_id": "CWE-113",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:L/I:L/A:N"
+    },
+    "http response splitting": {
+        "cwe_id": "CWE-113",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:L/I:L/A:N"
+    },
+    "response splitting": {
+        "cwe_id": "CWE-113",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:L/I:L/A:N"
+    },
+    "generic xml injection": {
+        "cwe_id": "CWE-91",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N"
+    },
+    "xml injection": {
+        "cwe_id": "CWE-91",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N"
+    },
+    "xml-injection": {
+        "cwe_id": "CWE-91",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N"
+    },
+    "ssi injection": {
+        "cwe_id": "CWE-97",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+    },
+    "ssi-injection": {
+        "cwe_id": "CWE-97",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+    },
+    "latex injection": {
+        "cwe_id": "CWE-94",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+    },
+    "latex-injection": {
+        "cwe_id": "CWE-94",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+    },
+    "log injection": {
+        "cwe_id": "CWE-117",
+        "owasp_category": "A09:2021-Security Logging and Monitoring Failures",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:L/A:N"
+    },
+    "log-injection": {
+        "cwe_id": "CWE-117",
+        "owasp_category": "A09:2021-Security Logging and Monitoring Failures",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:L/A:N"
+    },
+    "dll injection": {
+        "cwe_id": "CWE-427",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H"
+    },
+    "dll-injection": {
+        "cwe_id": "CWE-427",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H"
+    },
+    "shared library injection": {
+        "cwe_id": "CWE-427",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H"
+    },
+    "process injection": {
+        "cwe_id": "CWE-94",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H"
+    },
+    "process-injection": {
+        "cwe_id": "CWE-94",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H"
+    },
+    "browser js execution": {
+        "cwe_id": "CWE-79",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N"
+    },
+    "browser javascript execution": {
+        "cwe_id": "CWE-79",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N"
+    },
+    "oob interaction": {
+        "cwe_id": "CWE-918",
+        "owasp_category": "A10:2021-Server-Side Request Forgery",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:L/A:N"
+    },
+    "oob-interaction": {
+        "cwe_id": "CWE-918",
+        "owasp_category": "A10:2021-Server-Side Request Forgery",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:L/A:N"
+    },
+    "smtp header injection": {
+        "cwe_id": "CWE-93",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:L/A:N"
+    },
+    "smtp-header-injection": {
+        "cwe_id": "CWE-93",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:L/A:N"
+    },
+    "mail header injection": {
+        "cwe_id": "CWE-93",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:L/A:N"
+    },
+    "csv formula injection": {
+        "cwe_id": "CWE-1236",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:L/I:L/A:N"
+    },
+    "csv injection": {
+        "cwe_id": "CWE-1236",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:L/I:L/A:N"
+    },
+    "formula injection": {
+        "cwe_id": "CWE-1236",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:L/I:L/A:N"
+    },
+    "dom clobbering": {
+        "cwe_id": "CWE-79",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N"
+    },
+    "dom-clobbering": {
+        "cwe_id": "CWE-79",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N"
+    },
+    "css injection": {
+        "cwe_id": "CWE-79",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N"
+    },
+    "css-injection": {
+        "cwe_id": "CWE-79",
+        "owasp_category": "A03:2021-Injection",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N"
+    },
+    "websocket csrf": {
+        "cwe_id": "CWE-352",
+        "owasp_category": "A01:2021-Broken Access Control",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:L/I:L/A:N"
+    },
+    "websocket cswsh": {
+        "cwe_id": "CWE-352",
+        "owasp_category": "A01:2021-Broken Access Control",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:L/I:L/A:N"
+    },
+    "cross site websocket hijacking": {
+        "cwe_id": "CWE-352",
+        "owasp_category": "A01:2021-Broken Access Control",
+        "cvss_template": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:L/I:L/A:N"
     }
 }
 

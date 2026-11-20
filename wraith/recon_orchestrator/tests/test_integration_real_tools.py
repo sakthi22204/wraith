@@ -18,7 +18,12 @@ from app.tools.gittools import GittoolsTool
 class MockTargetHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         # Positive paths
-        if self.path == "/static/test.js":
+        if self.path == "/":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.end_headers()
+            self.wfile.write(b'<html><script src="/static/secrets.js"></script></html>')
+        elif self.path == "/static/test.js":
             self.send_response(200)
             self.send_header("Content-Type", "application/javascript")
             self.end_headers()
@@ -27,7 +32,7 @@ class MockTargetHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "application/javascript")
             self.end_headers()
-            self.wfile.write(b'var slack_token = "xoxb-1234567890-abcdef";\n')
+            self.wfile.write(b'var config = {"api_token":"xoxb-1234567890-abcdef"};\n')
         elif self.path == "/static/clean.js":
             self.send_response(200)
             self.send_header("Content-Type", "application/javascript")
@@ -42,7 +47,18 @@ class MockTargetHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
-            self.wfile.write(b'{"status": "ok"}\n')
+            self.wfile.write((json.dumps({"status": "ok", "path": self.path}) + "\n").encode())
+        else:
+            self.send_response(404)
+            self.end_headers()
+            self.wfile.write(b"Not Found\n")
+
+    def do_POST(self):
+        if self.path == "/api/v3alpha/auth/role/delete":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"status":"ok","route":"matched"}\n')
         else:
             self.send_response(404)
             self.end_headers()
@@ -288,7 +304,7 @@ class TestRealDockerIntegration:
 
         container = client.containers.run(
             image=tool.image,
-            command=["-i", f"http://{host_ip}:{port}/static/secrets.js", "-e", "-o", "cli"],
+            command=tool.get_command(f"{host_ip}:{port}"),
             detach=False,
             remove=True
         )

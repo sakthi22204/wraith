@@ -49,7 +49,16 @@ TRAFFIC_SENDING_TOOLS = {
     "http_probe_timing",
     "http_probe_smuggle",
     "http_probe_websocket_auth",
+    "browser_probe",
+    "oob_probe",
+    "smtp_capture",
+    "file_export_probe",
+    "raw_socket_probe",
+    "native_host_probe",
 }
+
+INJECTION_URL_TOOLS = ("browser_probe", "file_export_probe", "raw_socket_probe")
+INJECTION_TARGET_TOOLS = ("oob_probe", "smtp_capture", "native_host_probe")
 
 
 class TestCoverage:
@@ -199,6 +208,46 @@ class TestDestinationResolution:
             with pytest.raises(ValueError):
                 _destination_of(tool, body)
 
+    def test_injection_harness_tools_read_url_and_target_url(self):
+        for tool in INJECTION_URL_TOOLS:
+            targets, ports = _destination_of(tool, {"url": "http://juice_shop:3000/x"})
+            assert targets == ["http://juice_shop:3000/x"], tool
+            assert ports is None, tool
+            with pytest.raises(ValueError):
+                _destination_of(tool, {"target_url": "http://juice_shop:3000/x"})
+
+        for tool in ("oob_probe", "smtp_capture"):
+            targets, ports = _destination_of(
+                tool, {"target_url": "http://juice_shop:3000/x"}
+            )
+            assert targets == ["http://juice_shop:3000/x"], tool
+            assert ports is None, tool
+            with pytest.raises(ValueError):
+                _destination_of(tool, {"url": "http://juice_shop:3000/x"})
+
+    def test_callback_and_bridge_urls_are_never_the_destination(self):
+        for tool in INJECTION_TARGET_TOOLS:
+            targets, _ = _destination_of(tool, {
+                "target_url": "https://host.native.invalid/.wraith/native",
+                "callback_url": "http://169.254.169.254/latest/meta-data/",
+                "bridge_url": "http://169.254.169.254:8010/jobs",
+                "oob_callback_url": "http://169.254.169.254/oob/token",
+            })
+            assert targets == ["https://host.native.invalid/.wraith/native"], tool
+
+    def test_native_job_target_url_is_a_fallback_only(self):
+        targets, _ = _destination_of("native_host_probe", {
+            "native_host_job": {"target_url": "https://host.native.invalid/.wraith/native"}
+        })
+        assert targets == ["https://host.native.invalid/.wraith/native"]
+
+    def test_raw_socket_destination_can_come_from_host_and_port(self):
+        targets, ports = _destination_of("raw_socket_probe", {
+            "host": "juice_shop", "port": 8080
+        })
+        assert targets == ["juice_shop:8080"]
+        assert ports is None
+
     def test_probe_variants_are_all_included(self):
         """A diff baseline plus variants: every variant is a separate
         destination and each is checked on its own account."""
@@ -250,6 +299,24 @@ class TestGateRequestRoutesThroughEnforce:
         assert called["caller"] == "active_exploit_runner"
         assert called["grant_token"] == "tok"
         assert any("juice_shop" in t for t in called["targets"])
+
+    def test_full_tool_access_skips_gate_for_injection_tools(self, monkeypatch):
+        from types import SimpleNamespace
+
+        import mcp_servers.main as main_mod
+
+        monkeypatch.setattr(
+            main_mod, "sandbox_settings", SimpleNamespace(FULL_TOOL_ACCESS=True)
+        )
+        called = []
+        monkeypatch.setattr(
+            main_mod, "authorization_context", lambda **kw: called.append(kw)
+        )
+        main_mod.verify_caller("oob_probe", None)
+        for tool in (*INJECTION_URL_TOOLS, *INJECTION_TARGET_TOOLS):
+            main_mod.gate_request(tool, {})
+            main_mod.gate_request(tool, {"target_url": "http://169.254.169.254/"})
+        assert called == []
 
     def test_gate_refusal_becomes_the_gate_status(self, monkeypatch, settings_stub):
         from fastapi import HTTPException

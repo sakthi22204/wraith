@@ -15,6 +15,7 @@ RUN apt-get update && apt-get install -y \
     metasploit-framework \
     curl \
     git \
+    chromium \
     # Phase 1.9 scanner toolkit. All five ship in Kali; the other three
     # (jwt_tool, Corsy, ghauri) are not packaged there and are cloned below.
     nikto \

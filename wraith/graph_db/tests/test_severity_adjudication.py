@@ -21,8 +21,9 @@ def _finding(**over):
         "vuln_type": "SQL Injection",
         "severity": "medium",
         "status": "AI_VALIDATED",
-        "validation_stage": "CONDITION_CONFIRMED",
+        "validation_stage": "IMPACT_CONFIRMED",
         "probe_principal": "unauthenticated",
+        "evidence_sources": ["agent_probe", "exploitation"],
     }
     node.update(over)
     return node
@@ -68,7 +69,7 @@ class TestUnvalidatedCannotInflate:
         Getting this wrong is invisible: the finding still gets a severity, just
         the severity of something merely reachable.
         """
-        for spelling in ("CONDITION_CONFIRMED", "condition_confirmed"):
+        for spelling in ("IMPACT_CONFIRMED", "impact_confirmed"):
             node = _finding(validation_stage=spelling, severity="low",
                             probe_principal="reviewer")
             assert severity_floor(node) == "high", spelling
@@ -247,3 +248,53 @@ class TestExecutionAndDisclosureTiers:
             assert severity_floor(_finding(vuln_type=name)) == "high", name
             assert severity_floor(
                 _finding(vuln_type=name, probe_principal="reviewer")) == "medium", name
+
+
+class TestImpactGate:
+    def test_condition_confirmation_cannot_reach_high_or_critical(self):
+        node = _finding(validation_stage="CONDITION_CONFIRMED", severity="critical")
+        assert severity_floor(node) == "medium"
+        assert severity_ceiling(node) == "medium"
+        assert adjudicate_severity(node) == "medium"
+
+    def test_reachability_claim_cannot_be_written_critical(self):
+        node = _finding(validation_stage="REACHABILITY_CONFIRMED", severity="critical")
+        assert severity_floor(node) == "low"
+        assert adjudicate_severity(node) == "medium"
+
+    def test_llm_only_proof_stays_unconfirmed(self):
+        node = _finding(evidence_sources=["agent_probe", "llm"], severity="critical")
+        assert severity_floor(node) == "info"
+        assert severity_ceiling(node) == "medium"
+        assert adjudicate_severity(node) == "medium"
+
+    def test_empty_source_set_stays_unconfirmed(self):
+        node = _finding(evidence_sources=[], severity="critical")
+        assert severity_floor(node) == "info"
+        assert adjudicate_severity(node) == "medium"
+
+    def test_unknown_source_cannot_open_the_top_of_the_scale(self):
+        node = _finding(evidence_sources=["an unnamed assertion"], severity="critical")
+        assert severity_ceiling(node) == "medium"
+        assert adjudicate_severity(node) == "medium"
+
+    def test_deterministic_harness_impact_can_reach_critical(self):
+        node = _finding(evidence_sources=["agent_probe", "exploitation"], severity="critical")
+        assert severity_floor(node) == "critical"
+        assert severity_ceiling(node) == "critical"
+        assert adjudicate_severity(node) == "critical"
+
+    def test_scanner_and_exploit_sources_can_reach_critical(self):
+        node = _finding(evidence_sources=["exploitation", "mcp_tool_result_named"])
+        assert adjudicate_severity(node) == "critical"
+
+    def test_legacy_finding_without_source_metadata_trusts_the_stage(self):
+        node = _finding(evidence_sources=None)
+        assert severity_ceiling(node) == "critical"
+        assert adjudicate_severity(node) == "critical"
+
+    def test_explain_reports_whether_impact_was_observed(self):
+        decision = explain(_finding(validation_stage="CONDITION_CONFIRMED"))
+        assert decision["impact_observed"] is False
+        assert decision["final"] == "medium"
+        assert explain(_finding())["impact_observed"] is True

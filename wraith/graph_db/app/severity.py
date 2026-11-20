@@ -18,11 +18,18 @@ paths that enforce ``require_validation_evidence``. Three rules:
              down to "low", for the same reason a model cannot validate a
              finding by being confident about it.
   ceiling -- the maximum allowed. Nothing unexecuted is ever worse than
-             "medium", so an unvalidated guess cannot inflate the score.
+             "medium", and neither is a finding whose highest recorded stage is
+             mere reachability or condition confirmation. High and critical need
+             an observed consequence, not just an executed request.
   final   -- ``max(floor, min(claimed, ceiling))``. The author keeps the right
              to raise a finding above the floor when they know context the
              evidence does not (an admin-only route, a compensating control),
              but never past proven impact.
+
+A claim backed only by the model's own probe stays unconfirmed here even if a
+caller writes a validated status onto it. An advisory skill may propose a test;
+only a deterministic harness or runtime observation can supply the impact rung
+that opens the top half of the scale.
 
 Every input is read from the merged node, so this is deterministic and
 re-runnable: the same node always yields the same severity.
@@ -120,6 +127,43 @@ _UNVALIDATED_CEILING = "medium"
 #: The anonymous probe marker written to ``probe_principal``.
 ANONYMOUS = "unauthenticated"
 
+_MODEL_SOURCES = {"agent_probe", "llm", "llm_only", "model", "ai"}
+_HARNESS_SOURCES = {
+    "exploitation",
+    "mcp_tool_result",
+    "mcp_tool_result_named",
+    "harness",
+    "deterministic_harness",
+    "runner",
+    "runtime",
+}
+
+
+def _sources(node: dict) -> Optional[frozenset]:
+    raw = node.get("evidence_sources")
+    if raw is None:
+        return None
+    values = [raw] if isinstance(raw, str) else list(raw)
+    return frozenset(_norm(str(value)) for value in values if value)
+
+
+def _is_llm_only(node: dict) -> bool:
+    sources = _sources(node)
+    if sources is None:
+        return False
+    return not sources or all(source in _MODEL_SOURCES for source in sources)
+
+
+def _impact_observed(node: dict) -> bool:
+    if _norm(node.get("validation_stage")) not in _IMPACT:
+        return False
+    if _is_llm_only(node):
+        return False
+    sources = _sources(node)
+    if sources and not (sources & _HARNESS_SOURCES):
+        return False
+    return True
+
 
 def _validated_statuses() -> frozenset:
     # Imported lazily: schema.py imports this module for the write paths, so a
@@ -132,7 +176,7 @@ def _validated_statuses() -> frozenset:
 
 
 def _is_validated(node: dict) -> bool:
-    return _norm(node.get("status")) in _validated_statuses()
+    return _norm(node.get("status")) in _validated_statuses() and not _is_llm_only(node)
 
 
 def severity_floor(node: dict) -> str:
@@ -148,14 +192,15 @@ def severity_floor(node: dict) -> str:
     stage = _norm(node.get("validation_stage"))
     anonymous = _norm(node.get("probe_principal")) == ANONYMOUS
 
-    if stage in _IMPACT:
-        tier += 1
-    elif stage != _CONDITION:
+    if stage not in _IMPACT and stage != _CONDITION:
         # Reachability was shown, the behaviour was not. That is a lead, not a
         # vulnerability: it earns the lowest tier and nothing more, and the
         # anonymous bonus does not apply either -- "anyone can reach it" is not
         # "anyone can exploit it".
         return "low"
+
+    if not _impact_observed(node):
+        return "medium" if tier >= 2 else "low"
 
     if anonymous:
         tier += 1
@@ -172,7 +217,7 @@ def severity_floor(node: dict) -> str:
 
 def severity_ceiling(node: dict) -> str:
     """Highest severity this finding is allowed to carry."""
-    if not _is_validated(node):
+    if not _is_validated(node) or not _impact_observed(node):
         return _UNVALIDATED_CEILING
     return "critical"
 
@@ -201,6 +246,7 @@ def explain(node: dict) -> dict:
         "final": final,
         "floor": severity_floor(node),
         "ceiling": severity_ceiling(node),
+        "impact_observed": _impact_observed(node),
         "reason": (
             f"{final} (claimed {claimed or 'none'}; evidence supports "
             f"{severity_floor(node)}-{severity_ceiling(node)} for "

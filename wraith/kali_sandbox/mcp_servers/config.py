@@ -19,6 +19,34 @@ KNOWN_INSECURE_SECRETS = frozenset({
 })
 
 
+def _env_value(name: str, default: str) -> str:
+    for key in (name, "WRAITH_" + name):
+        raw = os.getenv(key)
+        if raw is not None and str(raw).strip():
+            return str(raw).strip()
+    return default
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = _env_value(name, "")
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = _env_value(name, "")
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
 @dataclass(frozen=True)
 class Settings:
     # Same values the runner uses. Without these the sandbox cannot read the
@@ -34,6 +62,19 @@ class Settings:
     FULL_TOOL_ACCESS: bool = os.getenv(
         "WRAITH_FULL_TOOL_ACCESS", os.getenv("FULL_TOOL_ACCESS", "0")
     ).strip().lower() in ("1", "true", "yes", "on")
+
+    OOB_CALLBACK_HOST: str = _env_value("OOB_CALLBACK_HOST", "127.0.0.1")
+    OOB_CALLBACK_PORT: int = _env_int("OOB_CALLBACK_PORT", 8091)
+    OOB_DNS_PORT: int = _env_int("OOB_DNS_PORT", 5353)
+    OOB_MAX_WAIT_SECONDS: float = _env_float("OOB_MAX_WAIT_SECONDS", 15.0)
+    SMTP_CAPTURE_HOST: str = _env_value("SMTP_CAPTURE_HOST", "127.0.0.1")
+    SMTP_CAPTURE_PORT: int = _env_int("SMTP_CAPTURE_PORT", 0)
+    SMTP_ALLOWED_RECIPIENT_DOMAINS: str = _env_value(
+        "SMTP_ALLOWED_RECIPIENT_DOMAINS", ".invalid"
+    )
+    NATIVE_HOST_BRIDGE_URL: str = _env_value("NATIVE_HOST_BRIDGE_URL", "")
+    NATIVE_HOST_BRIDGE_TOKEN: str = _env_value("NATIVE_HOST_BRIDGE_TOKEN", "")
+    NATIVE_HOST_PROBE_TIMEOUT: float = _env_float("NATIVE_HOST_PROBE_TIMEOUT", 5.0)
 
 
 def validate_startup_secrets(cfg: "Settings" = None) -> None:

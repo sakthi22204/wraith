@@ -34,6 +34,123 @@ KILLSWITCH_KEY = "global:killswitch"
 # spent one, which is the safe direction.
 NONCE_KEY_PREFIX = "gate:spent_nonce"
 
+INJECTION_HARNESS_TOOLS = frozenset({
+    "browser_probe", "oob_probe", "smtp_capture",
+    "file_export_probe", "raw_socket_probe",
+})
+
+NATIVE_HOST_TOOLS = frozenset({"native_host_probe"})
+
+DANGEROUS_TOOLS = frozenset({
+    "run_hydra", "run_msf_module",
+}) | INJECTION_HARNESS_TOOLS | NATIVE_HOST_TOOLS
+
+GATED_NETWORK_TOOLS = frozenset({
+    "http_probe", "http_probe_diff", "http_probe_race", "http_probe_threshold",
+    "http_probe_timing", "http_probe_smuggle", "http_probe_websocket_auth",
+    "run_nmap_scan", "run_nuclei_scan", "run_sqlmap", "run_hydra", "run_msf_module",
+    "run_arjun", "run_dalfox", "run_corsy", "run_commix", "run_ghauri",
+    "run_jwt_tool", "run_nikto", "run_xsstrike",
+    "run_zap_baseline", "run_zap_active",
+}) | INJECTION_HARNESS_TOOLS | NATIVE_HOST_TOOLS
+
+RESERVED_HOST_OPTIONS = frozenset({"RHOST", "RHOSTS", "LHOST", "LHOSTS"})
+
+NMAP_DEFAULT_PORTS = "1-1000"
+
+
+def _nmap_port_claim(target: str, ports) -> str:
+    host, sep, port = str(target).rpartition(":")
+    if sep and host and port.isdigit():
+        return port
+    if ports is None or not str(ports).strip():
+        return NMAP_DEFAULT_PORTS
+    return str(ports).strip()
+
+
+def _nuclei_port_claim(target: str) -> str:
+    candidate = str(target).strip()
+    host, sep, port = candidate.rpartition(":")
+    if sep and host and port.isdigit():
+        return port
+    if "://" in candidate:
+        scheme = candidate.split("://", 1)[0].lower()
+        default = {"http": 80, "https": 443, "ws": 80, "wss": 443}.get(scheme)
+        if default:
+            return str(default)
+    return "80"
+
+
+def _destination_of(tool_name: str, body: dict) -> tuple[list[str], Optional[str]]:
+    body = body or {}
+    targets: list[str] = []
+    port_claim = None
+
+    if tool_name in {"oob_probe", "smtp_capture", "native_host_probe"}:
+        raw = body.get("target_url")
+        if not raw and tool_name == "native_host_probe":
+            job = body.get("native_host_job")
+            if isinstance(job, dict):
+                raw = job.get("target_url")
+        if raw:
+            targets.append(str(raw))
+    elif tool_name in {"browser_probe", "file_export_probe", "raw_socket_probe"}:
+        raw = body.get("url")
+        if not raw and tool_name == "raw_socket_probe":
+            host, port = body.get("host"), body.get("port")
+            if host and port:
+                raw = f"{host}:{port}"
+        if raw:
+            targets.append(str(raw))
+    elif tool_name in {"http_probe", "http_probe_diff", "http_probe_race",
+                       "http_probe_threshold", "http_probe_timing",
+                       "http_probe_smuggle", "http_probe_websocket_auth"}:
+        if body.get("url"):
+            targets.append(str(body["url"]))
+        for variant in body.get("variants") or []:
+            if isinstance(variant, dict) and variant.get("url"):
+                targets.append(str(variant["url"]))
+    elif tool_name == "run_sqlmap":
+        if body.get("url"):
+            targets.append(str(body["url"]))
+    elif tool_name in {"run_arjun", "run_dalfox", "run_corsy", "run_commix",
+                       "run_ghauri", "run_nikto", "run_xsstrike",
+                       "run_zap_baseline", "run_zap_active"}:
+        if body.get("url"):
+            targets.append(str(body["url"]))
+    elif tool_name == "run_jwt_tool":
+        if body.get("target"):
+            targets.append(str(body["target"]))
+    elif tool_name in {"run_nmap_scan", "run_nuclei_scan", "run_hydra", "run_msf_module"}:
+        if tool_name == "run_msf_module":
+            options = body.get("options")
+            if isinstance(options, dict):
+                reserved = RESERVED_HOST_OPTIONS.intersection(options)
+                if reserved:
+                    raise ValueError(
+                        "Metasploit options may not redirect the host: "
+                        f"{', '.join(sorted(reserved))}; set the destination in 'target'"
+                    )
+        raw = body.get("target")
+        if raw:
+            targets.append(str(raw))
+
+        if not targets:
+            raise ValueError(f"{tool_name} has no destination to check; refusing to send")
+
+        if tool_name == "run_nmap_scan":
+            port_claim = _nmap_port_claim(targets[0], body.get("ports"))
+        elif tool_name == "run_nuclei_scan":
+            port_claim = _nuclei_port_claim(targets[0])
+    else:
+        raise ValueError(f"no known destination field for tool {tool_name!r}")
+
+    if not targets:
+        raise ValueError(f"{tool_name} has no destination to check; refusing to send")
+
+    return targets, port_claim
+
+
 # Tools the exploit agent may authorise with a grant it mints itself. The
 # agent's dispatch layer only issues grants for these, and this floor is
 # re-checked here rather than trusted from the mint: a compromise that turns

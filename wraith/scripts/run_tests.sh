@@ -74,6 +74,20 @@ wait_healthy() {
   done
 }
 
+wait_juice_shop() {
+  local probe="$1" tries=0
+  until docker exec "$(container_id "$probe")" python3 -c \
+        "import urllib.request; urllib.request.urlopen('http://juice_shop:3000/')" \
+        2>/dev/null; do
+    tries=$((tries + 1))
+    if [ "$tries" -gt 60 ]; then
+      echo "timed out waiting for juice_shop" >&2
+      return 1
+    fi
+    sleep 1
+  done
+}
+
 # The graph suite reaches Neo4j through testcontainers, which needs a docker
 # socket. Only docker_broker gets one in this stack, deliberately: handing it to
 # a service so a test could be convenient would give that service the ability to
@@ -146,7 +160,9 @@ case "$target" in
     ;;
 
   runner)
+    start juice_shop
     start active_exploit_runner
+    wait_juice_shop active_exploit_runner
     wait_healthy active_exploit_runner 8004
     run_in active_exploit_runner tests/ -q
     ;;
@@ -162,7 +178,9 @@ case "$target" in
     ;;
 
   sandbox)
+    start juice_shop
     start kali_sandbox
+    wait_juice_shop kali_sandbox
     run_in kali_sandbox tests/ -q
     ;;
 
@@ -210,12 +228,14 @@ case "$target" in
     ;;
 
   all)
+    start juice_shop
     start active_exploit_runner
     start kali_sandbox
     start recon_orchestrator
     start assessment_service
     start reporting
     start graph_api
+    wait_juice_shop active_exploit_runner
     wait_healthy active_exploit_runner 8004
     wait_healthy kali_sandbox 8000
     wait_healthy recon_orchestrator 8002
