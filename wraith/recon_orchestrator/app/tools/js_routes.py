@@ -7,6 +7,7 @@ import httpx
 from .base import ReconTool, target_url, host_from_domain
 from ..schemas import ToolResults, EndpointResult
 from ..config import settings
+from .proxy import user_agent_header
 
 
 # Only paths under one of these prefixes are treated as routes. Without the
@@ -119,10 +120,12 @@ class JsRoutesTool(ReconTool):
         base = target_url(domain).rstrip("/")
         target_host = host_from_domain(domain)
         try:
+            agent = user_agent_header()
             async with httpx.AsyncClient(
                 timeout=settings.TOOL_TIMEOUT,
                 follow_redirects=False,
                 verify=False,
+                headers={"User-Agent": agent} if agent else None,
             ) as owned:
                 http = client or owned
                 html = await self._get(http, base, _MAX_HTML_BYTES, target_host)

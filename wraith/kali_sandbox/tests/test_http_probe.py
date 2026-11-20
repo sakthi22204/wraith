@@ -7,6 +7,7 @@ import json
 import pytest
 
 from mcp_servers.http_probe_server import (
+    DEFAULT_USER_AGENT,
     HttpProbeServer,
     MAX_REQUEST_BODY,
     ProbeCapture,
@@ -24,6 +25,9 @@ srv = HttpProbeServer()
 class TestUrlValidation:
     def test_accepts_plain_http(self):
         assert srv._validate_url("http://juice_shop:3000/metrics")
+
+    def test_normalizes_scheme_less_host(self):
+        assert srv._validate_url("juice_shop:3000/metrics") == "https://juice_shop:3000/metrics"
 
     def test_rejects_non_http_scheme(self):
         with pytest.raises(ValueError, match="Only http"):
@@ -198,7 +202,7 @@ class TestCaptureAgainstLiveTarget:
     async def test_default_user_agent_injected_when_absent(self):
         cap = await srv.probe("http://juice_shop:3000/metrics", timeout=20)
         ua = (cap.request_headers or {}).get("User-Agent", "")
-        assert ua.startswith("Mozilla/5.0"), f"expected browser UA, got {ua!r}"
+        assert ua.startswith(DEFAULT_USER_AGENT), f"expected configured UA, got {ua!r}"
 
     @pytest.mark.asyncio
     async def test_explicit_user_agent_is_respected(self):

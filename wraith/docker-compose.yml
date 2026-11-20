@@ -79,6 +79,8 @@ services:
       # service URL, supported tools (katana/httpx) route HTTP(S) through it
       # and trust its CA so the orchestrator persists decrypted evidence.
       - RECON_PROXY_URL=${RECON_PROXY_URL:-}
+      - RECON_USER_AGENT=${RECON_USER_AGENT:-}
+      - RECON_REQUEST_RATE_LIMIT=${RECON_REQUEST_RATE_LIMIT:-10}
       # Recon selects targets from graph scope_domains; the runner independently
       # enforces its own ROE rules. These let recon reconcile the two before a
       # scan starts, so the copies cannot drift apart unnoticed.
@@ -113,12 +115,14 @@ services:
       - LLM_MODEL=${LLM_MODEL:-claude-3-5-sonnet-20240620}
       - LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.0}
       - LLM_TIMEOUT_SECONDS=${LLM_TIMEOUT_SECONDS:-300}
+      - MAX_CANDIDATES=${MAX_CANDIDATES:-25}
       - INTERPRET_LLM_PROVIDER=${INTERPRET_LLM_PROVIDER:-}
       - INTERPRET_LLM_MODEL=${INTERPRET_LLM_MODEL:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - GROQ_API_KEY=${GROQ_API_KEY}
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://ollama:11434}
+      - WRAITH_USER_AGENT=${WRAITH_USER_AGENT:-}
       - MCP_SERVER_URLS=["http://kali_sandbox:8000/sse"]
       - ADMIN_API_TOKEN=${ADMIN_API_TOKEN:?ADMIN_API_TOKEN must be set; generate one, do not reuse a published default}
       - ENGAGEMENT_MODE=${ENGAGEMENT_MODE:-wapt}
@@ -417,6 +421,7 @@ services:
       # The sandbox verifies the runner's grant signature, and independently
       # re-reads the killswitch and scope rules before it sends anything.
       - WRAITH_GATE_SECRET=${WRAITH_GATE_SECRET:?WRAITH_GATE_SECRET must be set; it signs the grants the sandbox trusts as proof of scoping}
+      - WRAITH_USER_AGENT=${WRAITH_USER_AGENT:-}
       - REDIS_URL=redis://redis:6379/0
       - DATABASE_URL=postgresql://wraith:password@postgres:5432/wraith_audit
       # ZAP is a separate service on the internal network. The adapter fails
@@ -460,6 +465,7 @@ services:
     cpuset: ${OLLAMA_CPUSET:-0-4}
     environment:
       - OLLAMA_KEEP_ALIVE=30m
+      - OLLAMA_LOAD_TIMEOUT=30m
       - OLLAMA_CONTEXT_LENGTH=8192
       # ollama runs as user `ollama` with HOME=/home/ollama, so its model store
       # is $HOME/.ollama. Mounting the volume at /root/.ollama left the store on

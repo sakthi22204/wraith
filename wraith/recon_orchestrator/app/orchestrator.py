@@ -101,6 +101,7 @@ class ReconOrchestrator:
     def __init__(self):
         self.sessions: Dict[str, ReconSessionStatus] = {}
         self.results: Dict[str, ToolResults] = {}
+        self._session_tools: Dict[str, frozenset] = {}
 
         # Tools definitions
         self.subfinder = SubfinderTool()
@@ -276,7 +277,19 @@ class ReconOrchestrator:
                         session.logs.append(
                             f"[{datetime.utcnow().strftime('%H:%M:%S')}] Skipping {tool.name} for remote target {domain} (ROE: aggressive scanning / brute-force traffic not permitted)."
                         )
+            selected = self._session_tools.get(session_id)
+            if selected is not None:
+                for tool in base_tools:
+                    if tool.name in selected:
+                        continue
+                    tool_key = f"{tool.name}:{domain}"
+                    session.tool_statuses[tool_key] = ToolStatus.SKIPPED
+                    session.logs.append(
+                        f"[{datetime.utcnow().strftime('%H:%M:%S')}] Skipping {tool.name} for {domain} (not requested by the session)."
+                    )
+                domain_base_tools = [tool for tool in domain_base_tools if tool.name in selected]
             for tool in domain_base_tools:
+
                 tool_key = f"{tool.name}:{domain}"
                 queued_keys.add(tool_key)
 
@@ -457,6 +470,10 @@ class ReconOrchestrator:
 
         async def launch_tool(tool, domain, extra_urls=None):
             tool_key = f"{tool.name}:{domain}"
+            selected = self._session_tools.get(session_id)
+            if selected is not None and tool.name not in selected:
+                session.tool_statuses[tool_key] = ToolStatus.SKIPPED
+                return False
             # Only pass the override through when there is one: the base
             # dispatch (and any test double standing in for _run_tool) is
             # called with the four arguments it has always had.
@@ -1445,6 +1462,19 @@ class ReconOrchestrator:
             if not is_in_scope:
                 out_of_scope.append(domain)
 
+        known_tools = {tool.name for tool in self.tools} | {self.js_routes.name}
+        requested_tools = set(request.tools or [])
+        unknown_tools = sorted(requested_tools - known_tools)
+        if unknown_tools:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown recon tool(s): {', '.join(unknown_tools)}",
+            )
+        if requested_tools:
+            selected_tools = frozenset(requested_tools)
+        else:
+            selected_tools = frozenset(known_tools)
+
         if out_of_scope:
             session_id = str(uuid.uuid4())
             self.sessions[session_id] = ReconSessionStatus(
@@ -1496,6 +1526,7 @@ class ReconOrchestrator:
         # Make the ROE aggressive allowance (if any) visible to run_session and
         # the conditional triggers, which key off _aggressive_allowed.
         self._aggressive_rules[session_id] = aggressive_patterns
+        self._session_tools[session_id] = selected_tools
 
         # Start background task with normalized domains
         asyncio.create_task(self.run_session(session_id, request.investigation_id, normalized_requested))

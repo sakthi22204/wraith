@@ -100,3 +100,14 @@ def add_proxy_flags(flags: List[str], proxy_flag: str, proxy_arg: Optional[str] 
         return flags
     target = proxy_arg if proxy_arg is not None else proxy_http_url()
     return list(flags) + [proxy_flag, target]
+
+
+def user_agent_header() -> str:
+    return (settings.RECON_USER_AGENT or "").strip()
+
+
+def add_user_agent_flag(flags: List[str], header_flag: str) -> List[str]:
+    agent = user_agent_header()
+    if not agent:
+        return flags
+    return list(flags) + [header_flag, f"User-Agent: {agent}"]

@@ -40,6 +40,7 @@ from .common.redaction import (
     extract_session_token, redact_capture, redact_headers, redact_text,
 )
 from .gate import GateError, revalidate_hop
+from .config import settings as sandbox_settings
 
 # The gate's context for the request in flight, published by main.gate_request.
 # This is a ContextVar rather than a tool argument on purpose: the probe tools
@@ -63,7 +64,7 @@ ALLOWED_METHODS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "O
 # WAFs (Akamai, Cloudflare, ...) %403%-drop UA-less or httpx-default UAs, which
 # would turn every probe into an unresolvable "connection" result. A standard
 # browser string is benign and keeps the probe reading like ordinary traffic.
-DEFAULT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+DEFAULT_USER_AGENT = sandbox_settings.USER_AGENT.strip() or "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
 
 # A differential test costs two requests. This bounds the whole comparison so a
 # caller cannot turn a single probe into an unbounded sweep. The per-variant cap
@@ -642,6 +643,8 @@ class HttpProbeServer(BaseSecurityServer):
             raise ValueError("url is required")
         if len(url) > 4096:
             raise ValueError("url exceeds 4096 characters")
+        if "://" not in url:
+            url = "https://" + url.lstrip()
 
         parsed = urlparse(url)
         if parsed.scheme not in ("http", "https"):

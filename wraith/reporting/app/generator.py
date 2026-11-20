@@ -55,6 +55,12 @@ def is_confirmed(finding: Dict[str, Any]) -> bool:
         # no limiter, the response missing a header) but is not a confirmed
         # vulnerability, so it must not fall through to the evidence check below.
         return False
+    if normalize_status(finding.get("validation_stage")) in {"NOT_VALIDATED", "REFUTED"}:
+        # An executed exchange that reached neither a positive nor a negative
+        # verdict is still inconclusive. Carrying a request/response pair is not
+        # enough: a CDN challenge page, a timeout or a blocked probe all leave
+        # evidence behind without proving anything about the application.
+        return False
     return bool(finding.get("poc_request")) and bool(finding.get("poc_response"))
 
 

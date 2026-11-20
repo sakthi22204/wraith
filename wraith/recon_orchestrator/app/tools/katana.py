@@ -1,8 +1,9 @@
 import json
 from typing import List
 from .base import ReconTool, target_url, absolute_url, host_from_domain
-from .proxy import add_proxy_flags
+from .proxy import add_proxy_flags, add_user_agent_flag
 from ..schemas import ToolResults, EndpointResult
+from ..config import settings
 
 class KatanaTool(ReconTool):
     # Bounded crawl: the wall-clock budget must exceed -crawl-duration plus time
@@ -30,11 +31,15 @@ class KatanaTool(ReconTool):
         # full-site mirror); -proxy routes egress through the intercepting
         # sidecar when enabled (Go tools resolve the single-label sidecar host
         # via extra_hosts).
-        return add_proxy_flags(
-            ["-u", target_url(domain), "-j", "-silent",
-             "-crawl-duration", self.crawl_duration,
-             "-depth", "3"],
-            "-proxy",
+        return add_user_agent_flag(
+            add_proxy_flags(
+                ["-u", target_url(domain), "-j", "-silent",
+                 "-crawl-duration", self.crawl_duration,
+                 "-depth", "3",
+                 "-rate-limit", str(settings.RECON_REQUEST_RATE_LIMIT)],
+                "-proxy",
+            ),
+            "-H",
         )
 
     def parse_output(self, output: str, domain: str = "") -> ToolResults:

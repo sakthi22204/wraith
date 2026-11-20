@@ -2,6 +2,8 @@ import json
 from typing import List, Optional
 from .base import ReconTool, target_url, host_from_domain, absolute_url
 from ..schemas import ToolResults, EndpointResult, FindingResult
+from ..config import settings
+from .proxy import add_user_agent_flag
 
 # Template tags to run.
 #
@@ -89,7 +91,7 @@ class NucleiTool(ReconTool):
         # One comma-separated -u, verified to fan out across every URL in the
         # list. A -l target file would need a host path or volume mount, and the
         # broker allows neither, so file-based target lists are unavailable here.
-        return ["-u", ",".join(targets)] + [
+        return add_user_agent_flag(["-u", ",".join(targets)] + [
             "-jsonl",
             "-silent",
             "-duc",
@@ -105,17 +107,11 @@ class NucleiTool(ReconTool):
             # and misc checks -- so a severity floor removes exactly the
             # reportable matches while leaving the scan looking like it ran.
             # Tag selection is the scope control here; severity is not.
-            # 50 req/s: with the session serializing nuclei to one pass at a
-            # time, this is the throughput that keeps a pass under the tool's
-            # wall-clock budget. The rate has to stay high enough to finish the
-            # template set before the broker kills the container; 25 req/s was
-            # safe for little servers but 30 minutes per pass turned a three
-            # tool widening into a multi-hour recon session.
-            "-rate-limit", "50",
+            "-rate-limit", str(settings.RECON_REQUEST_RATE_LIMIT),
             "-timeout", "10",
             "-retries", "1",
             "-max-time", self.max_time,
-        ]
+        ], "-H")
 
     def _targets(self, domain: str, extra_urls: Optional[List[str]]) -> List[str]:
         """The seed target plus discovered endpoints, deduped and capped.

@@ -62,6 +62,7 @@ class Settings:
     FULL_TOOL_ACCESS: bool = os.getenv(
         "WRAITH_FULL_TOOL_ACCESS", os.getenv("FULL_TOOL_ACCESS", "0")
     ).strip().lower() in ("1", "true", "yes", "on")
+    USER_AGENT: str = os.getenv("WRAITH_USER_AGENT", "")
 
     OOB_CALLBACK_HOST: str = _env_value("OOB_CALLBACK_HOST", "127.0.0.1")
     OOB_CALLBACK_PORT: int = _env_int("OOB_CALLBACK_PORT", 8091)

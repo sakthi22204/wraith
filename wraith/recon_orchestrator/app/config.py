@@ -38,6 +38,8 @@ class Settings(BaseSettings):
     # Leave empty (default) to run all tools without a proxy — byte-identical behavior.
     RECON_PROXY_URL: str = ""
     RECON_PROXY_CA_VOLUME: str = "mitmproxy_ca"
+    RECON_USER_AGENT: str = ""
+    RECON_REQUEST_RATE_LIMIT: int = 10
 
     # The active runner's ROE rules are the enforcement copy of scope. Recon
     # reconciles its selection scope against them before every scan so the two
